@@ -43,8 +43,11 @@ Library only (no `clap`): `cargo add vast-skopos --no-default-features`.
 4. `~/.vast_api_key` (the CLI's legacy location);
 
 or from `--key-file FILE`. There is deliberately no `--key` flag: a key typed on the command line
-lands in your shell history. The key is only ever sent, as a `Bearer` header, to the vast.ai API
-host; it is redacted from every debug output and never appears in an error message.
+lands in your shell history. The key is only ever sent, as a `Bearer` header, to the API base:
+`https://console.vast.ai`, or `VAST_URL` when you set it, in which case `vas` warns on stderr
+where the key is going. No redirect is ever followed. The key is redacted from every debug
+output and never appears in an error message. A key file may be UTF-8 (with or without a
+byte-order mark) or UTF-16 with one, as Windows PowerShell writes it.
 
 **Use a read-only key if you can.** `vas` only ever issues `GET` requests: it never creates,
 starts, stops or destroys anything.
@@ -55,13 +58,14 @@ starts, stops or destroys anything.
 |---|---|
 | `vas` | the table and the money line |
 | `vas --ssh` | also probe every running box over `ssh`, once each, in parallel |
-| `vas --ssh --log PATH_OR_GLOB` | also print the last line of the newest file matching the pattern on each box (expanded by the box's shell) |
+| `vas --ssh --log PATH_OR_GLOB` | also print the last line of the newest file matching the pattern on each box: expanded by the box's shell, so quote it locally, and name files (a directory or a pattern with spaces will not do); the line is shown without control characters, at most 120 characters |
 | `vas --ssh -i ~/.ssh/id_ed25519` | use this private key (default: `ssh`'s own choice, agent and `~/.ssh/config`) |
 | `vas --watch 60` | refresh every 60 s (at least 30) until Ctrl+C |
 | `vas --key-file FILE` | read the key from `FILE` |
 
-`--ssh` uses your system `ssh` with `BatchMode=yes` and `ConnectTimeout=10`, and makes **one
-attempt** per box per refresh: a box that refuses is reported in its row (with `ssh`'s own last
+`--ssh` uses your system `ssh` with `BatchMode=yes`, `ConnectTimeout=10` and keep-alives, gives
+each probe 30 s in all (and `nvidia-smi` 20 s on the box), and makes **one attempt** per box per
+refresh: a box that refuses is reported in its row (with `ssh`'s own last
 error line), never retried in a loop. Host keys are accepted on first use
 (`StrictHostKeyChecking=accept-new`), since vast.ai's `ssh` proxies are reached by port.
 

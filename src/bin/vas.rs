@@ -44,7 +44,13 @@ fn now() -> f64 {
 /// One look: the API, then the probes in parallel, then the table.
 fn look(client: &Client, args: &Args) -> Result<String, vast_skopos::SkoposError> {
     let instances = client.instances()?;
-    let account = client.account().ok();
+    let account = match client.account() {
+        Ok(a) => Some(a),
+        Err(e) => {
+            eprintln!("vas: no credit shown: {e}");
+            None
+        }
+    };
     let probes: Vec<_> = if args.ssh {
         std::thread::scope(|scope| {
             // EXPLICIT: collected so every probe is SPAWNED before any is joined; a lazy chain would
@@ -66,13 +72,26 @@ fn look(client: &Client, args: &Args) -> Result<String, vast_skopos::SkoposError
                 .collect();
             handles
                 .into_iter()
-                .map(|h| h.join().ok().flatten())
+                .map(|h| {
+                    h.join().unwrap_or_else(|_| {
+                        Some(Err(vast_skopos::SkoposError::Ssh {
+                            target: String::from("?"),
+                            message: String::from("the probe thread panicked"),
+                        }))
+                    })
+                })
                 .collect()
         })
     } else {
         Vec::new()
     };
-    Ok(table(&instances, &probes, account.as_ref(), now()))
+    Ok(table(
+        &instances,
+        &probes,
+        args.ssh,
+        account.as_ref(),
+        now(),
+    ))
 }
 
 fn main() -> ExitCode {
@@ -89,6 +108,17 @@ fn main() -> ExitCode {
         }
     };
     let client = Client::new(key);
+    if client.base() != vast_skopos::api::DEFAULT_BASE {
+        let plain = if client.base().starts_with("https://") {
+            ""
+        } else {
+            ", NOT over https"
+        };
+        eprintln!(
+            "vas: VAST_URL is set: the API key is sent to {}{plain}",
+            client.base()
+        );
+    }
     loop {
         match look(&client, &args) {
             Ok(text) => {

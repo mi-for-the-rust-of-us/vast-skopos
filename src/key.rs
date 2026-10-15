@@ -33,7 +33,8 @@ impl ApiKey {
     /// A key from its text, trimmed; `None` when nothing is left.
     #[must_use]
     pub fn new(text: &str) -> Option<Self> {
-        let trimmed = text.trim();
+        // A byte-order mark is not part of the key (Windows editors and PowerShell write one).
+        let trimmed = text.trim().trim_start_matches('\u{feff}').trim();
         // BORROW: explicit to_owned -- the key outlives the file buffer it was read from
         (!trimmed.is_empty()).then(|| Self(trimmed.to_owned()))
     }
@@ -44,9 +45,16 @@ impl ApiKey {
     /// Returns [`SkoposError::KeyFile`] if the file cannot be read.
     /// Returns [`SkoposError::NoApiKey`] if the file holds no key.
     pub fn from_file(file: &Path) -> Result<Self> {
-        let text = std::fs::read_to_string(file).map_err(|source| SkoposError::KeyFile {
+        let bytes = std::fs::read(file).map_err(|source| SkoposError::KeyFile {
             path: file.display().to_string(),
             source,
+        })?;
+        let text = decode(&bytes).ok_or_else(|| SkoposError::KeyFile {
+            path: file.display().to_string(),
+            source: std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "not UTF-8 or UTF-16 text (save the key as plain UTF-8)",
+            ),
         })?;
         Self::new(&text).ok_or_else(|| SkoposError::NoApiKey {
             searched: file.display().to_string(),
@@ -84,6 +92,32 @@ impl ApiKey {
     /// The `Authorization` header value.
     pub(crate) fn bearer(&self) -> String {
         format!("Bearer {}", self.0)
+    }
+}
+
+/// A key file's text: UTF-16 with a byte-order mark (what Windows PowerShell 5.1's `>` writes), else
+/// UTF-8; `None` when neither.
+fn decode(bytes: &[u8]) -> Option<String> {
+    let units = |big: bool| -> Vec<u16> {
+        bytes
+            .get(2..)
+            .unwrap_or_default()
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|&pair| {
+                if big {
+                    u16::from_be_bytes(pair)
+                } else {
+                    u16::from_le_bytes(pair)
+                }
+            })
+            .collect()
+    };
+    match bytes {
+        [0xFF, 0xFE, ..] => String::from_utf16(&units(false)).ok(),
+        [0xFE, 0xFF, ..] => String::from_utf16(&units(true)).ok(),
+        _ => String::from_utf8(bytes.to_vec()).ok(),
     }
 }
 

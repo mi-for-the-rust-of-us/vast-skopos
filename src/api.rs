@@ -50,6 +50,8 @@ impl Client {
         let agent: ureq::Agent = ureq::Agent::config_builder()
             .timeout_global(Some(Duration::from_secs(30)))
             .http_status_as_error(false)
+            // No redirect is followed: a 3xx is reported, and the key is never re-sent elsewhere.
+            .max_redirects(0)
             .build()
             .into();
         Self {
@@ -66,6 +68,12 @@ impl Client {
         let mut client = Self::new(key);
         base.trim_end_matches('/').clone_into(&mut client.base);
         client
+    }
+
+    /// The base URL the key is sent to.
+    #[must_use]
+    pub fn base(&self) -> &str {
+        &self.base
     }
 
     /// `GET {base}{path}` with `query`, as JSON.
@@ -109,11 +117,13 @@ impl Client {
     /// # Errors
     /// Returns [`SkoposError::Http`] if a request cannot be made.
     /// Returns [`SkoposError::Status`] if vast.ai answers with a non-success status.
-    /// Returns [`SkoposError::Json`] if a page is not JSON or has no `instances` list.
+    /// Returns [`SkoposError::Json`] if a page is not JSON, has no `instances` list, repeats a
+    /// `next_token`, or the pages exceed the guard.
     pub fn instances(&self) -> Result<Vec<Instance>> {
         let path = "/api/v1/instances/";
         let mut rows = Vec::new();
         let mut after: Option<String> = None;
+        let mut seen = std::collections::HashSet::new();
         for _ in 0..MAX_PAGES {
             let mut query = vec![
                 ("select_filters", "{}"),
@@ -131,14 +141,28 @@ impl Client {
                     endpoint: endpoint(path),
                     message: String::from("no `instances` list"),
                 })?;
-            rows.extend(list.iter().filter_map(Instance::from_json));
-            match page.get("next_token") {
-                Some(Value::String(t)) if !t.is_empty() => after = Some(t.clone()),
-                Some(Value::Number(n)) => after = Some(n.to_string()),
-                Some(_) | None => return Ok(rows),
+            if list.is_empty() {
+                return Ok(rows);
             }
+            rows.extend(list.iter().filter_map(Instance::from_json));
+            let token = match page.get("next_token") {
+                // BORROW: explicit clone -- the token outlives the page it came in
+                Some(Value::String(t)) if !t.is_empty() => t.clone(),
+                Some(Value::Number(n)) => n.to_string(),
+                Some(_) | None => return Ok(rows),
+            };
+            if !seen.insert(token.clone()) {
+                return Err(SkoposError::Json {
+                    endpoint: endpoint(path),
+                    message: format!("next_token {token} repeated"),
+                });
+            }
+            after = Some(token);
         }
-        Ok(rows)
+        Err(SkoposError::Json {
+            endpoint: endpoint(path),
+            message: format!("more than {MAX_PAGES} pages"),
+        })
     }
 
     /// The account's credit and balance.

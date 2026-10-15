@@ -126,3 +126,64 @@ fn a_page_without_instances_is_a_json_error() {
         SkoposError::Json { .. }
     ));
 }
+
+#[test]
+fn a_repeated_next_token_is_an_error_not_a_loop() {
+    let (base, seen) = serve(|_| {
+        (
+            200,
+            r#"{"instances": [{"id": 1}], "next_token": "same"}"#.to_owned(),
+        )
+    });
+    let client = Client::with_base(ApiKey::new("k").unwrap(), &base);
+    assert!(matches!(
+        client.instances().unwrap_err(),
+        SkoposError::Json { .. }
+    ));
+    assert_eq!(seen.lock().unwrap().len(), 2, "stopped at the first repeat");
+}
+
+#[test]
+fn neither_the_client_nor_a_connection_error_shows_the_key() {
+    // Nothing listens on port 9 here: the request fails before any answer.
+    let client = Client::with_base(ApiKey::new("s3cret").unwrap(), "http://127.0.0.1:9");
+    assert!(!format!("{client:?}").contains("s3cret"));
+    let err = client.account().unwrap_err();
+    assert!(matches!(err, SkoposError::Http { .. }));
+    assert!(!err.to_string().contains("s3cret"), "{err}");
+}
+
+#[test]
+fn a_redirect_is_reported_not_followed() {
+    let (base, seen) = serve(|_| (302, "{}".to_owned()));
+    let client = Client::with_base(ApiKey::new("k").unwrap(), &base);
+    assert!(matches!(
+        client.account().unwrap_err(),
+        SkoposError::Status { status: 302, .. }
+    ));
+    assert_eq!(seen.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn a_key_file_with_a_bom_or_in_utf16_reads_the_same_key() {
+    let dir = std::env::temp_dir().join(format!("vas-key-test-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let bom = dir.join("bom");
+    std::fs::write(&bom, "\u{feff}abc123\r\n").unwrap();
+    let utf16 = dir.join("utf16");
+    let mut bytes = vec![0xFF, 0xFE];
+    bytes.extend("abc123\r\n".encode_utf16().flat_map(u16::to_le_bytes));
+    std::fs::write(&utf16, bytes).unwrap();
+    let (base, seen) = serve(vast);
+    for file in [&bom, &utf16] {
+        let client = Client::with_base(ApiKey::from_file(file).unwrap(), &base);
+        client.account().unwrap();
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert!(
+        seen.lock()
+            .unwrap()
+            .iter()
+            .all(|(_, auth)| auth == "Bearer abc123")
+    );
+}

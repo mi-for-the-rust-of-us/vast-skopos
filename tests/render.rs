@@ -41,7 +41,7 @@ fn the_table_shows_cost_status_probe_and_money() {
         })),
     ];
     let account = Account::from_json(&serde_json::json!({"credit": 5.94}));
-    let text = table(&rows, &probes, Some(&account), now);
+    let text = table(&rows, &probes, true, Some(&account), now);
     assert!(text.contains("1x RTX 5090"), "{text}");
     assert!(
         text.contains("2h 0m") && text.contains("1.29"),
@@ -61,8 +61,17 @@ fn the_table_shows_cost_status_probe_and_money() {
 
 #[test]
 fn no_instances_still_prints_the_money_line() {
-    let text = table(&[], &[], None, 0.0);
+    let text = table(&[], &[], false, None, 0.0);
     assert!(
         text.contains("(no instances)") && text.contains("credit ? | burn $0.000/h over 0 running")
     );
+}
+
+#[test]
+fn ssh_columns_show_when_asked_even_with_nothing_probed() {
+    let rows = vec![instance(
+        &serde_json::json!({"id": 1, "actual_status": "exited"}),
+    )];
+    let text = table(&rows, &[None], true, None, 0.0);
+    assert!(text.contains("GPU% (ssh)"), "{text}");
 }

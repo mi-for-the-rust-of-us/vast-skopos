@@ -81,19 +81,20 @@ fn mib_to_gib(mib: u64) -> f64 {
 
 /// The table: one row per instance, then the money line.
 ///
-/// `probes` is aligned with `instances` (`None`: not probed); `now` is Unix seconds.
+/// `probes` is aligned with `instances` (`None`: not probed, e.g. not running); `with_ssh` shows
+/// the probe columns even when no box was probed; `now` is Unix seconds.
 #[must_use]
 pub fn table(
     instances: &[Instance],
     probes: &[Option<Result<Probe, SkoposError>>],
+    with_ssh: bool,
     account: Option<&Account>,
     now: f64,
 ) -> String {
-    let with_probes = probes.iter().any(Option::is_some);
     let mut header = vec![
         "ID", "LABEL", "GPU", "WHERE", "STATUS", "$/H", "AGE", "COST~", "SSH",
     ];
-    if with_probes {
+    if with_ssh {
         header.extend(["GPU% (ssh)", "VRAM", "LAST LOG / SSH ERROR"]);
     }
     let mut rows: Vec<Vec<String>> = Vec::new();
@@ -116,7 +117,7 @@ pub fn table(
             or_dash(i.cost_so_far(now).map(|c| format!("{c:.2}"))),
             or_dash(i.ssh_endpoint().map(|(h, p)| format!("{h}:{p}"))),
         ];
-        if with_probes {
+        if with_ssh {
             match probes.get(n).and_then(Option::as_ref) {
                 Some(Ok(p)) => {
                     let (util, mem) = gpu_cells(p);
