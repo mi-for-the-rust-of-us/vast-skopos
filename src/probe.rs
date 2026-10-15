@@ -98,9 +98,11 @@ pub fn remote_command(log: Option<&str>) -> String {
     )
 }
 
-/// A remote log line made safe for the table: what follows its last carriage return (a progress
-/// bar's final state), control characters (terminal escapes included) dropped, at most
-/// 120 characters (an ellipsis marks a cut).
+/// A remote log line made safe for the table.
+///
+/// What follows its last carriage return (a progress bar's final state) is kept, control
+/// characters (terminal escapes included) are dropped, and at most 120 characters are shown (an
+/// ellipsis marks a cut).
 ///
 /// ```
 /// use vast_skopos::probe::clean;
