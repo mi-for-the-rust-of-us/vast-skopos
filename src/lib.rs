@@ -14,7 +14,7 @@
 //!
 //! - [`key`]: where the API key is found (and that it is never printed);
 //! - [`api`]: the two endpoints read (`/api/v1/instances/`, paginated, and
-//!   `/api/v0/users/current`);
+//!   `/api/v0/users/current/`);
 //! - [`instance`]: the lenient readers of their JSON;
 //! - [`probe`]: the `ssh` probe and its `nvidia-smi` parser;
 //! - [`render`]: the table.

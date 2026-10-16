@@ -22,7 +22,7 @@ All notable changes to this project are documented here. The format is based on
   Notepad's `vast_api_key.txt`), the error names the twin and the rename to make
   (`key::txt_hint`); `--key-file` is not concerned.
 - The library half: `key` (the official CLI's key search order, a redacted key type), `api`
-  (read-only client, paginated `/api/v1/instances/`, `/api/v0/users/current`), `instance`
+  (read-only client, paginated `/api/v1/instances/`, `/api/v0/users/current/`), `instance`
   (lenient field-by-field readers), `probe`, `render`.
 - Tests against a local mock server (pagination, the bearer header, statuses, no key in errors),
   rendering fixtures, doctests; CI on Linux, Windows and macOS at MSRV 1.88 and stable;
