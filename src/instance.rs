@@ -42,27 +42,33 @@ pub struct Instance {
     pub geolocation: Option<String>,
 }
 
-/// A string field, `None` when absent, null, empty or not a string.
-fn text(row: &Value, field: &str) -> Option<String> {
-    row.get(field)
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        // BORROW: explicit to_owned -- the instance outlives the response it was read from
-        .map(str::to_owned)
+/// A string field, control characters dropped (the text comes from the API and from other people's
+/// hosts, and never reaches the terminal raw); `None` when absent, null, empty or not a string.
+pub(crate) fn text(row: &Value, field: &str) -> Option<String> {
+    let kept: String = row
+        .get(field)
+        .and_then(Value::as_str)?
+        .chars()
+        .filter(|c| !c.is_control())
+        .collect();
+    let kept = kept.trim();
+    // BORROW: explicit to_owned -- the row outlives the response it was read from
+    (!kept.is_empty()).then(|| kept.to_owned())
 }
 
-/// A number field, accepting a JSON number or a numeric string.
-fn number(row: &Value, field: &str) -> Option<f64> {
-    match row.get(field)? {
+/// A number field, accepting a JSON number or a numeric string; `None` when not finite (a string
+/// can spell `NaN` or `inf`).
+pub(crate) fn number(row: &Value, field: &str) -> Option<f64> {
+    let n = match row.get(field)? {
         Value::Number(n) => n.as_f64(),
         Value::String(s) => s.trim().parse().ok(),
         Value::Null | Value::Bool(_) | Value::Array(_) | Value::Object(_) => None,
-    }
+    }?;
+    n.is_finite().then_some(n)
 }
 
 /// A non-negative integer field, accepting a JSON integer or an integral numeric string.
-fn integer(row: &Value, field: &str) -> Option<u64> {
+pub(crate) fn integer(row: &Value, field: &str) -> Option<u64> {
     match row.get(field)? {
         Value::Number(n) => n.as_u64(),
         Value::String(s) => s.trim().parse().ok(),
@@ -80,6 +86,10 @@ impl Instance {
     /// let i = Instance::from_json(&row).unwrap();
     /// assert_eq!((i.id, i.ssh_port, i.label), (56053340, Some(23484), None));
     /// assert!(Instance::from_json(&serde_json::json!({"label": "x"})).is_none());
+    /// // Text loses its control characters; a number must be finite.
+    /// let odd = serde_json::json!({"id": 1, "geolocation": "Tex\u{1b}[2Jas, US", "dph_total": "NaN"});
+    /// let i = Instance::from_json(&odd).unwrap();
+    /// assert_eq!((i.geolocation.as_deref(), i.dph_total), (Some("Tex[2Jas, US"), None));
     /// ```
     #[must_use]
     pub fn from_json(row: &Value) -> Option<Self> {
