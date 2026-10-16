@@ -172,7 +172,9 @@ impl Client {
     /// Returns [`SkoposError::Status`] if vast.ai answers with a non-success status.
     /// Returns [`SkoposError::Json`] if the answer is not JSON.
     pub fn account(&self) -> Result<Account> {
-        self.get_json("/api/v0/users/current", &[])
+        // The trailing slash is the canonical path: without it the API answers 301 (dogfooding,
+        // 2026-10-16), and `vas` follows no redirect.
+        self.get_json("/api/v0/users/current/", &[])
             .map(|user| Account::from_json(&user))
     }
 }

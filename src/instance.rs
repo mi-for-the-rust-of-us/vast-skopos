@@ -33,8 +33,11 @@ pub struct Instance {
     pub start_date: Option<f64>,
     /// The `ssh` proxy host (e.g. `ssh4.vast.ai`).
     pub ssh_host: Option<String>,
-    /// The `ssh` proxy port.
+    /// The `ssh_port` field as the API gives it. NOT always the port to connect to: see
+    /// [`Instance::ssh_endpoint`].
     pub ssh_port: Option<u16>,
+    /// How the instance was launched (e.g. `ssh`, `jupyter`); it decides the proxy port.
+    pub image_runtype: Option<String>,
     /// The host's location, when given (e.g. `Vietnam, VN`).
     pub geolocation: Option<String>,
 }
@@ -92,6 +95,7 @@ impl Instance {
             start_date: number(row, "start_date"),
             ssh_host: text(row, "ssh_host"),
             ssh_port: integer(row, "ssh_port").and_then(|p| u16::try_from(p).ok()),
+            image_runtype: text(row, "image_runtype"),
             geolocation: text(row, "geolocation"),
         })
     }
@@ -124,10 +128,29 @@ impl Instance {
         self.actual_status.as_deref() == Some("running")
     }
 
-    /// The `ssh` endpoint, when the API gave both host and port.
+    /// The `ssh` proxy endpoint, when the API gave both host and port.
+    ///
+    /// The official CLI's rule (`_ssh_url`): on the proxy, a Jupyter-launched instance listens on
+    /// `ssh_port + 1`, every other one on `ssh_port`. Found by dogfooding (2026-10-16): a box whose
+    /// API `ssh_port` read 37240 was reached, by the dashboard's own command, on 37241.
+    ///
+    /// ```
+    /// use vast_skopos::instance::Instance;
+    /// let row = |rt: &str| serde_json::json!({"id": 1, "ssh_host": "ssh6.vast.ai",
+    ///   "ssh_port": 37240, "image_runtype": rt});
+    /// let jupyter = Instance::from_json(&row("jupyter")).unwrap();
+    /// assert_eq!(jupyter.ssh_endpoint(), Some(("ssh6.vast.ai", 37241)));
+    /// let plain = Instance::from_json(&row("ssh_direc ssh_proxy")).unwrap();
+    /// assert_eq!(plain.ssh_endpoint(), Some(("ssh6.vast.ai", 37240)));
+    /// ```
     #[must_use]
     pub fn ssh_endpoint(&self) -> Option<(&str, u16)> {
-        Some((self.ssh_host.as_deref()?, self.ssh_port?))
+        let jupyter = self
+            .image_runtype
+            .as_deref()
+            .is_some_and(|r| r.contains("jupyter"));
+        let port = self.ssh_port?.checked_add(u16::from(jupyter))?;
+        Some((self.ssh_host.as_deref()?, port))
     }
 }
 
