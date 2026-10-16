@@ -15,10 +15,10 @@ complements, not alternatives: rent with `vastai` (or the dashboard), watch with
 | **Purpose** | "CLI and SDK for Vast.ai GPU Cloud Service": the whole lifecycle | A lookout over boxes you already rent |
 | **Language, install** | Python ≥ 3.10, `pip install vastai` | Rust, one static binary, `cargo install vast-skopos` |
 | **License** | MIT | MIT OR Apache-2.0 |
-| **Search offers** | yes (`vastai search offers`) | no |
+| **Search offers** | yes (`vastai search offers`: a query language over every offer field, sent as a `POST` to `/api/v0/bundles/`, with the key) | yes, narrower and keyless: `vas offers` with the flags a rental is chosen by (GPU, CUDA, disk, reliability, bandwidth, price, duration, verified, countries and hosts left out), from a config file of flags and the command line. The legacy `GET` form, no `Authorization` header. Every constraint is re-checked on each row, and the footer says when vast.ai's 64-row cap was reached (it answers `truncated: false` all the same) |
 | **Create / stop / destroy instances** | yes | **no, by design**: `vas` only ever issues `GET` |
 | **Serverless endpoints** | yes (a serverless client) | no |
-| **SDK (library use)** | yes, Python | yes, a small Rust library (`api`, `instance`, `probe`, `render`) |
+| **SDK (library use)** | yes, Python | yes, a small Rust library (`api`, `instance`, `offer`, `config`, `probe`, `render`) |
 | **List instances** | yes (`show instances`, paginated `/api/v1/instances/`) | yes, the same endpoint and pagination, read field by field so an API change costs one cell, not the table |
 | **Account credit** | yes (`show user`) | yes, plus the **burn rate** of the running boxes and the **hours of runway** it buys |
 | **Cost so far per box** | the dashboard and invoices | an estimate per row (today's `$/h` × age), labelled `COST~` |
@@ -35,6 +35,8 @@ complements, not alternatives: rent with `vastai` (or the dashboard), watch with
 
 ## When to use which
 
+- **Choosing what to rent:** `vas offers`, with your filters in its config file, then rent the `ID`
+  you chose with `vastai create instance` or the dashboard.
 - **Renting, resizing, stopping, destroying:** `vastai` or the dashboard. `vas` cannot, and will not.
 - **"Are my runs actually training, and how long does my credit last?"** `vas --ssh --log ... --watch 300`:
   one table, measured on the boxes, with the runway.
@@ -44,6 +46,7 @@ complements, not alternatives: rent with `vastai` (or the dashboard), watch with
 ## What `vas` learned from `vastai`'s source
 
 The endpoints and their pagination, the key file locations, and the Jupyter `+1` ssh-port rule all
-come from reading `vast.py` (the functions `_fetch_all_instances_v1`, `show__user`, `_ssh_url`). Two
-of them were found the hard way, by dogfooding (`docs/dogfooding/2026-10-16.md`): the redirect on
-`users/current` and the `+1` port.
+come from reading `vast.py` (the functions `_fetch_all_instances_v1`, `show__user`, `_ssh_url`,
+`search__offers`, whose default storage of 5 GiB `vas offers` prices in too). Two of them were found
+the hard way, by dogfooding (`docs/dogfooding/2026-10-16.md`): the redirect on `users/current` and
+the `+1` port. The offer search's 64-row cap was found by probing it (same note).

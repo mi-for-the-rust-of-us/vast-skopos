@@ -9,7 +9,7 @@
 **σκοπός** — *Your rented vast.ai boxes, watched.* **Not affiliated with vast.ai:** an independent,
 read-only tool that reads the vast.ai API with your own key, and your boxes over your own `ssh`.
 
-> 🆕 **`0.1.0` (unreleased) watched its first rental, then learned to name the run it reads.** `vas` watched askesis's Me35 rental (three RTX 5090s, six runs, 2026-10-16); its first minutes fixed what that rental found: the account endpoint's `301` (no redirect is ever followed, so the canonical `/api/v0/users/current/` is requested) and the `ssh` proxy port of Jupyter-launched boxes (`ssh_port + 1`, the dashboard's own rule). For Me36's four sequential runs per box, `--log` now names the run it read (`me36_ab_s0_d1/train.log: …`) and says `(no file matches)`, `(not a file)`, `(empty)` or `?` where it once printed a bare `-`; a key saved by Notepad as `vast_api_key.txt` is named in the error. See [`CHANGELOG.md`](CHANGELOG.md) and [`docs/dogfooding/2026-10-16.md`](docs/dogfooding/2026-10-16.md).
+> 🆕 **`0.1.0` (unreleased) watched its first rental, then learned to name the run it reads.** `vas` watched askesis's Me35 rental (three RTX 5090s, six runs, 2026-10-16); its first minutes fixed what that rental found: the account endpoint's `301` (no redirect is ever followed, so the canonical `/api/v0/users/current/` is requested) and the `ssh` proxy port of Jupyter-launched boxes (`ssh_port + 1`, the dashboard's own rule). For Me36's four sequential runs per box, `--log` now names the run it read (`me36_ab_s0_d1/train.log: …`) and says `(no file matches)`, `(not a file)`, `(empty)` or `?` where it once printed a bare `-`; a key saved by Notepad as `vast_api_key.txt` is named in the error. And before the next rental, **`vas offers`** lists the offers that pass your renting filters, keyless, with every constraint re-checked on each row and vast.ai's 64-row cap said aloud. See [`CHANGELOG.md`](CHANGELOG.md) and [`docs/dogfooding/2026-10-16.md`](docs/dogfooding/2026-10-16.md).
 
 ## Table of Contents
 
@@ -30,6 +30,7 @@ read-only tool that reads the vast.ai API with your own key, and your boxes over
 > - **Which run is each box on, and what did it last write?** → [`vas --ssh --log '/root/runs/*/train.log'`](#binary-vas) — the newest matching file, named, and its last non-blank line.
 > - **How long will my credit last?** → the money line: `credit | burn $/h over N running | ~H h left at this rate`.
 > - **A long rental to watch?** → `vas --ssh --log … --watch 120` — the table every two minutes, until Ctrl+C.
+> - **Which boxes could I rent that pass my filters?** → [`vas offers`](#vas-offers) — GPU, CUDA, disk, reliability, upload, countries and hosts left out, cheapest first; no key needed, and the filters can live in a config file.
 > - **`no vast.ai API key found`?** → [The API key](#the-api-key) — where `vas` looks, and why there is no `--key` flag.
 >
 > Every flag is in `vas --help`; how `vas` differs from Vast.ai's own CLI is in [`docs/comparison-with-vastai.md`](docs/comparison-with-vastai.md).
@@ -77,6 +78,31 @@ fn main() -> vast_skopos::Result<()> {
 
 `render::table` and `render::money_line` print what `vas` prints.
 
+The offer search needs no key:
+
+```rust
+use vast_skopos::api::SearchClient;
+use vast_skopos::offer::{OfferQuery, OfferSort, select};
+
+fn main() -> vast_skopos::Result<()> {
+    let mut q = OfferQuery::default(); // the identity: every offer rentable now
+    q.gpu = Some("RTX 5090".to_owned());
+    q.reliability = Some(0.99);
+    q.exclude_countries = vec!["CN".to_owned()];
+    let page = SearchClient::new().offers(&q, OfferSort::Price)?;
+    if page.maybe_cut() {
+        eprintln!("{} returned: vast.ai's cap, narrow the search", page.returned);
+    }
+    // Every constraint was sent; `select` re-checks each row and sorts again.
+    for o in select(page.offers, &q, OfferSort::Price) {
+        println!("{} {:?} $/h {:?}", o.id, o.dph_total, o.geolocation);
+    }
+    Ok(())
+}
+```
+
+`render::offers_table` and `render::offers_line` print what `vas offers` prints.
+
 ## Try it
 
 With your key where the `vastai` CLI keeps it ([The API key](#the-api-key)):
@@ -89,6 +115,19 @@ ID        LABEL  GPU          WHERE  STATUS   $/H    AGE    COST~  SSH          
 credit $5.94 | burn $0.643/h over 1 running | ~9.2 h left at this rate
 ```
 
+And with no key at all, the offers askesis rents by (captured 2026-10-16, 20:34):
+
+```text
+$ vas offers --gpu RTX_5090 --num-gpus 1 --cuda 12.8 --disk 50 --reliability 0.99 --inet-up 200 --exclude-country CN --exclude-host 362355 --verified --top 5
+ID        GPU          VRAM  $/H    CUDA  DISK   UP/DOWN Mb/s  REL %  MAX DAYS  HOST    VERIFICATION  WHERE
+50584160  1x RTX 5090  32G   0.775  13.0  1022G  2004/2835     99.31  145.7     86295   verified      Estonia, EE
+51905774  1x RTX 5090  32G   0.890  13.2  1309G  2242/2966     99.57  76.9      270760  verified      Denmark, DK
+47238961  1x RTX 5090  32G   0.954  13.2  2391G  1745/1778     99.34  115.4     567249  verified      Hungary, HU
+45618801  1x RTX 5090  32G   0.980  13.0  668G   6756/8514     99.46  60.8      256524  verified      California, US
+52725385  1x RTX 5090  32G   1.014  13.2  271G   272/304       99.37  9.5       154140  verified      South Africa, ZA
+5 of 17 offers shown, cheapest first | RTX 5090, 1 GPU, disk >= 50 GB, CUDA >= 12.8, reliability >= 99 %, up >= 200 Mb/s, verified, not in CN, not hosts 362355 | $/h includes 50 GB of storage
+```
+
 ## Binary (`vas`)
 
 | | |
@@ -99,6 +138,7 @@ credit $5.94 | burn $0.643/h over 1 running | ~9.2 h left at this rate
 | `vas --ssh -i ~/.ssh/id_ed25519` | use this private key (default: `ssh`'s own choice, agent and `~/.ssh/config`) |
 | `vas --watch 60` | refresh every 60 s (at least 30) until Ctrl+C |
 | `vas --key-file FILE` | read the key from `FILE` |
+| `vas offers [FLAGS]` | the offers for rent that pass the flags, cheapest first; no key needed ([below](#vas-offers)) |
 
 `--ssh` uses your system `ssh` with `BatchMode=yes`, `ConnectTimeout=10` and keep-alives, gives
 each probe 30 s in all (and `nvidia-smi` 20 s on the box), and makes **one attempt** per box per
@@ -108,6 +148,50 @@ vast.ai's `ssh` proxies are reached by port.
 
 `COST~` is an estimate: today's `$/h` times the hours since creation. vast.ai bills storage while an
 instance is stopped and prices can change; the invoice is the reference.
+
+### `vas offers`
+
+| Flag | |
+|---|---|
+| `--gpu MODEL` | the GPU model as vast.ai names it: `RTX_5090` or `"RTX 5090"` (an underscore reads as a space) |
+| `--num-gpus N` | the number of GPUs |
+| `--disk GB` | the disk wanted: priced into `$/h` and required free (unset, 5 GB is priced in: the `vastai` CLI's default) |
+| `--cuda VERSION` | the lowest CUDA version the host's driver must support (`12.8`) |
+| `--reliability FRACTION` | the lowest reliability, from 0 to 1 (`0.99`; `99` is refused) |
+| `--inet-up MBIT_S`, `--inet-down MBIT_S` | the lowest ADVERTISED bandwidth (the host's own test, not your route: see the dogfooding note) |
+| `--max-price DOLLARS`, `--min-days DAYS` | the highest `$/h` (storage included), the shortest acceptable maximum rental |
+| `--verified`, `--no-verified` | only machines vast.ai has verified; `--no-verified` cancels a config file's `--verified` |
+| `--exclude-country CC`, `--exclude-host ID` | leave out a country (two letters) or a host; repeatable |
+| `--top N` (20), `--sort price\|reliability\|up` | how many rows, in which order |
+| `--config FILE`, `--no-config` | read the flags of `FILE` first, or of no file |
+
+**The config file** holds the same flags, one per line (`#` lines are comments, one pair of quotes
+around a value is removed), and is read FIRST: `$XDG_CONFIG_HOME/vast-skopos/offers`, else
+`~/.config/vast-skopos/offers`, else the one `--config` names. On the command line, a single value
+replaces the file's, and a list adds to it (`--exclude-country RU` keeps the file's `CN`). A missing
+default file is no file; a missing `--config` file, an unreadable file or a line that is not a flag
+stops the run, since going on would silently drop the exclusions it holds. With no constraint at
+all, `vas offers` lists every offer rentable now, and says so on stderr.
+
+```text
+# ~/.config/vast-skopos/offers: askesis's renting filters
+--gpu RTX_5090
+--num-gpus 1
+--cuda 12.8
+--disk 50
+--reliability 0.99
+--inet-up 200
+--verified
+--exclude-country CN
+--exclude-host 362355
+```
+
+**What the footer says.** vast.ai answers at most **64 rows** per search, whatever it is asked, and
+still says `truncated: false`; its order decides which 64 come back, so `--sort` is sent to the
+server too. When 64 rows come back, the footer says the list may be cut: narrow the search. Every
+constraint is also **re-checked on each row**: a row whose field contradicts one is dropped (and
+counted in the footer); a row MISSING the field is kept, with a dash. The footer also names every
+constraint applied (a config file never acts unseen) and the storage priced into `$/h`.
 
 ### The API key
 
@@ -129,6 +213,9 @@ error names it and says to rename it.
 
 **Use a read-only key if you can** (on vast.ai: User Read and Instances Read, nothing else).
 
+`vas offers` needs no key, and never looks for one: the offer search is public, and is sent
+without any `Authorization` header.
+
 ### `vas` and `vastai`
 
 `vastai`, Vast.ai's own CLI and SDK, rents and manages boxes; `vas` only watches them, read-only.
@@ -138,7 +225,8 @@ them row by row.
 #### Why read-only?
 
 `vas` only ever issues `GET` requests: it never creates, starts, stops, labels or destroys an
-instance. A monitor that can spend or destroy is a different tool, with a different review; what to
+instance. `vas offers` searches, and rents nothing: to rent the offer you chose, take its `ID` to the
+dashboard or to `vastai create instance`. A monitor that can spend or destroy is a different tool, with a different review; what to
 do about a box (stop it, destroy it, top up the credit) stays a person's decision, taken in the
 dashboard or with `vastai`.
 
@@ -152,6 +240,7 @@ dashboard or with `vastai`.
 | GPU utilisation and VRAM | the box itself, `nvidia-smi` over the system `ssh` | the API's `gpu_util` is never shown: it has read 0 % on boxes running at 97-99 % |
 | What the run last wrote | the box itself, the newest match of `--log` | at most 4096 bytes come back; both `ssh` pipes are drained while it runs |
 | Cost so far | an estimate, `$/h` × age | the invoice is the reference |
+| Offers for rent | vast.ai API, `GET /api/v0/bundles/?q=<JSON>`, sent **without a key** | at most 64 rows per search (said in the footer when reached); every constraint sent AND re-checked on each row; host-written text loses its control characters |
 
 The base URL is `https://console.vast.ai`, or `VAST_URL` when set. The endpoints and their
 pagination follow the official `vastai` CLI's source. An instance can show "open" long after its
@@ -168,8 +257,8 @@ rental is a budget, and how long the credit lasts at the current burn is the num
 
 | Doc | |
 |-----|---|
-| [`vas` and `vastai`](docs/comparison-with-vastai.md) | Vast.ai's own CLI/SDK and `vas`, compared row by row: scope, read-only by design, the GPU read on the box, the runway, key hygiene, redirects, the `ssh` port rule |
-| [Dogfooding, 2026-10-16](docs/dogfooding/2026-10-16.md) | The first real rental (Me35, three RTX 5090s): what broke in the first minute, what helped, and the next features |
+| [`vas` and `vastai`](docs/comparison-with-vastai.md) | Vast.ai's own CLI/SDK and `vas`, compared row by row: scope, read-only by design, the GPU read on the box, the runway, the offer search, key hygiene, redirects, the `ssh` port rule |
+| [Dogfooding, 2026-10-16](docs/dogfooding/2026-10-16.md) | The first real rental (Me35, three RTX 5090s): what broke in the first minute, what helped, the next features, and `vas offers` probed and built for the next rental |
 | [CONVENTIONS](CONVENTIONS.md) | The rules every line follows, the API-key and box rules included |
 | [CHANGELOG](CHANGELOG.md) | Release history |
 
@@ -178,7 +267,7 @@ rental is a budget, and how long the credit lasts at the current burn is the num
 - **askesis** (private) — PCfVW's research on planning inside a model, whose models are trained on
   rented vast.ai GPUs. `vas` watched its Me35 rental (three RTX 5090s, six runs, 2026-10-16), and
   its dogfooding notes drove `0.1.0`'s fixes; `--log` naming the run was written for Me36's four
-  sequential runs per box.
+  sequential runs per box, and `vas offers` for renting Me36's boxes by askesis's filters.
 
 ## License
 

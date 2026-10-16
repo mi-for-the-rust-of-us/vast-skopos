@@ -280,6 +280,9 @@ the `Authorization: Bearer` header of a request to the vast.ai API host.
   (a `--key` flag would land in shell history): `VAST_API_KEY`, the `vastai` CLI's
   key files, or `--key-file`.
 - **Tests use dummy keys** and assert that error text does not contain them.
+- **What needs no key gets none.** The offer search is public: `SearchClient` holds no key and
+  sends no `Authorization` header (`get_json(.., bearer: None, ..)`), and `vas offers` never
+  looks for one. The mock tests assert the header is absent.
 
 ## When Calling the vast.ai API
 
@@ -287,17 +290,45 @@ the `Authorization: Bearer` header of a request to the vast.ai API host.
 
 `vas` only ever issues `GET`. It never creates, starts, stops, labels or destroys
 an instance: a monitor that can spend or destroy is a different tool, with a
-different review.
+different review. The offer search is the `GET /api/v0/bundles/?q=` form, the
+predecessor the official CLI keeps commented out beside its `POST`: it is still
+answered, and keeps `vas` to `GET`. If it goes (404/405, hinted), moving to `POST`
+is a change of rule, with its own review, not a silent fallback.
 
 ### Lenient Reading
 
-Rows are read field by field from `serde_json::Value` (`instance.rs`), never with a
-derived `Deserialize` over the whole row: the API adds, drops and retypes fields,
-and one unused field changing type must cost a dash in one cell, not the whole table.
-Numbers accept a JSON number or a numeric string; a row without an integer `id` is skipped.
+Rows are read field by field from `serde_json::Value` (`instance.rs`, `offer.rs`),
+never with a derived `Deserialize` over the whole row: the API adds, drops and
+retypes fields, and one unused field changing type must cost a dash in one cell, not
+the whole table. Numbers accept a JSON number or a numeric string and must be finite;
+text loses its control characters (it comes from other people's hosts and reaches a
+terminal); a row without an integer `id` is skipped (and counted).
 
 The endpoints and their pagination follow the official `vastai` CLI's source (cite the
-function when changing one: `_fetch_all_instances_v1`, `show__user`).
+function when changing one: `_fetch_all_instances_v1`, `show__user`, `search__offers`).
+
+### Adding a `vas offers` Constraint
+
+The server answers at most 64 rows and may ignore a filter it does not know, so a
+constraint lives in SIX places, kept in step:
+
+1. an `OfferQuery` field (documented with its unit);
+2. `OfferQuery::is_identity`;
+3. `OfferQuery::to_q`: sent to the server, in the server's unit (days become seconds);
+4. `OfferQuery::admits`: re-checked on each row with the SAME semantics and unit; a
+   field the row has that contradicts it drops the row, a missing field keeps it;
+5. `OfferQuery::summary`: the footer names it, so a config file never acts unseen;
+6. the flag in `src/bin/vas.rs` (its value parser refuses non-finite and out-of-range
+   values) and `OffersArgs::query`.
+
+A test decodes the `q` the mock received and compares it whole.
+
+### The Config File
+
+A config file holds deny-lists, so it never fails open: a missing default file is no
+file, but a missing `--config` file, an unreadable file or a malformed line stops the
+run before any request. Each line becomes ONE word, `--name=value`, so clap reads a
+value starting with `-` as a value; `--config` and `--no-config` are refused inside it.
 
 ## When Talking to a Box
 
