@@ -13,6 +13,7 @@
 //! The library half is what `vas` is built from:
 //!
 //! - [`key`]: where the API key is found (and that it is never printed);
+//! - [`config`]: the `vas offers` config file, a file of flags;
 //! - [`api`]: the three endpoints read (`/api/v1/instances/`, paginated, and
 //!   `/api/v0/users/current/`, with the key; the offer search, without);
 //! - [`instance`]: the lenient readers of their JSON;
@@ -21,6 +22,7 @@
 //! - [`render`]: the tables.
 
 pub mod api;
+pub mod config;
 pub mod error;
 pub mod instance;
 pub mod key;

@@ -98,9 +98,9 @@ impl ApiKey {
     }
 }
 
-/// A key file's text: UTF-16 with a byte-order mark (what Windows `PowerShell` 5.1's `>`
-/// writes), else UTF-8; `None` when neither.
-fn decode(bytes: &[u8]) -> Option<String> {
+/// A key (or config) file's text: UTF-16 with a byte-order mark (what Windows `PowerShell` 5.1's
+/// `>` writes), else UTF-8; `None` when neither.
+pub(crate) fn decode(bytes: &[u8]) -> Option<String> {
     let units = |big: bool| -> Vec<u16> {
         bytes
             .get(2..)
@@ -173,7 +173,7 @@ pub fn txt_hint(candidates: &[PathBuf], is_file: impl Fn(&Path) -> bool) -> Stri
 }
 
 /// The user's home: `HOME`, else `USERPROFILE` (Windows).
-fn home() -> Option<PathBuf> {
+pub(crate) fn home() -> Option<PathBuf> {
     std::env::var_os("HOME")
         .filter(|v| !v.is_empty())
         .or_else(|| std::env::var_os("USERPROFILE").filter(|v| !v.is_empty()))

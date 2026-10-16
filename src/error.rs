@@ -26,6 +26,27 @@ pub enum SkoposError {
         source: std::io::Error,
     },
 
+    /// The `vas offers` config file cannot be read (or, named by `--config`, does not exist).
+    #[error("failed to read the config file {path}: {source}")]
+    ConfigFile {
+        /// The file.
+        path: String,
+        /// The underlying I/O error.
+        #[source]
+        source: std::io::Error,
+    },
+
+    /// A line of the `vas offers` config file is not a flag.
+    #[error("{path}, line {line}: {problem}")]
+    Config {
+        /// The file.
+        path: String,
+        /// The line, from 1.
+        line: usize,
+        /// What is wrong with it.
+        problem: String,
+    },
+
     /// vast.ai answered with a non-success HTTP status.
     #[error("vast.ai returned status {status} for {endpoint}{hint}")]
     Status {
