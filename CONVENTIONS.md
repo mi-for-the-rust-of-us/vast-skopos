@@ -22,6 +22,8 @@ last two sections are this crate's own: [the API key](#when-handling-the-api-key
 | Write `Box<dyn T>` or `&dyn T` | [`// TRAIT_OBJECT:`](#trait_object-annotation) |
 | Write a `match` or `if let` | [Control-flow rules](#if-let-vs-match), [`// EXPLICIT:`](#explicit-annotation) if no-op arm |
 | Write error strings | [Error message wording](#error-message-wording) |
+| Add `#[allow(clippy::...)]` for a lint newer than the MSRV | [MSRV lint guard](#msrv-lint-guard) |
+| Push, or open a pull request | [The local gates](#the-local-gates) |
 | Touch the API key, a header, an error or any output | [The API key](#when-handling-the-api-key) |
 | Call the vast.ai API | [Read-only](#read-only), [lenient reading](#lenient-reading) |
 | Run `ssh` or anything on a box | [Talking to a box](#when-talking-to-a-box) |
@@ -223,7 +225,43 @@ Rules:
 - Include the offending value (the endpoint, `host:port`, the status) and, for the
   common statuses, a short hint (`401`: is the key right?).
 - Wrap external errors with `: {e}`, not `.to_string()`.
-- **Never the API key**, in any error (next section).
+- **Never the API key**, in any error ([The API key](#when-handling-the-api-key)).
+
+---
+
+## When Suppressing a Lint, and Before a Push
+
+### MSRV Lint Guard
+
+`Cargo.toml`'s `[lints.rust]` sets `unknown_lints = "allow"` (after hypomnesis's `lib.rs` guard), so
+an `#[allow(clippy::newer_lint)]` naming a lint the MSRV toolchain (1.88) does not know cannot fail
+the MSRV build under `-D warnings`. It lives in `Cargo.toml`, not `lib.rs`, because the integration
+tests and `vas` are crates of their own.
+
+The price: a misspelt lint name in an `allow` is not reported. Check a suppression by changing
+`#[allow]` to `#[expect]` for a moment, on stable AND on the MSRV: some lints fire on only one
+toolchain. (2026-10-16, the first CI run: clippy 1.88's `doc_markdown` flagged a bare `PowerShell`
+that stable's does not, and all three MSRV jobs failed.)
+
+### The Local Gates
+
+Before a push, each command alone, its exit code read on its own (never through a pipe, which
+reports the pipe's last command):
+
+```sh
+cargo fmt --check
+cargo check --locked --no-default-features
+cargo clippy --locked --all-targets --no-default-features -- -D warnings
+cargo clippy --locked --all-targets --all-features -- -D warnings
+cargo +1.88 clippy --locked --all-targets --all-features -- -D warnings
+cargo test --locked --all-features
+cargo +1.88 test --locked --all-features
+RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps
+```
+
+A test file gated on a platform (`tests/remote.rs`, `#![cfg(target_os = "linux")]`) compiles to
+nothing elsewhere, so no Windows or macOS gate lints or runs it: lint it with the gate lifted (on a
+copy, restored and checked by its checksum), and let Linux CI run it.
 
 ---
 

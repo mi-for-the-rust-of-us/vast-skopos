@@ -36,6 +36,10 @@ required-features = ["cli"]
 elided_lifetimes_in_paths = "deny"
 missing_docs              = "warn"
 unsafe_code               = "forbid"
+# The MSRV lint guard (CONVENTIONS.md, after hypomnesis): an `allow` of a clippy lint newer than the
+# MSRV (1.88) names a lint that toolchain does not know, which `-D warnings` would turn into a failed
+# MSRV build. Here, not in `lib.rs`: the tests and `vas` are crates of their own and need it too.
+unknown_lints             = "allow"
 
 [lints.clippy]
 # Rule 3: No panics or indexing in library code
