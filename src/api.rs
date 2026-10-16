@@ -264,6 +264,12 @@ impl SearchClient {
     }
 
     /// A search client against `base` (e.g. a test server), with the same timeout.
+    ///
+    /// ```
+    /// use vast_skopos::api::SearchClient;
+    /// assert_eq!(SearchClient::with_base("http://127.0.0.1:9/").base(), "http://127.0.0.1:9");
+    /// assert!(SearchClient::new().base().starts_with("http"));
+    /// ```
     #[must_use]
     pub fn with_base(base: &str) -> Self {
         let mut client = Self::new();

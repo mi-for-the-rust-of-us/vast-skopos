@@ -166,8 +166,8 @@ instance is stopped and prices can change; the invoice is the reference.
 | `--config FILE`, `--no-config` | read the flags of `FILE` first, or of no file |
 
 **The config file** holds the same flags, one per line (`#` lines are comments, one pair of quotes
-around a value is removed), and is read FIRST: `$XDG_CONFIG_HOME/vast-skopos/offers`, else
-`~/.config/vast-skopos/offers`, else the one `--config` names. On the command line, a single value
+around a value is removed), and is read FIRST: the one `--config` names, else
+`$XDG_CONFIG_HOME/vast-skopos/offers`, else `~/.config/vast-skopos/offers`. On the command line, a single value
 replaces the file's, and a list adds to it (`--exclude-country RU` keeps the file's `CN`). A missing
 default file is no file; a missing `--config` file, an unreadable file or a line that is not a flag
 stops the run, since going on would silently drop the exclusions it holds. With no constraint at
@@ -240,7 +240,7 @@ dashboard or with `vastai`.
 | GPU utilisation and VRAM | the box itself, `nvidia-smi` over the system `ssh` | the API's `gpu_util` is never shown: it has read 0 % on boxes running at 97-99 % |
 | What the run last wrote | the box itself, the newest match of `--log` | at most 4096 bytes come back; both `ssh` pipes are drained while it runs |
 | Cost so far | an estimate, `$/h` × age | the invoice is the reference |
-| Offers for rent | vast.ai API, `GET /api/v0/bundles/?q=<JSON>`, sent **without a key** | at most 64 rows per search (said in the footer when reached); every constraint sent AND re-checked on each row; host-written text loses its control characters |
+| Offers for rent | vast.ai API, `GET /api/v0/bundles/?q=<JSON>`, sent **without a key** | at most 64 rows per search (said in the footer when reached); every constraint sent AND re-checked on each row; host-written text loses its control and invisible characters (bidirectional overrides, zero-width), and a cell keeps at most 40 characters |
 
 The base URL is `https://console.vast.ai`, or `VAST_URL` when set. The endpoints and their
 pagination follow the official `vastai` CLI's source. An instance can show "open" long after its

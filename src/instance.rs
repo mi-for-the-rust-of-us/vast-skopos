@@ -42,14 +42,32 @@ pub struct Instance {
     pub geolocation: Option<String>,
 }
 
-/// A string field, control characters dropped (the text comes from the API and from other people's
-/// hosts, and never reaches the terminal raw); `None` when absent, null, empty or not a string.
+/// Whether `c` must not reach a terminal from someone else's text: a control character, or an
+/// invisible one that can still reorder or hide what is shown (zero-width characters, the Arabic
+/// letter mark, bidirectional embeddings, overrides and isolates, the line and paragraph
+/// separators, word joiners, the byte-order mark).
+pub(crate) fn is_hidden(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{061C}'
+                | '\u{200B}'..='\u{200F}'
+                | '\u{2028}'..='\u{202E}'
+                | '\u{2060}'..='\u{2064}'
+                | '\u{2066}'..='\u{2069}'
+                | '\u{FEFF}'
+        )
+}
+
+/// A string field, hidden characters dropped ([`is_hidden`]: the text comes from the API and from
+/// other people's hosts, and never reaches the terminal raw); `None` when absent, null, empty or
+/// not a string.
 pub(crate) fn text(row: &Value, field: &str) -> Option<String> {
     let kept: String = row
         .get(field)
         .and_then(Value::as_str)?
         .chars()
-        .filter(|c| !c.is_control())
+        .filter(|&c| !is_hidden(c))
         .collect();
     let kept = kept.trim();
     // BORROW: explicit to_owned -- the row outlives the response it was read from
@@ -65,6 +83,11 @@ pub(crate) fn number(row: &Value, field: &str) -> Option<f64> {
         Value::Null | Value::Bool(_) | Value::Array(_) | Value::Object(_) => None,
     }?;
     n.is_finite().then_some(n)
+}
+
+/// A boolean field; `None` when absent or not a JSON boolean.
+pub(crate) fn boolean(row: &Value, field: &str) -> Option<bool> {
+    row.get(field).and_then(Value::as_bool)
 }
 
 /// A non-negative integer field, accepting a JSON integer or an integral numeric string.
@@ -86,10 +109,12 @@ impl Instance {
     /// let i = Instance::from_json(&row).unwrap();
     /// assert_eq!((i.id, i.ssh_port, i.label), (56053340, Some(23484), None));
     /// assert!(Instance::from_json(&serde_json::json!({"label": "x"})).is_none());
-    /// // Text loses its control characters; a number must be finite.
-    /// let odd = serde_json::json!({"id": 1, "geolocation": "Tex\u{1b}[2Jas, US", "dph_total": "NaN"});
+    /// // Text loses its control and invisible characters; a number must be finite.
+    /// let odd = serde_json::json!({"id": 1, "geolocation": "Tex\u{1b}[2Jas, US", "dph_total": "NaN",
+    ///   "gpu_name": "RTX\u{202e} 5090\u{200b}"});
     /// let i = Instance::from_json(&odd).unwrap();
     /// assert_eq!((i.geolocation.as_deref(), i.dph_total), (Some("Tex[2Jas, US"), None));
+    /// assert_eq!(i.gpu_name.as_deref(), Some("RTX 5090"));
     /// ```
     #[must_use]
     pub fn from_json(row: &Value) -> Option<Self> {

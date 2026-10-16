@@ -2,6 +2,7 @@
 //! affiliated with vast.ai.
 
 use std::ffi::{OsStr, OsString};
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -224,6 +225,15 @@ fn country(code: &str) -> Result<String, String> {
     country_code(code).ok_or_else(|| String::from("two letters, e.g. CN"))
 }
 
+/// Writes `text` to stdout; whether it was written. A closed pipe ends the output quietly, where
+/// `print!` would panic.
+fn emit(text: &str) -> bool {
+    let mut out = std::io::stdout().lock();
+    out.write_all(text.as_bytes())
+        .and_then(|()| out.flush())
+        .is_ok()
+}
+
 /// Unix seconds now.
 fn now() -> f64 {
     SystemTime::now()
@@ -312,13 +322,18 @@ fn lookout(args: &LookArgs) -> ExitCode {
     loop {
         match look(&client, args) {
             Ok(text) => {
-                if args.watch.is_some() {
-                    let stamp = SystemTime::now()
+                let stamp = if args.watch.is_some() {
+                    let secs = SystemTime::now()
                         .duration_since(UNIX_EPOCH)
                         .map_or(0, |d| d.as_secs());
-                    println!("== vas, unix time {stamp}");
+                    format!("== vas, unix time {secs}\n")
+                } else {
+                    String::new()
+                };
+                if !emit(&format!("{stamp}{text}")) {
+                    // The reader is gone (`vas --watch 60 | head`): nothing more to show.
+                    return ExitCode::SUCCESS;
                 }
-                print!("{text}");
             }
             Err(e) => {
                 eprintln!("vas: {e}");
@@ -411,11 +426,9 @@ fn offers(args: OffersArgs) -> ExitCode {
             // BORROW: explicit clone -- the footer reads the page again
             let kept = select(page.offers.clone(), &query, sort);
             let top = usize::try_from(args.top).unwrap_or(usize::MAX);
-            print!("{}", offers_table(&kept, top));
-            print!(
-                "{}",
-                offers_line(&page, kept.len(), kept.len().min(top), &query, sort)
-            );
+            let footer = offers_line(&page, kept.len(), kept.len().min(top), &query, sort);
+            // A closed pipe (`vas offers | head -3`) is the reader's choice, not a failure.
+            let _ = emit(&format!("{}{footer}", offers_table(&kept, top)));
             ExitCode::SUCCESS
         }
         Err(e) => {

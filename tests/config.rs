@@ -45,5 +45,9 @@ fn a_malformed_line_names_the_file_and_the_line() {
     std::fs::remove_dir_all(&dir).unwrap();
     assert!(matches!(err, SkoposError::Config { line: 3, .. }), "{err}");
     let text = err.to_string();
-    assert!(text.contains("offers, line 3: not a flag"), "{text}");
+    assert!(
+        text.starts_with("line 3 of the config file ")
+            && text.contains("offers is refused: \"gpu RTX_4090\" (not a flag"),
+        "{text}"
+    );
 }

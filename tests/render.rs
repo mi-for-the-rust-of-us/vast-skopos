@@ -142,3 +142,33 @@ fn an_answer_at_the_cap_says_the_list_may_be_cut() {
         "{footer}"
     );
 }
+
+#[test]
+fn the_server_saying_truncated_and_rows_without_an_id_are_noted() {
+    let page = OfferPage::from_json(&serde_json::json!(
+        {"offers": [{"id": 1}, {"gpu_name": "no id"}], "truncated": true}))
+    .unwrap();
+    let footer = offers_line(&page, 1, 1, &OfferQuery::default(), OfferSort::Price);
+    assert!(
+        footer.ends_with(
+            "vast.ai says the list was cut (narrow the search) | 1 without an id skipped\n"
+        ),
+        "{footer}"
+    );
+}
+
+#[test]
+fn a_long_host_written_cell_is_capped_and_its_hidden_characters_dropped() {
+    let long = format!("RTX\u{202e} {}", "9".repeat(500));
+    let offer = vast_skopos::offer::Offer::from_json(&serde_json::json!(
+        {"id": 1, "gpu_name": long, "geolocation": format!("{}, US", "Z".repeat(500))}))
+    .unwrap();
+    let text = offers_table(&[offer], 1);
+    let row = text.lines().nth(1).unwrap();
+    assert!(!row.contains('\u{202e}'), "{row}");
+    assert!(
+        row.chars().count() < 200,
+        "two capped cells, not 1000 characters: {row}"
+    );
+    assert_eq!(row.matches('…').count(), 2, "{row}");
+}

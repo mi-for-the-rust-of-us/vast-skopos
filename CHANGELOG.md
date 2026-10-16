@@ -47,5 +47,9 @@ All notable changes to this project are documented here. The format is based on
 ### Changed
 
 - The lenient readers keep finite numbers only (a numeric string can spell `NaN` or `inf`) and
-  drop control characters from text, which comes from other people's hosts.
+  drop control and invisible characters (bidirectional overrides and isolates, zero-width
+  characters, the line separators, the byte-order mark) from text, which comes from other
+  people's hosts; a host-written cell keeps at most 40 characters.
+- Output goes through one write that a closed pipe ends quietly (`vas offers | head -3`), where
+  `print!` panicked.
 - A redirect status says that `vas` follows none.

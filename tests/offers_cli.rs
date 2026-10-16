@@ -38,8 +38,15 @@ fn write_config(dir: &Path, text: &str) -> PathBuf {
 }
 
 /// `vas args` against `base`, with `home` as the home, `home/xdg` as `XDG_CONFIG_HOME` when `xdg`,
-/// and no key in the environment; then the home is removed. Returns the output, stdout, stderr.
-fn vas(base: &str, home: &Path, xdg: bool, args: &[&str]) -> (Output, String, String) {
+/// no key in the environment but what `env` adds; the home is kept. Returns the output, stdout,
+/// stderr.
+fn vas_in(
+    base: &str,
+    home: &Path,
+    xdg: bool,
+    env: &[(&str, &str)],
+    args: &[&str],
+) -> (Output, String, String) {
     let mut command = Command::new(env!("CARGO_BIN_EXE_vas"));
     command
         .args(args)
@@ -52,11 +59,20 @@ fn vas(base: &str, home: &Path, xdg: bool, args: &[&str]) -> (Output, String, St
     } else {
         command.env_remove("XDG_CONFIG_HOME");
     }
+    for &(name, value) in env {
+        command.env(name, value);
+    }
     let out = command.output().unwrap();
-    std::fs::remove_dir_all(home).unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
     (out, stdout, stderr)
+}
+
+/// [`vas_in`] with no added environment; then the home is removed.
+fn vas(base: &str, home: &Path, xdg: bool, args: &[&str]) -> (Output, String, String) {
+    let ran = vas_in(base, home, xdg, &[], args);
+    std::fs::remove_dir_all(home).unwrap();
+    ran
 }
 
 /// The one request the mock saw.
@@ -196,14 +212,13 @@ fn a_named_config_file_is_read_and_a_missing_one_stops_the_run() {
     let home = fresh_home("named");
     let file = write_config(&home.join("elsewhere"), "--num-gpus 2\n");
     let missing = home.join("missing");
-    let mut command = Command::new(env!("CARGO_BIN_EXE_vas"));
-    let found = command
-        .args(["offers", "--config"])
-        .arg(&file)
-        .env("VAST_URL", &base)
-        .env_remove("VAST_API_KEY")
-        .output()
-        .unwrap();
+    let (found, _, _) = vas_in(
+        &base,
+        &home,
+        true,
+        &[],
+        &["offers", "--config", file.to_str().unwrap()],
+    );
     let (out, _, stderr) = vas(
         &base,
         &home,
@@ -234,7 +249,10 @@ fn a_malformed_config_line_stops_the_run_before_any_search() {
     write_config(&home.join("xdg"), "--gpu RTX_5090\ngpu RTX_4090\n");
     let (out, _, stderr) = vas(&base, &home, true, &["offers"]);
     assert_eq!(out.status.code(), Some(1), "{stderr}");
-    assert!(stderr.contains("line 2: not a flag"), "{stderr}");
+    assert!(
+        stderr.contains("line 2 of the config file") && stderr.contains("(not a flag"),
+        "{stderr}"
+    );
     assert!(seen.lock().unwrap().is_empty());
 }
 
@@ -269,5 +287,125 @@ fn a_reliability_in_percent_is_refused_with_the_fraction_to_write() {
     let (out, _, stderr) = vas(&base, &home, true, &["offers", "--reliability", "99"]);
     assert_eq!(out.status.code(), Some(2), "{stderr}");
     assert!(stderr.contains("0.99 for 99 %"), "{stderr}");
+    assert!(seen.lock().unwrap().is_empty());
+}
+
+#[test]
+fn a_key_present_is_never_sent_nor_shown() {
+    let (base, seen) = serve(bundles);
+    let home = fresh_home("withkey");
+    for dir in [
+        home.join(".config").join("vastai"),
+        home.join("xdg").join("vastai"),
+    ] {
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("vast_api_key"), "s3cret-file\n").unwrap();
+    }
+    let (out, stdout, stderr) = vas_in(
+        &base,
+        &home,
+        true,
+        &[("VAST_API_KEY", "s3cret-env")],
+        &["offers", "--gpu", "RTX_5090"],
+    );
+    std::fs::remove_dir_all(&home).unwrap();
+    assert!(out.status.success(), "{stderr}");
+    assert_eq!(
+        the_request(&seen).authorization,
+        None,
+        "a key at hand, none sent"
+    );
+    assert!(
+        !stdout.contains("s3cret") && !stderr.contains("s3cret"),
+        "{stdout}{stderr}"
+    );
+}
+
+#[test]
+fn config_equals_form_and_a_value_named_offers_split_right() {
+    let (base, seen) = serve(bundles);
+    let home = fresh_home("equals");
+    write_config(&home.join("xdg"), "--gpu RTX_5090\n");
+    let named = write_config(&home.join("elsewhere"), "--num-gpus 2\n");
+    let config = format!("--config={}", named.display());
+    let (out, _, stderr) = vas(&base, &home, true, &["offers", &config, "--gpu", "offers"]);
+    assert!(out.status.success(), "{stderr}");
+    assert!(
+        stderr.contains(&format!("the flags of {} first", named.display())),
+        "{stderr}"
+    );
+    let q = decode_q(&the_request(&seen).target);
+    assert_eq!(
+        q["num_gpus"],
+        serde_json::json!({"eq": 2}),
+        "the named file's"
+    );
+    assert_eq!(
+        q["gpu_name"],
+        serde_json::json!({"eq": "offers"}),
+        "the command line's value, not the default file's"
+    );
+}
+
+#[test]
+fn help_in_the_config_file_stops_the_run() {
+    let (base, seen) = serve(bundles);
+    let home = fresh_home("help");
+    write_config(&home.join("xdg"), "--help\n");
+    let (out, stdout, stderr) = vas(&base, &home, true, &["offers"]);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("prints and stops"), "{stderr}");
+    assert!(stdout.is_empty() && seen.lock().unwrap().is_empty());
+}
+
+#[test]
+fn xdg_wins_over_the_home_config_and_falls_back_when_absent() {
+    let (base, seen) = serve(bundles);
+    let both = fresh_home("both");
+    write_config(&both.join("xdg"), "--num-gpus 4\n");
+    write_config(&both.join(".config"), "--num-gpus 8\n");
+    let (first, _, stderr) = vas(&base, &both, true, &["offers"]);
+    assert!(first.status.success(), "{stderr}");
+    let only_home = fresh_home("onlyhome");
+    write_config(&only_home.join(".config"), "--num-gpus 8\n");
+    let (second, _, stderr) = vas(&base, &only_home, true, &["offers"]);
+    assert!(second.status.success(), "{stderr}");
+    let seen = seen.lock().unwrap().clone();
+    assert_eq!(seen.len(), 2);
+    assert_eq!(
+        decode_q(&seen[0].target)["num_gpus"],
+        serde_json::json!({"eq": 4})
+    );
+    assert_eq!(
+        decode_q(&seen[1].target)["num_gpus"],
+        serde_json::json!({"eq": 8})
+    );
+}
+
+#[test]
+fn excluded_hosts_accumulate_too() {
+    let (base, seen) = serve(bundles);
+    let home = fresh_home("hosts");
+    write_config(&home.join("xdg"), "--exclude-host 362355\n");
+    let (out, _, stderr) = vas(&base, &home, true, &["offers", "--exclude-host", "1"]);
+    assert!(out.status.success(), "{stderr}");
+    assert_eq!(
+        decode_q(&the_request(&seen).target)["host_id"],
+        serde_json::json!({"notin": [1, 362_355]})
+    );
+}
+
+#[test]
+fn a_bad_value_in_the_config_file_names_the_file() {
+    let (base, seen) = serve(bundles);
+    let home = fresh_home("badvalue");
+    let file = write_config(&home.join("xdg"), "--reliability 99\n");
+    let (out, _, stderr) = vas(&base, &home, true, &["offers"]);
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    assert!(
+        stderr.contains("0.99 for 99 %")
+            && stderr.contains(&format!("the flags of {} were read first", file.display())),
+        "{stderr}"
+    );
     assert!(seen.lock().unwrap().is_empty());
 }

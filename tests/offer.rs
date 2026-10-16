@@ -1,0 +1,140 @@
+//! The client-side re-check and order, constraint by constraint: each one drops the row whose
+//! field contradicts it, keeps the row missing that field, and is sent to the server in the same
+//! unit.
+
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
+// EXPLICIT: test code -- a failed unwrap IS the failed assertion.
+
+use serde_json::{Value, json};
+use vast_skopos::offer::{Offer, OfferQuery, OfferSort, select};
+
+/// Every constraint `vas offers` has, each set.
+fn every_constraint() -> OfferQuery {
+    let mut q = OfferQuery::default();
+    q.gpu = Some("RTX 5090".to_owned());
+    q.num_gpus = Some(1);
+    q.disk = Some(50);
+    q.cuda = Some(12.8);
+    q.reliability = Some(0.99);
+    q.inet_up = Some(200.0);
+    q.inet_down = Some(300.0);
+    q.max_price = Some(0.8);
+    q.min_days = Some(2.0);
+    q.verified = true;
+    q.exclude_countries = vec!["CN".to_owned()];
+    q.exclude_hosts = vec![362_355];
+    q
+}
+
+/// A row passing every constraint of [`every_constraint`].
+fn passing() -> Value {
+    json!({"id": 1, "gpu_name": "RTX 5090", "num_gpus": 1, "disk_space": 50.0,
+      "cuda_max_good": 12.8, "reliability2": 0.99, "inet_up": 200.0, "inet_down": 300.0,
+      "dph_total": 0.8, "duration": 172_800.0, "verification": "verified",
+      "geolocation": "Texas, US", "host_id": 7, "rentable": true, "rented": false})
+}
+
+/// Each field, and a value contradicting its constraint (bounds are inclusive in `passing`).
+const VIOLATIONS: [(&str, &str); 14] = [
+    ("gpu_name", r#""RTX 4090""#),
+    ("num_gpus", "2"),
+    ("disk_space", "49.9"),
+    ("cuda_max_good", "12.7"),
+    ("reliability2", "0.989"),
+    ("inet_up", "199.9"),
+    ("inet_down", "299.9"),
+    ("dph_total", "0.801"),
+    ("duration", "172799.0"),
+    ("verification", r#""deverified""#),
+    ("geolocation", r#""Guangdong, CN""#),
+    ("host_id", "362355"),
+    ("rentable", "false"),
+    ("rented", "true"),
+];
+
+#[test]
+fn each_constraint_alone_drops_a_contradicting_row_and_keeps_a_missing_field() {
+    let q = every_constraint();
+    let offer = |row: &Value| Offer::from_json(row).unwrap();
+    assert!(q.admits(&offer(&passing())), "the bounds are inclusive");
+    for (field, bad) in VIOLATIONS {
+        let mut contradicting = passing();
+        contradicting[field] = serde_json::from_str(bad).unwrap();
+        assert!(
+            !q.admits(&offer(&contradicting)),
+            "{field} = {bad} must drop the row"
+        );
+        let mut missing = passing();
+        missing.as_object_mut().unwrap().remove(field);
+        assert!(
+            q.admits(&offer(&missing)),
+            "{field} missing must keep the row"
+        );
+    }
+}
+
+#[test]
+fn every_constraint_is_sent_in_the_servers_unit() {
+    let q = every_constraint().to_q(OfferSort::Price);
+    for (field, want) in [
+        ("gpu_name", json!({"eq": "RTX 5090"})),
+        ("num_gpus", json!({"eq": 1})),
+        ("disk_space", json!({"gte": 50})),
+        ("cuda_max_good", json!({"gte": 12.8})),
+        ("reliability2", json!({"gte": 0.99})),
+        ("inet_up", json!({"gte": 200.0})),
+        ("inet_down", json!({"gte": 300.0})),
+        ("dph_total", json!({"lte": 0.8})),
+        ("duration", json!({"gte": 172_800.0})),
+        ("verified", json!({"eq": true})),
+        ("geolocation", json!({"notin": ["CN"]})),
+        ("host_id", json!({"notin": [362_355]})),
+        ("rentable", json!({"eq": true})),
+        ("rented", json!({"eq": false})),
+        ("allocated_storage", json!(50)),
+    ] {
+        assert_eq!(q[field], want, "{field}");
+    }
+}
+
+#[test]
+fn the_gpu_model_and_the_countries_ignore_ascii_case() {
+    let mut q = OfferQuery::default();
+    q.gpu = Some("rtx 5090".to_owned());
+    q.exclude_countries = vec!["cn".to_owned()];
+    let row = |g: &str, at: &str| {
+        Offer::from_json(&json!({"id": 1, "gpu_name": g, "geolocation": at})).unwrap()
+    };
+    assert!(q.admits(&row("RTX 5090", "Texas, US")));
+    assert!(!q.admits(&row("RTX 5090", "Guangdong, CN")));
+    assert_eq!(
+        q.to_q(OfferSort::Price)["geolocation"],
+        json!({"notin": ["CN"]})
+    );
+}
+
+#[test]
+fn every_order_puts_missing_values_last_and_breaks_ties_by_price_then_id() {
+    let rows = [
+        json!({"id": 5, "dph_total": 0.5, "reliability2": 0.99, "inet_up": 900.0}),
+        json!({"id": 4, "dph_total": 0.4}),
+        json!({"id": 3, "dph_total": 0.6, "reliability2": 0.99, "inet_up": 900.0}),
+        json!({"id": 2, "dph_total": 0.5, "reliability2": 0.999, "inet_up": 100.0}),
+        json!({"id": 1, "reliability2": 0.95, "inet_up": 100.0}),
+    ];
+    let offers: Vec<Offer> = rows.iter().map(|r| Offer::from_json(r).unwrap()).collect();
+    let ids = |sort| -> Vec<u64> {
+        select(offers.clone(), &OfferQuery::default(), sort)
+            .iter()
+            .map(|o| o.id)
+            .collect()
+    };
+    assert_eq!(ids(OfferSort::Price), [4, 2, 5, 3, 1]);
+    assert_eq!(ids(OfferSort::Reliability), [2, 5, 3, 1, 4]);
+    assert_eq!(ids(OfferSort::Up), [5, 3, 2, 1, 4]);
+}

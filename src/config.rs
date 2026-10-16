@@ -18,9 +18,15 @@
 use std::path::{Path, PathBuf};
 
 use crate::error::{Result, SkoposError};
+use crate::instance::is_hidden;
 use crate::key::{decode, home};
 
 /// The default config files, in order (module docs).
+///
+/// ```
+/// use vast_skopos::config::offers_files;
+/// assert!(offers_files().iter().all(|p| p.ends_with("vast-skopos/offers")));
+/// ```
 #[must_use]
 pub fn offers_files() -> Vec<PathBuf> {
     let mut out = Vec::new();
@@ -34,6 +40,13 @@ pub fn offers_files() -> Vec<PathBuf> {
 }
 
 /// The default config file: the first of [`offers_files`] that exists.
+///
+/// ```
+/// use vast_skopos::config::{default_offers_file, offers_files};
+/// if let Some(file) = default_offers_file() {
+///     assert!(file.is_file() && offers_files().contains(&file));
+/// }
+/// ```
 #[must_use]
 pub fn default_offers_file() -> Option<PathBuf> {
     offers_files().into_iter().find(|p| p.is_file())
@@ -53,6 +66,11 @@ fn unquote(value: &str) -> std::result::Result<&str, String> {
 
 /// One line's command-line word (`--name` or `--name=value`); an error naming what is wrong.
 fn flag_word(line: &str) -> std::result::Result<String, String> {
+    // A tab separates like a space; any other control or invisible character (a lone carriage
+    // return, a bidirectional override) has no place in a flag.
+    if line.chars().any(|c| c != '\t' && is_hidden(c)) {
+        return Err(String::from("a control or invisible character in the line"));
+    }
     let rest = line.strip_prefix("--").ok_or_else(|| {
         String::from("not a flag: each line is `--flag` or `--flag value` (or `# a comment`)")
     })?;
@@ -87,6 +105,11 @@ fn flag_word(line: &str) -> std::result::Result<String, String> {
             "`--{name}` cannot be set from a config file (it chooses the file)"
         ));
     }
+    if name == "help" || name == "version" {
+        return Err(format!(
+            "`--{name}` prints and stops: it has no place in a config file"
+        ));
+    }
     let Some(value) = value else {
         return Ok(format!("--{name}"));
     };
@@ -115,17 +138,19 @@ fn flag_word(line: &str) -> std::result::Result<String, String> {
 /// assert_eq!(parse_flag_file(text, file).unwrap(),
 ///   ["--gpu=RTX_5090", "--reliability=0.99", "--exclude-country=CN", "--verified"]);
 /// assert_eq!(parse_flag_file("--gpu 'RTX 5090'", file).unwrap(), ["--gpu=RTX 5090"]);
+/// assert_eq!(parse_flag_file("--gpu\tRTX_5090", file).unwrap(), ["--gpu=RTX_5090"]);
 /// let err = parse_flag_file("--top 5\n--gpu RTX_5090 # the card\n", file).unwrap_err();
-/// assert_eq!(err.to_string(),
-///   "offers, line 2: a `#` inside a value: comments go on lines of their own");
+/// assert_eq!(err.to_string(), "line 2 of the config file offers is refused: \
+///   \"--gpu RTX_5090 # the card\" (a `#` inside a value: comments go on lines of their own)");
 /// for bad in ["gpu RTX_5090", "--", "--GPU x", "--gpu \"RTX", "--gpu = x", "--gpu ''",
-///             "--config other", "--no-config"] {
-///     assert!(parse_flag_file(bad, file).is_err(), "{bad}");
+///             "--config other", "--no-config", "--help", "--version",
+///             "--gpu RTX\u{202e}5090", "--gpu RTX\r5090"] {
+///     assert!(parse_flag_file(bad, file).is_err(), "{bad:?}");
 /// }
 /// ```
 ///
 /// # Errors
-/// Returns [`SkoposError::Config`] naming the first line that is not a flag.
+/// Returns [`SkoposError::Config`] on the first line that is not a flag (named, and quoted escaped).
 pub fn parse_flag_file(text: &str, path: &Path) -> Result<Vec<String>> {
     let mut words = Vec::new();
     for (n, line) in text.lines().enumerate() {
@@ -136,6 +161,8 @@ pub fn parse_flag_file(text: &str, path: &Path) -> Result<Vec<String>> {
         words.push(flag_word(line).map_err(|problem| SkoposError::Config {
             path: path.display().to_string(),
             line: n + 1,
+            // BORROW: explicit to_owned -- the error outlives the file's text
+            text: line.to_owned(),
             problem,
         })?);
     }
@@ -145,8 +172,9 @@ pub fn parse_flag_file(text: &str, path: &Path) -> Result<Vec<String>> {
 /// The command-line words of the config file at `path` (UTF-8, or UTF-16 with a byte-order mark).
 ///
 /// # Errors
-/// Returns [`SkoposError::ConfigFile`] if the file cannot be read or is not UTF-8 or UTF-16 text.
-/// Returns [`SkoposError::Config`] naming the first line that is not a flag.
+/// Returns [`SkoposError::ConfigFile`] if the file cannot be read.
+/// Returns [`SkoposError::ConfigFile`] if the file is neither UTF-8 nor UTF-16 text.
+/// Returns [`SkoposError::Config`] on the first line that is not a flag.
 pub fn read_flag_file(path: &Path) -> Result<Vec<String>> {
     let bytes = std::fs::read(path).map_err(|source| SkoposError::ConfigFile {
         path: path.display().to_string(),

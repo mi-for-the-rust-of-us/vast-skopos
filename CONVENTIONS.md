@@ -301,8 +301,10 @@ Rows are read field by field from `serde_json::Value` (`instance.rs`, `offer.rs`
 never with a derived `Deserialize` over the whole row: the API adds, drops and
 retypes fields, and one unused field changing type must cost a dash in one cell, not
 the whole table. Numbers accept a JSON number or a numeric string and must be finite;
-text loses its control characters (it comes from other people's hosts and reaches a
-terminal); a row without an integer `id` is skipped (and counted).
+text loses its control and invisible characters (`instance::is_hidden`: it comes from
+other people's hosts and reaches a terminal, where a bidirectional override can reorder
+a row), and a cell of it is capped (`render::TEXT_WIDTH`); a row without an integer `id`
+is skipped (and counted).
 
 The endpoints and their pagination follow the official `vastai` CLI's source (cite the
 function when changing one: `_fetch_all_instances_v1`, `show__user`, `search__offers`).
@@ -321,7 +323,9 @@ constraint lives in SIX places, kept in step:
 6. the flag in `src/bin/vas.rs` (its value parser refuses non-finite and out-of-range
    values) and `OffersArgs::query`.
 
-A test decodes the `q` the mock received and compares it whole.
+A test decodes the `q` the mock received and compares it whole, and `tests/offer.rs`
+gives the new constraint its row in `VIOLATIONS`: a contradicting value drops the row,
+the field missing keeps it.
 
 ### The Config File
 

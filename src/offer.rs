@@ -14,7 +14,7 @@
 
 use serde_json::{Map, Value, json};
 
-use crate::instance::{integer, number, text};
+use crate::instance::{boolean, integer, number, text};
 
 /// The rows each search asks for; the server answers at most [`OFFER_CAP`] of them.
 pub const FETCH_LIMIT: u32 = 200;
@@ -40,7 +40,7 @@ pub struct Offer {
     pub gpu_name: Option<String>,
     /// How many GPUs.
     pub num_gpus: Option<u64>,
-    /// Memory per GPU, in MB.
+    /// Memory per GPU, in MiB (`nvidia-smi`'s unit: an RTX 5090 reads 32607).
     pub gpu_ram: Option<f64>,
     /// The price, in dollars per hour, with the search's storage included.
     pub dph_total: Option<f64>,
@@ -64,18 +64,25 @@ pub struct Offer {
     pub machine_id: Option<u64>,
     /// vast.ai's verdict on the machine (`verified`, `unverified`, `deverified`, ...).
     pub verification: Option<String>,
+    /// Whether the offer can be rented.
+    pub rentable: Option<bool>,
+    /// Whether it is rented already.
+    pub rented: Option<bool>,
 }
 
 impl Offer {
     /// Reads one row of the search's `offers`; `None` when it has no integer `id`. Text loses its
-    /// control characters (it comes from other people's hosts), and numbers must be finite.
+    /// control and invisible characters (it comes from other people's hosts), and numbers must be
+    /// finite.
     ///
     /// ```
     /// use vast_skopos::offer::Offer;
     /// let row = serde_json::json!({"id": 44614424, "gpu_name": "RTX 5090", "dph_total": 0.54,
-    ///   "reliability2": 0.991, "reliability": 0.5, "geolocation": "Tex\u{1b}as, US"});
+    ///   "reliability2": 0.991, "reliability": 0.5, "geolocation": "Tex\u{1b}as\u{202e}, US",
+    ///   "rentable": true, "rented": false});
     /// let o = Offer::from_json(&row).unwrap();
     /// assert_eq!((o.id, o.reliability, o.geolocation.as_deref()), (44614424, Some(0.991), Some("Texas, US")));
+    /// assert_eq!((o.rentable, o.rented), (Some(true), Some(false)));
     /// assert_eq!(Offer::from_json(&serde_json::json!({"id": 1, "reliability": "0.9"})).unwrap().reliability, Some(0.9));
     /// assert!(Offer::from_json(&serde_json::json!({"gpu_name": "RTX 5090"})).is_none());
     /// ```
@@ -97,6 +104,8 @@ impl Offer {
             host_id: integer(row, "host_id"),
             machine_id: integer(row, "machine_id"),
             verification: text(row, "verification"),
+            rentable: boolean(row, "rentable"),
+            rented: boolean(row, "rented"),
         })
     }
 
@@ -188,6 +197,14 @@ pub struct OfferQuery {
     pub exclude_hosts: Vec<u64>,
 }
 
+/// `x` with at most two decimals, trailing zeros dropped (`99`, `99.5`; `57`, not
+/// `56.99999999999999`).
+fn two_decimals(x: f64) -> String {
+    let fixed = format!("{x:.2}");
+    // BORROW: explicit to_owned -- the trimmed text outlives the formatted buffer
+    fixed.trim_end_matches('0').trim_end_matches('.').to_owned()
+}
+
 /// Whether `value` passes a lower bound: no bound, or no value (kept, shown as a dash), or at least
 /// the bound.
 fn at_least(value: Option<f64>, bound: Option<f64>) -> bool {
@@ -221,9 +238,37 @@ impl OfferQuery {
     }
 
     /// The storage priced into `$/h`, in GB: the disk asked, else [`DEFAULT_STORAGE_GB`].
+    ///
+    /// ```
+    /// use vast_skopos::offer::OfferQuery;
+    /// let mut q = OfferQuery::default();
+    /// assert_eq!(q.storage_gb(), 5);
+    /// q.disk = Some(50);
+    /// assert_eq!(q.storage_gb(), 50);
+    /// ```
     #[must_use]
     pub fn storage_gb(&self) -> u32 {
         self.disk.unwrap_or(DEFAULT_STORAGE_GB)
+    }
+
+    /// The excluded countries, upper-cased, sorted, each once: as sent and as summarised.
+    fn countries(&self) -> Vec<String> {
+        let mut codes: Vec<String> = self
+            .exclude_countries
+            .iter()
+            .map(|c| c.trim().to_ascii_uppercase())
+            .collect();
+        codes.sort();
+        codes.dedup();
+        codes
+    }
+
+    /// The excluded hosts, sorted, each once: as sent and as summarised.
+    fn hosts(&self) -> Vec<u64> {
+        let mut hosts = self.exclude_hosts.clone();
+        hosts.sort_unstable();
+        hosts.dedup();
+        hosts
     }
 
     /// The search's `q`, for `sort`: always rentable, not rented, on-demand, [`FETCH_LIMIT`] rows,
@@ -285,22 +330,17 @@ impl OfferQuery {
             q.insert("verified".into(), json!({"eq": true}));
         }
         if !self.exclude_countries.is_empty() {
-            let mut codes = self.exclude_countries.clone();
-            codes.sort();
-            codes.dedup();
-            q.insert("geolocation".into(), json!({"notin": codes}));
+            q.insert("geolocation".into(), json!({"notin": self.countries()}));
         }
         if !self.exclude_hosts.is_empty() {
-            let mut hosts = self.exclude_hosts.clone();
-            hosts.sort_unstable();
-            hosts.dedup();
-            q.insert("host_id".into(), json!({"notin": hosts}));
+            q.insert("host_id".into(), json!({"notin": self.hosts()}));
         }
         Value::Object(q)
     }
 
-    /// Whether `offer` passes every constraint, re-checked here: a field the offer has that
-    /// contradicts a constraint drops it; a missing field keeps it.
+    /// Whether `offer` passes every constraint, re-checked here (the identity's too: rentable, not
+    /// rented): a field the offer has that contradicts a constraint drops it; a missing field
+    /// keeps it. The GPU model is compared without regard to ASCII case.
     ///
     /// ```
     /// use vast_skopos::offer::{Offer, OfferQuery};
@@ -313,13 +353,15 @@ impl OfferQuery {
     /// assert!(!q.admits(&offer(serde_json::json!({"id": 2, "reliability2": 0.51}))));
     /// assert!(!q.admits(&offer(serde_json::json!({"id": 3, "geolocation": "Guangdong, CN"}))));
     /// assert!(!q.admits(&offer(serde_json::json!({"id": 4, "verification": "deverified"}))));
-    /// assert!(q.admits(&offer(serde_json::json!({"id": 5}))), "missing fields keep the row");
+    /// assert!(!q.admits(&offer(serde_json::json!({"id": 5, "rented": true}))));
+    /// assert!(q.admits(&offer(serde_json::json!({"id": 6}))), "missing fields keep the row");
     /// ```
     #[must_use]
     pub fn admits(&self, offer: &Offer) -> bool {
         let same_text = |want: Option<&String>, have: Option<&String>| {
-            want.is_none_or(|w| have.is_none_or(|h| h == w))
+            want.is_none_or(|w| have.is_none_or(|h| h.eq_ignore_ascii_case(w)))
         };
+        let available = offer.rentable != Some(false) && offer.rented != Some(true);
         let same_count =
             |want: Option<u64>, have: Option<u64>| want.is_none_or(|w| have.is_none_or(|h| h == w));
         let disk = self.disk.map(f64::from);
@@ -332,16 +374,14 @@ impl OfferQuery {
                 .verification
                 .as_deref()
                 .is_none_or(|v| v == "verified");
-        let country_ok = offer.country().is_none_or(|c| {
-            !self
-                .exclude_countries
-                .iter()
-                .any(|x| x.eq_ignore_ascii_case(c))
-        });
+        let country_ok = offer
+            .country()
+            .is_none_or(|c| !self.countries().iter().any(|x| x.eq_ignore_ascii_case(c)));
         let host_ok = offer
             .host_id
             .is_none_or(|h| !self.exclude_hosts.contains(&h));
-        same_text(self.gpu.as_ref(), offer.gpu_name.as_ref())
+        available
+            && same_text(self.gpu.as_ref(), offer.gpu_name.as_ref())
             && same_count(self.num_gpus, offer.num_gpus)
             && at_least(offer.disk_space, disk)
             && at_least(offer.cuda_max_good, self.cuda)
@@ -365,9 +405,11 @@ impl OfferQuery {
     /// q.gpu = Some("RTX 5090".to_owned());
     /// q.num_gpus = Some(1);
     /// q.reliability = Some(0.99);
-    /// q.exclude_countries = vec!["CN".to_owned()];
-    /// q.exclude_hosts = vec![362355];
+    /// q.exclude_countries = vec!["CN".to_owned(), "cn".to_owned()];
+    /// q.exclude_hosts = vec![362355, 362355];
     /// assert_eq!(q.summary(), "RTX 5090, 1 GPU, reliability >= 99 %, not in CN, not hosts 362355");
+    /// q.reliability = Some(0.57);
+    /// assert!(q.summary().contains("reliability >= 57 %"), "no float noise");
     /// ```
     #[must_use]
     pub fn summary(&self) -> String {
@@ -386,7 +428,7 @@ impl OfferQuery {
             parts.push(format!("CUDA >= {c}"));
         }
         if let Some(r) = self.reliability {
-            parts.push(format!("reliability >= {} %", r * 100.0));
+            parts.push(format!("reliability >= {} %", two_decimals(r * 100.0)));
         }
         if let Some(u) = self.inet_up {
             parts.push(format!("up >= {u} Mb/s"));
@@ -404,10 +446,10 @@ impl OfferQuery {
             parts.push(String::from("verified"));
         }
         if !self.exclude_countries.is_empty() {
-            parts.push(format!("not in {}", self.exclude_countries.join(" ")));
+            parts.push(format!("not in {}", self.countries().join(" ")));
         }
         if !self.exclude_hosts.is_empty() {
-            let hosts: Vec<String> = self.exclude_hosts.iter().map(u64::to_string).collect();
+            let hosts: Vec<String> = self.hosts().iter().map(u64::to_string).collect();
             parts.push(format!("not hosts {}", hosts.join(" ")));
         }
         if parts.is_empty() {
@@ -455,6 +497,17 @@ impl OfferPage {
     }
 
     /// Whether the answer may have been cut: the server says so, or it answered [`OFFER_CAP`] rows.
+    ///
+    /// ```
+    /// use vast_skopos::offer::OfferPage;
+    /// let rows: Vec<_> = (0..64).map(|id| serde_json::json!({"id": id})).collect();
+    /// let capped = OfferPage::from_json(&serde_json::json!({"offers": rows, "truncated": false}));
+    /// assert!(capped.unwrap().maybe_cut(), "64 rows: the cap, whatever `truncated` says");
+    /// let said = OfferPage::from_json(&serde_json::json!({"offers": [], "truncated": true}));
+    /// assert!(said.unwrap().maybe_cut());
+    /// let whole = OfferPage::from_json(&serde_json::json!({"offers": [{"id": 1}]}));
+    /// assert!(!whole.unwrap().maybe_cut());
+    /// ```
     #[must_use]
     pub fn maybe_cut(&self) -> bool {
         self.truncated == Some(true) || self.returned >= OFFER_CAP

@@ -36,13 +36,15 @@ pub enum SkoposError {
         source: std::io::Error,
     },
 
-    /// A line of the `vas offers` config file is not a flag.
-    #[error("{path}, line {line}: {problem}")]
+    /// A line of the `vas offers` config file is refused.
+    #[error("line {line} of the config file {path} is refused: {text:?} ({problem})")]
     Config {
         /// The file.
         path: String,
-        /// The line, from 1.
+        /// The line's number, from 1.
         line: usize,
+        /// The line, trimmed (shown escaped).
+        text: String,
         /// What is wrong with it.
         problem: String,
     },

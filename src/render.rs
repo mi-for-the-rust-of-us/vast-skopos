@@ -39,12 +39,28 @@ fn or_dash(v: Option<String>) -> String {
     v.unwrap_or_else(|| String::from("-"))
 }
 
+/// The characters kept in a cell of someone else's text (a GPU name, a location): one host's long
+/// string must not widen every row.
+const TEXT_WIDTH: usize = 40;
+
+/// `text`, at most [`TEXT_WIDTH`] characters; a longer one loses its tail to an ellipsis (tested
+/// through `offers_table`, in `tests/render.rs`).
+fn capped(text: &str) -> String {
+    if text.chars().count() > TEXT_WIDTH {
+        let mut cut: String = text.chars().take(TEXT_WIDTH).collect();
+        cut.push('…');
+        cut
+    } else {
+        // BORROW: explicit to_owned -- the cell is owned by the row
+        text.to_owned()
+    }
+}
+
 /// The GPU cell: `1x RTX 5090`, with a `?` or a dash for what is missing.
 fn gpu_cell(num_gpus: Option<u64>, gpu_name: Option<&str>) -> String {
-    match (num_gpus, gpu_name) {
+    match (num_gpus, gpu_name.map(capped)) {
         (Some(k), Some(g)) => format!("{k}x {g}"),
-        // BORROW: explicit to_owned -- the cell is owned by the row
-        (None, Some(g)) => g.to_owned(),
+        (None, Some(g)) => g,
         (Some(k), None) => format!("{k}x ?"),
         (None, None) => String::from("-"),
     }
@@ -213,7 +229,7 @@ pub fn table(
             i.id.to_string(),
             or_dash(i.label.clone()),
             gpu_cell(i.num_gpus, i.gpu_name.as_deref()),
-            or_dash(i.geolocation.clone()),
+            or_dash(i.geolocation.as_deref().map(capped)),
             status(i),
             or_dash(i.dph_total.map(|d| format!("{d:.3}"))),
             or_dash(i.age_secs(now).map(age)),
@@ -307,8 +323,8 @@ fn offer_row(o: &Offer) -> Vec<String> {
         or_dash(o.reliability.map(|r| format!("{:.2}", r * 100.0))),
         or_dash(o.duration.map(|s| format!("{:.1}", s / 86_400.0))),
         or_dash(o.host_id.map(|h| h.to_string())),
-        or_dash(o.verification.clone()),
-        or_dash(o.geolocation.clone()),
+        or_dash(o.verification.as_deref().map(capped)),
+        or_dash(o.geolocation.as_deref().map(capped)),
     ]
 }
 
@@ -340,9 +356,9 @@ pub fn offers_table(offers: &[Offer], top: usize) -> String {
 
 /// The offers footer: counts, order, constraints and the storage priced in; then any notes.
 ///
-/// The notes say when the answer may be cut (vast.ai's cap), how many rows the re-check dropped,
-/// and how many were skipped for want of an id. `kept` is how many offers passed the re-check ([`crate::offer::select`]), `shown` how many the
-/// table shows.
+/// The notes say when the answer may be cut (vast.ai's cap, or the server's own `truncated`), how
+/// many rows the re-check dropped, and how many were skipped for want of an id. `kept` is how many
+/// offers passed the re-check ([`crate::offer::select`]), `shown` how many the table shows.
 ///
 /// ```
 /// use vast_skopos::{offer::{OfferPage, OfferQuery, OfferSort}, render::offers_line};
@@ -379,15 +395,15 @@ pub fn offers_line(
         query.storage_gb()
     );
     let mut notes: Vec<String> = Vec::new();
-    if page.returned >= OFFER_CAP {
-        notes.push(format!(
-            "{} returned, vast.ai's cap: the list may be cut (narrow the search)",
-            page.returned
-        ));
-    } else if page.truncated == Some(true) {
-        notes.push(String::from(
-            "vast.ai says the list was cut (narrow the search)",
-        ));
+    if page.maybe_cut() {
+        notes.push(if page.returned >= OFFER_CAP {
+            format!(
+                "{} returned, vast.ai's cap: the list may be cut (narrow the search)",
+                page.returned
+            )
+        } else {
+            String::from("vast.ai says the list was cut (narrow the search)")
+        });
     }
     let dropped = page.offers.len().saturating_sub(kept);
     if dropped > 0 {
