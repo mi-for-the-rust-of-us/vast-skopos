@@ -82,6 +82,12 @@ The two endpoints read, as the official `vastai` CLI reads them:
 The base URL is `https://console.vast.ai`, or `VAST_URL` when set. Rows are read field by field,
 so a field the API adds, drops or retypes costs a dash in one cell rather than the whole table.
 
+## `vas` and `vastai`
+
+`vastai`, Vast.ai's own CLI and SDK, rents and manages boxes; `vas` only watches them, read-only.
+They are complements: [`docs/comparison-with-vastai.md`](docs/comparison-with-vastai.md) compares
+them row by row.
+
 ## Conventions
 
 [`CONVENTIONS.md`](CONVENTIONS.md): Grit + Grit-MI, as in
