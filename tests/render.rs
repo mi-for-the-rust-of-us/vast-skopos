@@ -8,10 +8,13 @@
 )]
 // EXPLICIT: test code -- a failed unwrap IS the failed assertion.
 
+mod common;
+
 use vast_skopos::SkoposError;
 use vast_skopos::instance::{Account, Instance};
+use vast_skopos::offer::{OfferPage, OfferQuery, OfferSort, select};
 use vast_skopos::probe::parse_output;
-use vast_skopos::render::table;
+use vast_skopos::render::{offers_line, offers_table, table};
 
 fn instance(json: &serde_json::Value) -> Instance {
     Instance::from_json(json).unwrap()
@@ -96,4 +99,46 @@ fn the_log_cell_tells_no_file_from_an_empty_file() {
     let text = table(&rows, &probes, true, None, 0.0);
     assert!(text.contains("(no file matches)"), "{text}");
     assert!(text.contains("s1/train.log: (empty)"), "{text}");
+}
+
+#[test]
+fn the_offers_table_of_real_rows_is_aligned_and_footed() {
+    let answer: serde_json::Value = serde_json::from_str(&common::fixture("offers.json")).unwrap();
+    let page = OfferPage::from_json(&answer).unwrap();
+    let mut q = OfferQuery::default();
+    q.verified = true;
+    // BORROW: explicit clone -- the page is read again by the footer
+    let kept = select(page.offers.clone(), &q, OfferSort::Price);
+    let text = offers_table(&kept, 2);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(
+        lines.len(),
+        3,
+        "the header and the two rows asked for: {text}"
+    );
+    // Each cell starts where its header does (the cells before `$/H` are ASCII).
+    let col = lines[0].find("$/H").unwrap();
+    assert_eq!(&lines[1][col..col + 5], "0.540", "{text}");
+    assert_eq!(&lines[2][col..col + 5], "0.647", "{text}");
+    assert!(
+        lines[1].starts_with("44614424") && lines[1].ends_with("United States, US"),
+        "{text}"
+    );
+    assert_eq!(
+        offers_line(&page, kept.len(), 2, &q, OfferSort::Price),
+        "2 of 3 offers shown, cheapest first | verified | $/h includes 5 GB of storage\n\
+         2 dropped here: a field contradicts a constraint\n"
+    );
+}
+
+#[test]
+fn an_answer_at_the_cap_says_the_list_may_be_cut() {
+    let rows: Vec<serde_json::Value> = (0..64).map(|id| serde_json::json!({"id": id})).collect();
+    let page =
+        OfferPage::from_json(&serde_json::json!({"offers": rows, "truncated": false})).unwrap();
+    let footer = offers_line(&page, 64, 20, &OfferQuery::default(), OfferSort::Price);
+    assert!(
+        footer.contains("64 returned, vast.ai's cap: the list may be cut"),
+        "{footer}"
+    );
 }

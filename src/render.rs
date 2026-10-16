@@ -1,9 +1,11 @@
-//! The table `vas` prints.
+//! The tables `vas` prints: the instances (with the money line), and the offers (with their
+//! footer).
 
 use std::fmt::Write as _;
 
 use crate::error::SkoposError;
 use crate::instance::{Account, Instance};
+use crate::offer::{OFFER_CAP, Offer, OfferPage, OfferQuery, OfferSort};
 use crate::probe::{LogReading, Probe};
 
 /// `secs` as `2d 3h`, `4h 15m` or `7m`.
@@ -35,6 +37,48 @@ pub fn age(secs: f64) -> String {
 /// A cell, or a dash.
 fn or_dash(v: Option<String>) -> String {
     v.unwrap_or_else(|| String::from("-"))
+}
+
+/// The GPU cell: `1x RTX 5090`, with a `?` or a dash for what is missing.
+fn gpu_cell(num_gpus: Option<u64>, gpu_name: Option<&str>) -> String {
+    match (num_gpus, gpu_name) {
+        (Some(k), Some(g)) => format!("{k}x {g}"),
+        // BORROW: explicit to_owned -- the cell is owned by the row
+        (None, Some(g)) => g.to_owned(),
+        (Some(k), None) => format!("{k}x ?"),
+        (None, None) => String::from("-"),
+    }
+}
+
+/// `header` and `rows` as columns two spaces apart, one line each; the last column is not padded.
+fn layout(header: &[&str], rows: &[Vec<String>]) -> String {
+    let mut widths: Vec<usize> = header.iter().map(|h| h.chars().count()).collect();
+    for row in rows {
+        for (w, cell) in widths.iter_mut().zip(row) {
+            *w = (*w).max(cell.chars().count());
+        }
+    }
+    let mut out = String::new();
+    let line = |cells: &[String], out: &mut String| {
+        let last = cells.len().saturating_sub(1);
+        for (k, (cell, w)) in cells.iter().zip(&widths).enumerate() {
+            if k == last {
+                let _ = write!(out, "{cell}");
+            } else {
+                let _ = write!(out, "{cell:<w$}  ");
+            }
+        }
+        out.push('\n');
+    };
+    line(
+        // BORROW: explicit to_owned -- the header cells join the owned rows
+        &header.iter().map(|h| (*h).to_owned()).collect::<Vec<_>>(),
+        &mut out,
+    );
+    for row in rows {
+        line(row, &mut out);
+    }
+    out
 }
 
 /// The status cell: the actual status, with the intended one when they differ.
@@ -165,17 +209,10 @@ pub fn table(
     }
     let mut rows: Vec<Vec<String>> = Vec::new();
     for (n, i) in instances.iter().enumerate() {
-        let gpu = match (i.num_gpus, i.gpu_name.as_deref()) {
-            (Some(k), Some(g)) => format!("{k}x {g}"),
-            // BORROW: explicit to_owned -- the cell is owned by the row
-            (None, Some(g)) => g.to_owned(),
-            (Some(k), None) => format!("{k}x ?"),
-            (None, None) => String::from("-"),
-        };
         let mut row = vec![
             i.id.to_string(),
             or_dash(i.label.clone()),
-            gpu,
+            gpu_cell(i.num_gpus, i.gpu_name.as_deref()),
             or_dash(i.geolocation.clone()),
             status(i),
             or_dash(i.dph_total.map(|d| format!("{d:.3}"))),
@@ -195,32 +232,7 @@ pub fn table(
         }
         rows.push(row);
     }
-    let mut widths: Vec<usize> = header.iter().map(|h| h.chars().count()).collect();
-    for row in &rows {
-        for (w, cell) in widths.iter_mut().zip(row) {
-            *w = (*w).max(cell.chars().count());
-        }
-    }
-    let mut out = String::new();
-    let line = |cells: &[String], out: &mut String| {
-        let last = cells.len().saturating_sub(1);
-        for (k, (cell, w)) in cells.iter().zip(&widths).enumerate() {
-            if k == last {
-                let _ = write!(out, "{cell}");
-            } else {
-                let _ = write!(out, "{cell:<w$}  ");
-            }
-        }
-        out.push('\n');
-    };
-    line(
-        // BORROW: explicit to_owned -- the header cells join the owned rows
-        &header.iter().map(|h| (*h).to_owned()).collect::<Vec<_>>(),
-        &mut out,
-    );
-    for row in &rows {
-        line(row, &mut out);
-    }
+    let mut out = layout(&header, &rows);
     if instances.is_empty() {
         out.push_str("(no instances)\n");
     }
@@ -258,5 +270,137 @@ pub fn money_line(instances: &[Instance], account: Option<&Account>) -> String {
         let _ = write!(s, " | ~{:.1} h left at this rate", c / burn);
     }
     s.push('\n');
+    s
+}
+
+/// The offers table's header.
+const OFFER_HEADER: [&str; 12] = [
+    "ID",
+    "GPU",
+    "VRAM",
+    "$/H",
+    "CUDA",
+    "DISK",
+    "UP/DOWN Mb/s",
+    "REL %",
+    "MAX DAYS",
+    "HOST",
+    "VERIFICATION",
+    "WHERE",
+];
+
+/// One offer's cells, in [`OFFER_HEADER`]'s order.
+fn offer_row(o: &Offer) -> Vec<String> {
+    let whole = |v: Option<f64>| or_dash(v.map(|x| format!("{x:.0}")));
+    let bandwidth = match (o.inet_up, o.inet_down) {
+        (None, None) => String::from("-"),
+        (up, down) => format!("{}/{}", whole(up), whole(down)),
+    };
+    vec![
+        o.id.to_string(),
+        gpu_cell(o.num_gpus, o.gpu_name.as_deref()),
+        or_dash(o.gpu_ram.map(|mb| format!("{:.0}G", mb / 1024.0))),
+        or_dash(o.dph_total.map(|d| format!("{d:.3}"))),
+        or_dash(o.cuda_max_good.map(|c| format!("{c:.1}"))),
+        or_dash(o.disk_space.map(|gb| format!("{gb:.0}G"))),
+        bandwidth,
+        or_dash(o.reliability.map(|r| format!("{:.2}", r * 100.0))),
+        or_dash(o.duration.map(|s| format!("{:.1}", s / 86_400.0))),
+        or_dash(o.host_id.map(|h| h.to_string())),
+        or_dash(o.verification.clone()),
+        or_dash(o.geolocation.clone()),
+    ]
+}
+
+/// The offers table: the first `top` of `offers`, in their order; `(no offers)` when there are
+/// none.
+///
+/// ```
+/// use vast_skopos::{offer::Offer, render::offers_table};
+/// let o = Offer::from_json(&serde_json::json!({"id": 44614424, "gpu_name": "RTX 5090",
+///   "num_gpus": 1, "gpu_ram": 32607, "dph_total": 0.54018, "cuda_max_good": 13.0,
+///   "disk_space": 691.0, "inet_up": 38.4, "reliability2": 0.9961118, "duration": 6442672.9,
+///   "host_id": 410852, "verification": "verified", "geolocation": "United States, US"})).unwrap();
+/// let text = offers_table(&[o.clone(), o], 1);
+/// assert_eq!(text.lines().count(), 2, "the header and the one row asked for");
+/// let row: Vec<&str> = text.lines().nth(1).unwrap().split_whitespace().collect();
+/// assert_eq!(row, ["44614424", "1x", "RTX", "5090", "32G", "0.540", "13.0", "691G", "38/-",
+///   "99.61", "74.6", "410852", "verified", "United", "States,", "US"]);
+/// assert!(offers_table(&[], 20).ends_with("(no offers)\n"));
+/// ```
+#[must_use]
+pub fn offers_table(offers: &[Offer], top: usize) -> String {
+    let rows: Vec<Vec<String>> = offers.iter().take(top).map(offer_row).collect();
+    let mut out = layout(&OFFER_HEADER, &rows);
+    if offers.is_empty() {
+        out.push_str("(no offers)\n");
+    }
+    out
+}
+
+/// The offers footer: counts, order, constraints and the storage priced in; then any notes.
+///
+/// The notes say when the answer may be cut (vast.ai's cap), how many rows the re-check dropped,
+/// and how many were skipped for want of an id. `kept` is how many offers passed the re-check ([`crate::offer::select`]), `shown` how many the
+/// table shows.
+///
+/// ```
+/// use vast_skopos::{offer::{OfferPage, OfferQuery, OfferSort}, render::offers_line};
+/// let page = OfferPage::from_json(&serde_json::json!(
+///   {"offers": [{"id": 1}, {"id": 2}, {"id": 3}], "truncated": false})).unwrap();
+/// let mut q = OfferQuery::default();
+/// q.disk = Some(50);
+/// assert_eq!(offers_line(&page, 2, 1, &q, OfferSort::Price),
+///   "1 of 2 offers shown, cheapest first | disk >= 50 GB | $/h includes 50 GB of storage\n\
+///    1 dropped here: a field contradicts a constraint\n");
+/// let one = OfferPage::from_json(&serde_json::json!({"offers": [{"id": 1}]})).unwrap();
+/// assert_eq!(offers_line(&one, 1, 1, &OfferQuery::default(), OfferSort::Up),
+///   "1 offer, fastest upload first | no constraint | $/h includes 5 GB of storage\n");
+/// ```
+#[must_use]
+pub fn offers_line(
+    page: &OfferPage,
+    kept: usize,
+    shown: usize,
+    query: &OfferQuery,
+    sort: OfferSort,
+) -> String {
+    let count = if shown < kept {
+        format!("{shown} of {kept} offers shown")
+    } else if kept == 1 {
+        String::from("1 offer")
+    } else {
+        format!("{kept} offers")
+    };
+    let mut s = format!(
+        "{count}, {} | {} | $/h includes {} GB of storage\n",
+        sort.words(),
+        query.summary(),
+        query.storage_gb()
+    );
+    let mut notes: Vec<String> = Vec::new();
+    if page.returned >= OFFER_CAP {
+        notes.push(format!(
+            "{} returned, vast.ai's cap: the list may be cut (narrow the search)",
+            page.returned
+        ));
+    } else if page.truncated == Some(true) {
+        notes.push(String::from(
+            "vast.ai says the list was cut (narrow the search)",
+        ));
+    }
+    let dropped = page.offers.len().saturating_sub(kept);
+    if dropped > 0 {
+        notes.push(format!(
+            "{dropped} dropped here: a field contradicts a constraint"
+        ));
+    }
+    if page.skipped > 0 {
+        notes.push(format!("{} without an id skipped", page.skipped));
+    }
+    if !notes.is_empty() {
+        s.push_str(&notes.join(" | "));
+        s.push('\n');
+    }
     s
 }

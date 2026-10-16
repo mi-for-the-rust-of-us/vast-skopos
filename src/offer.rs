@@ -132,6 +132,21 @@ pub enum OfferSort {
 }
 
 impl OfferSort {
+    /// The order in words (`cheapest first`, ...).
+    ///
+    /// ```
+    /// use vast_skopos::offer::OfferSort;
+    /// assert_eq!(OfferSort::Up.words(), "fastest upload first");
+    /// ```
+    #[must_use]
+    pub const fn words(self) -> &'static str {
+        match self {
+            Self::Price => "cheapest first",
+            Self::Reliability => "most reliable first",
+            Self::Up => "fastest upload first",
+        }
+    }
+
     /// The server's field and direction for this order.
     const fn server_order(self) -> (&'static str, &'static str) {
         match self {
