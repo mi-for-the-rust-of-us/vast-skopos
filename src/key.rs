@@ -58,13 +58,15 @@ impl ApiKey {
         })?;
         Self::new(&text).ok_or_else(|| SkoposError::NoApiKey {
             searched: file.display().to_string(),
+            hint: String::new(),
         })
     }
 
     /// The key by the official CLI's search order (module docs).
     ///
     /// # Errors
-    /// Returns [`SkoposError::NoApiKey`] if no source holds a key.
+    /// Returns [`SkoposError::NoApiKey`] if no source holds a key; when a searched file is missing
+    /// but its `.txt` twin exists, the error names the twin ([`txt_hint`]).
     /// Returns [`SkoposError::KeyFile`] if a key file exists but cannot be read.
     pub fn discover() -> Result<Self> {
         if let Some(key) = std::env::var("VAST_API_KEY")
@@ -86,6 +88,7 @@ impl ApiKey {
                 .map(|p| p.display().to_string())
                 .collect::<Vec<_>>()
                 .join(", "),
+            hint: txt_hint(&candidates, Path::is_file),
         })
     }
 
@@ -133,6 +136,40 @@ pub fn candidate_files() -> Vec<PathBuf> {
         out.push(home.join(".vast_api_key"));
     }
     out
+}
+
+/// The note naming a missing key file's `.txt` twin; empty when no candidate has one.
+///
+/// Windows Notepad appends `.txt` to `vast_api_key`, so the key sits one rename away. `is_file`
+/// is [`Path::is_file`] in use; it is a parameter so the rule can be tested without a filesystem.
+///
+/// ```
+/// use std::path::{Path, PathBuf};
+/// use vast_skopos::key::txt_hint;
+/// let candidates = [PathBuf::from("/h/.config/vastai/vast_api_key")];
+/// let hint = txt_hint(&candidates, |p| p == Path::new("/h/.config/vastai/vast_api_key.txt"));
+/// assert!(hint.contains("vast_api_key.txt") && hint.contains("rename it to vast_api_key"));
+/// assert_eq!(txt_hint(&candidates, |_| false), "");
+/// ```
+#[must_use]
+pub fn txt_hint(candidates: &[PathBuf], is_file: impl Fn(&Path) -> bool) -> String {
+    candidates
+        .iter()
+        .find_map(|file| {
+            let mut twin = file.clone().into_os_string();
+            twin.push(".txt");
+            let twin = PathBuf::from(twin);
+            is_file(&twin).then(|| {
+                let name = file
+                    .file_name()
+                    .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+                format!(
+                    " ({} exists: Notepad appends .txt, so rename it to {name})",
+                    twin.display()
+                )
+            })
+        })
+        .unwrap_or_default()
 }
 
 /// The user's home: `HOME`, else `USERPROFILE` (Windows).

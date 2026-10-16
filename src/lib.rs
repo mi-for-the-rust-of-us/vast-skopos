@@ -6,7 +6,8 @@
 //! One table per call: for every instance, its status, `$/h`, age and cost so far, and its `ssh`
 //! endpoint; under it, the account's credit, the burn rate and the hours that credit buys at that
 //! rate. With `--ssh`, each running box is also asked directly, once, what its GPUs are doing
-//! (`nvidia-smi`) and, with `--log`, the last line of a log: the dashboard's GPU utilisation is
+//! (`nvidia-smi`) and, with `--log`, which log it read and that log's last non-blank line: the
+//! dashboard's GPU utilisation is
 //! not trusted, because it has been seen to read 0 % on boxes at 97-99 %.
 //!
 //! The library half is what `vas` is built from:

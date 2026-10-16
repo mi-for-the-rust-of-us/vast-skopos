@@ -10,9 +10,9 @@ With `--ssh`, it also asks each running box directly what its GPUs are doing, an
 what the run last wrote.
 
 ```text
-$ vas --ssh --log '/root/run/*.log'
+$ vas --ssh --log '/root/runs/*/train.log'
 ID        LABEL  GPU          WHERE  STATUS   $/H    AGE    COST~  SSH                 GPU% (ssh)  VRAM       LAST LOG / SSH ERROR
-56053340  -      1x RTX 5090  US     running  0.643  2h 0m  1.29   ssh4.vast.ai:23484  98%         29.4/32G   [ 796.4s] layer 4: ...
+56053340  -      1x RTX 5090  US     running  0.643  2h 0m  1.29   ssh4.vast.ai:23484  98%         29.4/32G   s0/train.log: [ 796.4s] layer 4: ...
 56053638  -      1x RTX 5090  US     exited   0.608  10m    0.10   ssh4.vast.ai:37038  -           -          -
 credit $5.94 | burn $0.643/h over 1 running | ~9.2 h left at this rate
 ```
@@ -47,7 +47,9 @@ lands in your shell history. The key is only ever sent, as a `Bearer` header, to
 `https://console.vast.ai`, or `VAST_URL` when you set it, in which case `vas` warns on stderr
 where the key is going. No redirect is ever followed. The key is redacted from every debug
 output and never appears in an error message. A key file may be UTF-8 (with or without a
-byte-order mark) or UTF-16 with one, as Windows PowerShell writes it.
+byte-order mark) or UTF-16 with one, as Windows PowerShell writes it. When no key file is found
+but a searched one exists with `.txt` appended (Windows Notepad's habit: `vast_api_key.txt`), the
+error names it and says to rename it.
 
 **Use a read-only key if you can.** `vas` only ever issues `GET` requests: it never creates,
 starts, stops or destroys anything.
@@ -58,7 +60,7 @@ starts, stops or destroys anything.
 |---|---|
 | `vas` | the table and the money line |
 | `vas --ssh` | also probe every running box over `ssh`, once each, in parallel |
-| `vas --ssh --log PATH_OR_GLOB` | also print the last line of the newest file matching the pattern on each box: expanded by the box's shell, so quote it locally, and name files (a directory or a pattern with spaces will not do); the line is shown without control characters, at most 120 characters |
+| `vas --ssh --log PATH_OR_GLOB` | also print, for the newest match of the pattern on each box, its last two path components and its last non-blank line (`s0/train.log: ...`, so a glob whose varying part is among the last two components says which run wrote it); `(empty)` when the file has no line to show, `(not a file)` when the newest match is a directory, `(no file matches)` when nothing matched, `?` when the box's answer was cut short. The pattern is expanded by the box's shell, so quote it locally (and quote a part with spaces again inside, `'"/root/my runs"/*/train.log'`); the line is shown without control characters, at most 120 characters, the path at most 60 |
 | `vas --ssh -i ~/.ssh/id_ed25519` | use this private key (default: `ssh`'s own choice, agent and `~/.ssh/config`) |
 | `vas --watch 60` | refresh every 60 s (at least 30) until Ctrl+C |
 | `vas --key-file FILE` | read the key from `FILE` |

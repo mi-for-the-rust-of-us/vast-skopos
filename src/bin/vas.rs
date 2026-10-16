@@ -20,8 +20,9 @@ struct Args {
     /// Also ask every running box over ssh (once each): GPU utilisation and memory from nvidia-smi.
     #[arg(long)]
     ssh: bool,
-    /// With --ssh: print the last line of the newest file matching this path or glob on each box.
-    #[arg(long, value_name = "PATH_OR_GLOB", requires = "ssh")]
+    /// With --ssh: for the newest file matching this path or glob on each box, print its last two
+    /// path components and its last non-blank line ("(empty)", "(not a file)", "(no file matches)").
+    #[arg(long, value_name = "PATH_OR_GLOB", requires = "ssh", value_parser = non_blank)]
     log: Option<String>,
     /// With --ssh: the private key to use (default: ssh's own choice, agent and ~/.ssh/config).
     #[arg(long, short = 'i', value_name = "FILE", requires = "ssh")]
@@ -32,6 +33,18 @@ struct Args {
     /// Refresh every N seconds (at least 30) until Ctrl+C.
     #[arg(long, value_name = "SECONDS")]
     watch: Option<u64>,
+}
+
+/// `--log`'s pattern, refused when blank: an unset shell variable would make `ls` list `.`.
+fn non_blank(pattern: &str) -> Result<String, String> {
+    if pattern.trim().is_empty() {
+        Err(String::from(
+            "the pattern is blank (an unset variable?): name the log file or glob",
+        ))
+    } else {
+        // BORROW: explicit to_owned -- clap stores the parsed value owned
+        Ok(pattern.to_owned())
+    }
 }
 
 /// Unix seconds now.

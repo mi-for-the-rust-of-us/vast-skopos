@@ -7,10 +7,13 @@
 #[non_exhaustive]
 pub enum SkoposError {
     /// No API key in `VAST_API_KEY` nor in any of the files searched.
-    #[error("no vast.ai API key found (set VAST_API_KEY or write it to one of: {searched})")]
+    #[error("no vast.ai API key found (set VAST_API_KEY or write it to one of: {searched}){hint}")]
     NoApiKey {
         /// The files searched, in order, joined for display.
         searched: String,
+        /// Empty, or a parenthetical starting with a space that names a searched file's `.txt`
+        /// twin (Windows Notepad appends `.txt`).
+        hint: String,
     },
 
     /// The API key file exists but cannot be read.

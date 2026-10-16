@@ -23,7 +23,7 @@ complements, not alternatives: rent with `vastai` (or the dashboard), watch with
 | **Account credit** | yes (`show user`) | yes, plus the **burn rate** of the running boxes and the **hours of runway** it buys |
 | **Cost so far per box** | the dashboard and invoices | an estimate per row (today's `$/h` × age), labelled `COST~` |
 | **GPU utilisation** | the API's `gpu_util` field | **read on the box** over `ssh` (`nvidia-smi`), with VRAM. The API's field is not shown: it read 0 % on boxes running at 97-99 % (2026-10-15) |
-| **What the run is doing** | `vastai logs` exists for container logs (not verified in detail) | `--log <glob>`: the last line of the newest matching file on each box, cleaned (no control characters, at most 120 characters) |
+| **What the run is doing** | `vastai logs` exists for container logs (not verified in detail) | `--log <glob>`: the newest matching file on each box, named by its last two path components (so a glob over sequential runs says which run), and its last non-blank line, cleaned (no control characters, at most 120 characters); `(empty)`, `(not a file)` or `(no file matches)` otherwise |
 | **Watching** | one-shot commands | `--watch N`: the table every N seconds (at least 30) |
 | **ssh address** | `ssh-url`: a mapped `22/tcp` port when present, else the proxy at `ssh_port`, or `ssh_port + 1` for Jupyter-launched instances | the proxy rule (`+1` for Jupyter), matching the dashboard's command |
 | **ssh probing** | n/a | the system `ssh`, `BatchMode`, a 30 s deadline per box, **one attempt**, never a retry loop |

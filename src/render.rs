@@ -4,7 +4,7 @@ use std::fmt::Write as _;
 
 use crate::error::SkoposError;
 use crate::instance::{Account, Instance};
-use crate::probe::Probe;
+use crate::probe::{LogReading, Probe};
 
 /// `secs` as `2d 3h`, `4h 15m` or `7m`.
 ///
@@ -71,6 +71,72 @@ fn gpu_cells(probe: &Probe) -> (String, String) {
     (util, mem)
 }
 
+/// The path characters kept in the log cell; a longer path loses its head.
+const PATH_WIDTH: usize = 60;
+
+/// The last two non-empty components of a path on the box (`run_s0/train.log`); when longer than
+/// 60 characters, its last 60, after an ellipsis.
+///
+/// So a glob whose varying part is one of the last two components (`runs/*/train.log`) says which
+/// run wrote the line; with the run deeper (`runs/*/logs/train.log`), it is not shown.
+///
+/// ```
+/// use vast_skopos::render::short_path;
+/// assert_eq!(short_path("/root/data/runs/me36_ab_s0_d1/train.log"), "me36_ab_s0_d1/train.log");
+/// assert_eq!(short_path("/root/runs//train.log"), "runs/train.log");
+/// assert_eq!(short_path("/r/s0/"), "r/s0");
+/// assert_eq!((short_path("/train.log"), short_path("train.log")), ("train.log".to_owned(), "train.log".to_owned()));
+/// assert_eq!(short_path("//"), "//");
+/// let cut = short_path(&format!("/r/{}/train.log", "d".repeat(80)));
+/// assert!(cut.starts_with('…') && cut.ends_with("d/train.log") && cut.chars().count() == 61);
+/// ```
+#[must_use]
+pub fn short_path(path: &str) -> String {
+    let mut parts = path.rsplit('/').filter(|c| !c.is_empty());
+    let short = match (parts.next(), parts.next()) {
+        (Some(file), Some(dir)) => format!("{dir}/{file}"),
+        // BORROW: explicit to_owned -- the cell is owned by the row
+        (Some(file), None) => file.to_owned(),
+        // A path with no named component (`/`, `//`, empty) is shown as it is.
+        // BORROW: explicit to_owned -- the cell is owned by the row
+        (None, _) => path.to_owned(),
+    };
+    let n = short.chars().count();
+    if n > PATH_WIDTH {
+        let mut cut = String::from("…");
+        cut.extend(short.chars().skip(n - PATH_WIDTH));
+        cut
+    } else {
+        short
+    }
+}
+
+/// The log cell: which file, and its last line; or why there is none.
+///
+/// ```
+/// use vast_skopos::{probe::LogReading, render::log_cell};
+/// assert_eq!(log_cell(None), "-");
+/// assert_eq!(log_cell(Some(&LogReading::NoMatch)), "(no file matches)");
+/// assert_eq!(log_cell(Some(&LogReading::NotAFile { file: "/r/s1".to_owned() })),
+///     "r/s1: (not a file)");
+/// assert_eq!(log_cell(Some(&LogReading::Empty { file: "/r/s1/train.log".to_owned() })),
+///     "s1/train.log: (empty)");
+/// assert_eq!(log_cell(Some(&LogReading::Line {
+///     file: "/r/s1/train.log".to_owned(), line: "e41".to_owned() })), "s1/train.log: e41");
+/// assert_eq!(log_cell(Some(&LogReading::Unreadable)), "?");
+/// ```
+#[must_use]
+pub fn log_cell(log: Option<&LogReading>) -> String {
+    match log {
+        None => String::from("-"),
+        Some(LogReading::NoMatch) => String::from("(no file matches)"),
+        Some(LogReading::NotAFile { file }) => format!("{}: (not a file)", short_path(file)),
+        Some(LogReading::Empty { file }) => format!("{}: (empty)", short_path(file)),
+        Some(LogReading::Line { file, line }) => format!("{}: {line}", short_path(file)),
+        Some(LogReading::Unreadable) => String::from("?"),
+    }
+}
+
 /// MiB → GiB, for display.
 fn mib_to_gib(mib: u64) -> f64 {
     // CAST: u64 → f64, a MiB count far below 2^53, for a one-decimal display
@@ -121,7 +187,7 @@ pub fn table(
             match probes.get(n).and_then(Option::as_ref) {
                 Some(Ok(p)) => {
                     let (util, mem) = gpu_cells(p);
-                    row.extend([util, mem, or_dash(p.last_log.clone())]);
+                    row.extend([util, mem, log_cell(p.log.as_ref())]);
                 }
                 Some(Err(e)) => row.extend([String::from("?"), String::from("?"), e.to_string()]),
                 None => row.extend([String::from("-"), String::from("-"), String::from("-")]),

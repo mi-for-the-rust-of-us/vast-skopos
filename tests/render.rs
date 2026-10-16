@@ -33,7 +33,7 @@ fn the_table_shows_cost_status_probe_and_money() {
     ];
     let probes = vec![
         Some(Ok(parse_output(
-            "0, 98, 30122, 32607\n---vas-log---\n[ 796.4s] layer 4: ...\n",
+            "0, 98, 30122, 32607\n---vas-log---\nvas-file:/root/runs/s0/train.log\n[ 796.4s] layer 4: ...\n",
         ))),
         Some(Err(SkoposError::Ssh {
             target: "h:1".to_owned(),
@@ -51,7 +51,10 @@ fn the_table_shows_cost_status_probe_and_money() {
         text.contains("98%") && text.contains("29.4/32G"),
         "probe: {text}"
     );
-    assert!(text.contains("layer 4"), "log line: {text}");
+    assert!(
+        text.contains("s0/train.log: [ 796.4s] layer 4"),
+        "the log cell names the run: {text}"
+    );
     assert!(text.contains("Connection refused"), "ssh error: {text}");
     assert!(
         text.contains("credit $5.94 | burn $0.643/h over 1 running | ~9.2 h left"),
@@ -74,4 +77,23 @@ fn ssh_columns_show_when_asked_even_with_nothing_probed() {
     )];
     let text = table(&rows, &[None], true, None, 0.0);
     assert!(text.contains("GPU% (ssh)"), "{text}");
+}
+
+#[test]
+fn the_log_cell_tells_no_file_from_an_empty_file() {
+    let rows = vec![
+        instance(&serde_json::json!({"id": 1, "actual_status": "running"})),
+        instance(&serde_json::json!({"id": 2, "actual_status": "running"})),
+    ];
+    let probes = vec![
+        Some(Ok(parse_output(
+            "0, 0, 0, 32607\n---vas-log---\nvas-no-file\n",
+        ))),
+        Some(Ok(parse_output(
+            "0, 0, 0, 32607\n---vas-log---\nvas-file:/root/runs/s1/train.log\n",
+        ))),
+    ];
+    let text = table(&rows, &probes, true, None, 0.0);
+    assert!(text.contains("(no file matches)"), "{text}");
+    assert!(text.contains("s1/train.log: (empty)"), "{text}");
 }
