@@ -177,13 +177,15 @@ all, `vas offers` lists every offer rentable now, and says so on stderr.
 # ~/.config/vast-skopos/offers: askesis's renting filters
 --gpu RTX_5090
 --num-gpus 1
---cuda 12.8
 --disk 50
 --reliability 0.99
+--min-days 2
+# driver >= 580, which vast.ai shows as CUDA 13
+--cuda 13
 --inet-up 200
---verified
 --exclude-country CN
 --exclude-host 362355
+--verified
 ```
 
 **What the footer says.** vast.ai answers at most **64 rows** per search, whatever it is asked, and
