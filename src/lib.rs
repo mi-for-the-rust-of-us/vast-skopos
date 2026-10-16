@@ -13,16 +13,18 @@
 //! The library half is what `vas` is built from:
 //!
 //! - [`key`]: where the API key is found (and that it is never printed);
-//! - [`api`]: the two endpoints read (`/api/v1/instances/`, paginated, and
-//!   `/api/v0/users/current/`);
+//! - [`api`]: the three endpoints read (`/api/v1/instances/`, paginated, and
+//!   `/api/v0/users/current/`, with the key; the offer search, without);
 //! - [`instance`]: the lenient readers of their JSON;
+//! - [`offer`]: the offers for rent, and the search `vas offers` sends;
 //! - [`probe`]: the `ssh` probe and its `nvidia-smi` parser;
-//! - [`render`]: the table.
+//! - [`render`]: the tables.
 
 pub mod api;
 pub mod error;
 pub mod instance;
 pub mod key;
+pub mod offer;
 pub mod probe;
 pub mod render;
 

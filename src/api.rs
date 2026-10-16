@@ -1,9 +1,11 @@
-//! The two vast.ai endpoints `vas` reads, and nothing else: it never writes, starts, stops or
+//! The three vast.ai endpoints `vas` reads, and nothing else: it never writes, starts, stops or
 //! destroys anything.
 //!
 //! - `GET /api/v1/instances/`, paginated (`limit`, `order_by`, then `after_token` from each page's
 //!   `next_token`), as the official CLI's `show instances` does since the v0 list was deprecated;
-//! - `GET /api/v0/users/current`, for the credit.
+//! - `GET /api/v0/users/current`, for the credit;
+//! - `GET /api/v0/bundles/?q=<JSON>`, the offer search, sent WITHOUT any key by a [`SearchClient`]
+//!   (see [`crate::offer`]).
 //!
 //! The base URL is `https://console.vast.ai`, or `VAST_URL` when set (the CLI's own override).
 
@@ -14,6 +16,7 @@ use serde_json::Value;
 use crate::error::{Result, SkoposError};
 use crate::instance::{Account, Instance};
 use crate::key::ApiKey;
+use crate::offer::{OfferPage, OfferQuery, OfferSort};
 
 /// The default API host.
 pub const DEFAULT_BASE: &str = "https://console.vast.ai";
@@ -28,10 +31,102 @@ fn endpoint(path: &str) -> String {
     path.to_owned()
 }
 
-/// A read-only vast.ai API client.
+/// The HTTP agent: one connection pool, a 30 s timeout per request, non-success statuses returned
+/// rather than raised, and no redirect followed (a 3xx is reported, and a key is never re-sent
+/// elsewhere).
+fn agent() -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(30)))
+        .http_status_as_error(false)
+        .max_redirects(0)
+        .build()
+        .into()
+}
+
+/// `VAST_URL` when set and not blank, else [`DEFAULT_BASE`]; without a trailing slash.
+fn base_from_env() -> String {
+    let base = std::env::var("VAST_URL")
+        .ok()
+        .filter(|u| !u.trim().is_empty())
+        .unwrap_or_else(|| String::from(DEFAULT_BASE));
+    // BORROW: explicit to_owned -- the client owns its trimmed base URL
+    base.trim_end_matches('/').to_owned()
+}
+
+/// The hint shared by every endpoint: a redirect, which `vas` never follows; empty otherwise.
+const fn redirect_hint(status: u16) -> &'static str {
+    match status {
+        301 | 302 | 303 | 307 | 308 => " (a redirect: vas follows none)",
+        _ => "",
+    }
+}
+
+/// The hint for a keyed endpoint's status.
+const fn keyed_hint(status: u16) -> &'static str {
+    match status {
+        401 | 403 => " (is the API key right, and not revoked?)",
+        429 => " (rate-limited: wait before the next call)",
+        _ => redirect_hint(status),
+    }
+}
+
+/// The hint for the offer search's status.
+const fn search_hint(status: u16) -> &'static str {
+    match status {
+        401 | 403 => {
+            " (the offer search asked for a key: vas offers sends none, and needs an update)"
+        }
+        404 | 405 => {
+            " (the legacy GET form of the offer search may be gone: vas offers needs an update)"
+        }
+        429 => " (rate-limited: wait before the next call)",
+        _ => redirect_hint(status),
+    }
+}
+
+/// `GET {base}{path}` with `query`, as JSON; the key as a bearer only when `bearer` is given;
+/// `hint` words a non-success status.
+fn get_json(
+    agent: &ureq::Agent,
+    base: &str,
+    path: &str,
+    query: &[(&str, &str)],
+    bearer: Option<&ApiKey>,
+    hint: fn(u16) -> &'static str,
+) -> Result<Value> {
+    let url = format!("{base}{path}");
+    let mut request = agent.get(&url);
+    if let Some(key) = bearer {
+        request = request.header("Authorization", &key.bearer());
+    }
+    for &(k, v) in query {
+        request = request.query(k, v);
+    }
+    let mut response = request.call().map_err(|e| SkoposError::Http {
+        endpoint: endpoint(path),
+        message: format!("{e}"),
+    })?;
+    let status = response.status().as_u16();
+    if !(200..300).contains(&status) {
+        return Err(SkoposError::Status {
+            endpoint: endpoint(path),
+            status,
+            hint: hint(status),
+        });
+    }
+    response
+        .body_mut()
+        .read_json::<Value>()
+        .map_err(|e| SkoposError::Json {
+            endpoint: endpoint(path),
+            message: format!("{e}"),
+        })
+}
+
+/// A read-only vast.ai API client, with the account's key.
 #[derive(Debug)]
 pub struct Client {
-    /// The HTTP agent (one connection pool, a global timeout).
+    /// The HTTP agent.
     agent: ureq::Agent,
     /// The key, redacted in `Debug`.
     key: ApiKey,
@@ -43,22 +138,10 @@ impl Client {
     /// A client for `key`, against `VAST_URL` or [`DEFAULT_BASE`], with a 30 s timeout per request.
     #[must_use]
     pub fn new(key: ApiKey) -> Self {
-        let base = std::env::var("VAST_URL")
-            .ok()
-            .filter(|u| !u.trim().is_empty())
-            .unwrap_or_else(|| String::from(DEFAULT_BASE));
-        let agent: ureq::Agent = ureq::Agent::config_builder()
-            .timeout_global(Some(Duration::from_secs(30)))
-            .http_status_as_error(false)
-            // No redirect is followed: a 3xx is reported, and the key is never re-sent elsewhere.
-            .max_redirects(0)
-            .build()
-            .into();
         Self {
-            agent,
+            agent: agent(),
             key,
-            // BORROW: explicit to_owned -- the client owns its trimmed base URL
-            base: base.trim_end_matches('/').to_owned(),
+            base: base_from_env(),
         }
     }
 
@@ -76,40 +159,16 @@ impl Client {
         &self.base
     }
 
-    /// `GET {base}{path}` with `query`, as JSON.
+    /// `GET {base}{path}` with `query` and the key, as JSON.
     fn get_json(&self, path: &str, query: &[(&str, &str)]) -> Result<Value> {
-        let url = format!("{}{path}", self.base);
-        let mut request = self
-            .agent
-            .get(&url)
-            .header("Authorization", &self.key.bearer());
-        for &(k, v) in query {
-            request = request.query(k, v);
-        }
-        let mut response = request.call().map_err(|e| SkoposError::Http {
-            endpoint: endpoint(path),
-            message: format!("{e}"),
-        })?;
-        let status = response.status().as_u16();
-        if !(200..300).contains(&status) {
-            let hint = match status {
-                401 | 403 => " (is the API key right, and not revoked?)",
-                429 => " (rate-limited: wait before the next call)",
-                _ => "",
-            };
-            return Err(SkoposError::Status {
-                endpoint: endpoint(path),
-                status,
-                hint,
-            });
-        }
-        response
-            .body_mut()
-            .read_json::<Value>()
-            .map_err(|e| SkoposError::Json {
-                endpoint: endpoint(path),
-                message: format!("{e}"),
-            })
+        get_json(
+            &self.agent,
+            &self.base,
+            path,
+            query,
+            Some(&self.key),
+            keyed_hint,
+        )
     }
 
     /// Every instance of the account, all pages.
@@ -176,5 +235,70 @@ impl Client {
         // 2026-10-16), and `vas` follows no redirect.
         self.get_json("/api/v0/users/current/", &[])
             .map(|user| Account::from_json(&user))
+    }
+}
+
+/// A client for the offer search alone. It holds no key and sends none: the search is public.
+#[derive(Debug)]
+pub struct SearchClient {
+    /// The HTTP agent.
+    agent: ureq::Agent,
+    /// The base URL, without a trailing slash.
+    base: String,
+}
+
+impl Default for SearchClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SearchClient {
+    /// A search client against `VAST_URL` or [`DEFAULT_BASE`], with a 30 s timeout per request.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            agent: agent(),
+            base: base_from_env(),
+        }
+    }
+
+    /// A search client against `base` (e.g. a test server), with the same timeout.
+    #[must_use]
+    pub fn with_base(base: &str) -> Self {
+        let mut client = Self::new();
+        base.trim_end_matches('/').clone_into(&mut client.base);
+        client
+    }
+
+    /// The base URL searched.
+    #[must_use]
+    pub fn base(&self) -> &str {
+        &self.base
+    }
+
+    /// One search: the offers `query` asks for, in the server's `sort` order (at most
+    /// [`crate::offer::OFFER_CAP`] rows, whatever is asked). The rows are NOT re-checked here:
+    /// [`crate::offer::select`] does that.
+    ///
+    /// # Errors
+    /// Returns [`SkoposError::Http`] if the request cannot be made.
+    /// Returns [`SkoposError::Status`] if vast.ai answers with a non-success status.
+    /// Returns [`SkoposError::Json`] if the answer is not JSON or has no `offers` list.
+    pub fn offers(&self, query: &OfferQuery, sort: OfferSort) -> Result<OfferPage> {
+        let path = "/api/v0/bundles/";
+        let q = query.to_q(sort).to_string();
+        let answer = get_json(
+            &self.agent,
+            &self.base,
+            path,
+            &[("q", &q)],
+            None,
+            search_hint,
+        )?;
+        OfferPage::from_json(&answer).ok_or_else(|| SkoposError::Json {
+            endpoint: endpoint(path),
+            message: String::from("no `offers` list"),
+        })
     }
 }
