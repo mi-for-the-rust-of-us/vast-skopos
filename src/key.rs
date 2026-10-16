@@ -98,8 +98,8 @@ impl ApiKey {
     }
 }
 
-/// A key file's text: UTF-16 with a byte-order mark (what Windows PowerShell 5.1's `>` writes), else
-/// UTF-8; `None` when neither.
+/// A key file's text: UTF-16 with a byte-order mark (what Windows `PowerShell` 5.1's `>`
+/// writes), else UTF-8; `None` when neither.
 fn decode(bytes: &[u8]) -> Option<String> {
     let units = |big: bool| -> Vec<u16> {
         bytes
