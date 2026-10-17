@@ -261,6 +261,7 @@ rental is a budget, and how long the credit lasts at the current burn is the num
 |-----|---|
 | [`vas` and `vastai`](docs/comparison-with-vastai.md) | Vast.ai's own CLI/SDK and `vas`, compared row by row: scope, read-only by design, the GPU read on the box, the runway, the offer search, key hygiene, redirects, the `ssh` port rule |
 | [Dogfooding, 2026-10-16](docs/dogfooding/2026-10-16.md) | The first real rental (Me35, three RTX 5090s): what broke in the first minute, what helped, the next features, and `vas offers` probed and built for the next rental |
+| [Dogfooding, 2026-10-17](docs/dogfooding/2026-10-17.md) | `vas offers`' first rental (Me36, five 5090s for three slots): what worked, seven notes for the next versions (offers that vanish, a burn line that can mislead, machine ids, a compact mode, labels, a two-size uplink measure for `vas check`, a credit history) |
 | [CONVENTIONS](CONVENTIONS.md) | The rules every line follows, the API-key and box rules included |
 | [CHANGELOG](CHANGELOG.md) | Release history |
 
