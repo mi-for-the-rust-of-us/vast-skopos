@@ -9,6 +9,18 @@ use crate::instance::{Account, Instance};
 use crate::offer::{OFFER_CAP, Offer, OfferPage, OfferQuery, OfferSort};
 use crate::probe::{LogReading, Probe};
 
+/// `secs` in whole seconds, truncated: a negative or `NaN` count reads 0, an enormous one saturates.
+pub(crate) const fn whole_secs(secs: f64) -> u64 {
+    // CAST: f64 → u64, a non-negative time in seconds, truncated to whole seconds on purpose
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::as_conversions
+    )]
+    let s = secs.max(0.0) as u64;
+    s
+}
+
 /// `secs` as `2d 3h`, `4h 15m` or `7m`.
 ///
 /// ```
@@ -18,13 +30,7 @@ use crate::probe::{LogReading, Probe};
 /// ```
 #[must_use]
 pub fn age(secs: f64) -> String {
-    // CAST: f64 → u64, a non-negative age in seconds, truncated to whole seconds on purpose
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        clippy::as_conversions
-    )]
-    let s = secs.max(0.0) as u64;
+    let s = whole_secs(secs);
     let (d, h, m) = (s / 86_400, (s % 86_400) / 3600, (s % 3600) / 60);
     if d > 0 {
         format!("{d}d {h}h")
@@ -46,13 +52,7 @@ pub fn age(secs: f64) -> String {
 /// ```
 #[must_use]
 pub fn clock(unix_secs: f64) -> String {
-    // CAST: f64 → u64, a non-negative time in seconds, truncated to whole seconds on purpose
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        clippy::as_conversions
-    )]
-    let s = unix_secs.max(0.0) as u64 % 86_400;
+    let s = whole_secs(unix_secs) % 86_400;
     format!("{:02}:{:02}:{:02} UTC", s / 3600, (s % 3600) / 60, s % 60)
 }
 
@@ -289,6 +289,108 @@ pub fn table(
     out
 }
 
+/// The account's money over the fleet: what the money line prints and the compact output carries.
+///
+/// The burn counts the instances the API reads as `running` AND those it was asked to run
+/// (`intended_status`) that read otherwise (`offline`, `loading`, ...): whether those bill is not
+/// known from here, and an under-counted burn overstates the runway.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct Money {
+    /// The prepaid credit, in dollars, when the account answered.
+    pub credit: Option<f64>,
+    /// The burn, in dollars per hour: the running instances' `$/h` and the unsure ones'.
+    pub burn: f64,
+    /// How many instances read `running`.
+    pub running: usize,
+    /// The instances meant to run that read otherwise, counted by their state (`unknown` when the
+    /// API gave none).
+    pub unsure: BTreeMap<String, usize>,
+}
+
+impl Money {
+    /// The money of `instances` under `account`.
+    ///
+    /// ```
+    /// use vast_skopos::{instance::{Account, Instance}, render::Money};
+    /// let row = |id, actual: &str| Instance::from_json(&serde_json::json!(
+    ///   {"id": id, "actual_status": actual, "intended_status": "running", "dph_total": 0.5})).unwrap();
+    /// let a = Account::from_json(&serde_json::json!({"credit": 5.0}));
+    /// let m = Money::of(&[row(1, "running"), row(2, "offline")], Some(&a));
+    /// assert_eq!((m.running, m.burn, m.unsure.get("offline").copied()), (1, 1.0, Some(1)));
+    /// assert_eq!(m.hours_left(), Some(5.0));
+    /// ```
+    #[must_use]
+    pub fn of(instances: &[Instance], account: Option<&Account>) -> Self {
+        let running: Vec<&Instance> = instances.iter().filter(|i| i.is_running()).collect();
+        let unsure: Vec<&Instance> = instances
+            .iter()
+            .filter(|i| i.is_meant_to_run() && !i.is_running())
+            .collect();
+        // A fold from +0.0, not `sum()`: an empty f64 sum is -0.0, which would print as `$-0.000`.
+        let burn = running
+            .iter()
+            .chain(&unsure)
+            .filter_map(|i| i.dph_total)
+            .fold(0.0_f64, |acc, d| acc + d);
+        let mut by_state: BTreeMap<String, usize> = BTreeMap::new();
+        for i in &unsure {
+            *by_state
+                .entry(
+                    i.actual_status
+                        .as_deref()
+                        .unwrap_or("unknown")
+                        // BORROW: explicit to_owned -- the map owns its keys
+                        .to_owned(),
+                )
+                .or_default() += 1;
+        }
+        Self {
+            credit: account.and_then(|a| a.credit),
+            burn,
+            running: running.len(),
+            unsure: by_state,
+        }
+    }
+
+    /// The hours the credit lasts at this burn; `None` without a credit or without a burn.
+    #[must_use]
+    pub fn hours_left(&self) -> Option<f64> {
+        self.credit
+            .filter(|_| self.burn > 0.0)
+            .map(|c| c / self.burn)
+    }
+
+    /// The money line, ending in a newline (see [`money_line`]).
+    #[must_use]
+    pub fn line(&self) -> String {
+        let mut s = format!(
+            "credit {} | burn ${:.3}/h over {} running",
+            self.credit
+                .map_or_else(|| String::from("?"), |c| format!("${c:.2}")),
+            self.burn,
+            self.running
+        );
+        if !self.unsure.is_empty() {
+            let states: Vec<String> = self
+                .unsure
+                .iter()
+                .map(|(state, n)| format!("{n} {state}"))
+                .collect();
+            let _ = write!(
+                s,
+                " + {} (meant to run, billing unknown)",
+                states.join(", ")
+            );
+        }
+        if let Some(h) = self.hours_left() {
+            let _ = write!(s, " | ~{h:.1} h left at this rate");
+        }
+        s.push('\n');
+        s
+    }
+}
+
 /// The credit, the burn rate of the instances that bill or may, and the hours that credit buys.
 ///
 /// The burn counts the instances the API reads as `running` AND those it was asked to run
@@ -311,47 +413,7 @@ pub fn table(
 /// ```
 #[must_use]
 pub fn money_line(instances: &[Instance], account: Option<&Account>) -> String {
-    let running: Vec<&Instance> = instances.iter().filter(|i| i.is_running()).collect();
-    let unsure: Vec<&Instance> = instances
-        .iter()
-        .filter(|i| i.is_meant_to_run() && !i.is_running())
-        .collect();
-    // A fold from +0.0, not `sum()`: an empty f64 sum is -0.0, which would print as `$-0.000`.
-    let burn = running
-        .iter()
-        .chain(&unsure)
-        .filter_map(|i| i.dph_total)
-        .fold(0.0_f64, |acc, d| acc + d);
-    let credit = account.and_then(|a| a.credit);
-    let mut s = format!(
-        "credit {} | burn ${burn:.3}/h over {} running",
-        credit.map_or_else(|| String::from("?"), |c| format!("${c:.2}")),
-        running.len()
-    );
-    if !unsure.is_empty() {
-        let mut by_state: BTreeMap<&str, usize> = BTreeMap::new();
-        for i in &unsure {
-            *by_state
-                .entry(i.actual_status.as_deref().unwrap_or("unknown"))
-                .or_default() += 1;
-        }
-        let states: Vec<String> = by_state
-            .iter()
-            .map(|(state, n)| format!("{n} {state}"))
-            .collect();
-        let _ = write!(
-            s,
-            " + {} (meant to run, billing unknown)",
-            states.join(", ")
-        );
-    }
-    if let Some(c) = credit
-        && burn > 0.0
-    {
-        let _ = write!(s, " | ~{:.1} h left at this rate", c / burn);
-    }
-    s.push('\n');
-    s
+    Money::of(instances, account).line()
 }
 
 /// The offers table's header.

@@ -76,7 +76,7 @@ fn main() -> vast_skopos::Result<()> {
 }
 ```
 
-`render::table` and `render::money_line` print what `vas` prints.
+`render::table` and `render::money_line` print what `vas` prints, and `compact::compact` the same readings as JSON Lines.
 
 The offer search needs no key:
 
@@ -137,6 +137,7 @@ ID        GPU          VRAM  $/H    CUDA  DISK   UP/DOWN Mb/s  REL %  MAX DAYS  
 | `vas --ssh --log PATH_OR_GLOB` | also print, for the newest match of the pattern on each box, its last two path components and its last non-blank line (`s0/train.log: ...`, so a glob whose varying part is among the last two components says which run wrote it); `(empty)` when the file has no line to show, `(not a file)` when the newest match is a directory, `(no file matches)` when nothing matched, `?` when the box's answer was cut short. The pattern is expanded by the box's shell, so quote it locally (and quote a part with spaces again inside, `'"/root/my runs"/*/train.log'`); the line is shown without control characters, at most 120 characters, the path at most 60 |
 | `vas --ssh -i ~/.ssh/id_ed25519` | use this private key (default: `ssh`'s own choice, agent and `~/.ssh/config`) |
 | `vas --wide` | also show each box's machine id and host id (what a rentals log, `--exclude-machine` and `--exclude-host` need) |
+| `vas --compact` | JSON Lines instead of the table, for scripts and monitors ([below](#vas---compact-json-lines)); not with `--wide` |
 | `vas --watch 60` | refresh every 60 s (at least 30) until Ctrl+C |
 | `vas --key-file FILE` | read the key from `FILE` |
 | `vas offers [FLAGS]` | the offers for rent that pass the flags, cheapest first; no key needed ([below](#vas-offers)) |
@@ -156,6 +157,27 @@ the boxes it was asked to run (`intended_status`) that read otherwise (`offline`
 is not known from here, and a burn that leaves it out overstates the runway; the `~H h left` figure
 uses the larger burn. A stopped box is not counted, though vast.ai still bills its storage: `vas`
 does not show that cost yet.
+
+### `vas --compact`: JSON Lines
+
+One object per box, then one for the money, each on one line, each with a `kind` (`box` or `money`) and
+`at` (Unix seconds, the same on every line of a look), so a line read alone says what it is and when.
+The keys of an object never change: what is not known is `null`, not a missing key. Keys come out in alphabetical order (`kind` is not first: filter on it with
+`jq` or `grep '"kind":"money"'`). Money is rounded to what means something: `credit` to a millionth of
+a dollar (vast.ai sends it with float noise, `12.059765171599793`; a second of a $0.19/h box is $0.00005),
+`burn` and `cost` to ten-thousandths.
+
+```text
+$ vas --compact --ssh --log '/root/runs/*/train.log'
+{"age_s":8100,"at":1792250000,"cost":2.025,"dph":0.9,"gpu_name":"RTX 5090","host_id":406325,"id":56362434,"intended":"running","kind":"box","label":"me36 box 2","machine_id":100682,"num_gpus":1,"probe":{"gpus":[{"index":0,"mem_total_mib":32607,"mem_used_mib":29400,"util_pct":99}],"log":{"file":"/root/runs/s0/train.log","line":"e41 loss 0.3","state":"line"}},"ssh_host":"ssh6.vast.ai","ssh_port":36000,"status":"running","where":"South Korea, KR"}
+{"at":1792250000,"burn":0.9,"credit":12.93,"hours_left":14.4,"kind":"money","running":1,"unsure":{}}
+```
+
+`probe` is `null` for a box not probed (no `--ssh`, or not running), `{"error": "..."}` when the probe failed,
+else `gpus` and `log`; `log` is `null` without `--log`, else an object whose `state` is `line`, `empty`,
+`not_a_file`, `no_match` or `unreadable`. `unsure` counts, by state, the boxes meant to run that read
+otherwise (the burn, above). With `--watch N`, a look is printed every N seconds with no separator line: the `at`
+tells looks apart. `jq` does the rest, for example `vas --compact | jq -r 'select(.kind=="money").hours_left'`.
 
 ### `vas offers`
 

@@ -17,6 +17,13 @@ All notable changes to this project are documented here. The format is based on
 - The footer of `vas offers` names the time of the search (`searched 15:42:07 UTC`): offers vanish
   within minutes, so a list read later says how old it is. `render::clock`.
 
+- `vas --compact`: the same readings as JSON Lines, for scripts and monitors: one object per box
+  (`kind: "box"`: status, `$/h`, age, cost, `ssh` endpoint, machine and host ids, and with `--ssh` the
+  probe: GPUs, the log's state and last line, or the error), then one for the money (`kind: "money"`:
+  credit, burn, running, the unsure boxes by state, hours left). The keys never change (`null` for
+  what is not known), every object carries `at`, and `--watch` prints no separator line.
+  Not with `--wide`. `compact::compact`, `render::Money`.
+
 ### Changed
 
 - The money line's burn counts the boxes the API reads as `running` AND those it was asked to run

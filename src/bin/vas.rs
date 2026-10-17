@@ -9,6 +9,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use clap::{Parser, Subcommand, ValueEnum};
 use vast_skopos::api::{Client, DEFAULT_BASE, SearchClient};
+use vast_skopos::compact::compact;
 use vast_skopos::config::{default_offers_file, read_flag_file};
 use vast_skopos::key::ApiKey;
 use vast_skopos::offer::{OfferQuery, OfferSort, country_code, gpu_model, select};
@@ -59,6 +60,10 @@ struct LookArgs {
     /// Also show each box's machine id and host id (what a rentals log or an AVOID list needs).
     #[arg(long)]
     wide: bool,
+    /// JSON Lines instead of the table, for scripts and monitors: one object per box, then one for
+    /// the money, each with a `kind` and an `at` (Unix seconds); the machine and host ids always.
+    #[arg(long, conflicts_with = "wide")]
+    compact: bool,
     /// Refresh every N seconds (at least 30) until Ctrl+C.
     #[arg(long, value_name = "SECONDS")]
     watch: Option<u64>,
@@ -293,14 +298,18 @@ fn look(client: &Client, args: &LookArgs) -> Result<String, vast_skopos::SkoposE
     } else {
         Vec::new()
     };
-    Ok(table(
-        &instances,
-        &probes,
-        args.ssh,
-        args.wide,
-        account.as_ref(),
-        now(),
-    ))
+    Ok(if args.compact {
+        compact(&instances, &probes, account.as_ref(), now())
+    } else {
+        table(
+            &instances,
+            &probes,
+            args.ssh,
+            args.wide,
+            account.as_ref(),
+            now(),
+        )
+    })
 }
 
 /// `vas` without a subcommand: the lookout, once or every `--watch` seconds.
@@ -331,7 +340,8 @@ fn lookout(args: &LookArgs) -> ExitCode {
     loop {
         match look(&client, args) {
             Ok(text) => {
-                let stamp = if args.watch.is_some() {
+                // JSON Lines carry their own `at`: a stamp line would not parse.
+                let stamp = if args.watch.is_some() && !args.compact {
                     let secs = SystemTime::now()
                         .duration_since(UNIX_EPOCH)
                         .map_or(0, |d| d.as_secs());

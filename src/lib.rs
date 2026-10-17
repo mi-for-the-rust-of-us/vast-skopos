@@ -19,9 +19,11 @@
 //! - [`instance`]: the lenient readers of their JSON;
 //! - [`offer`]: the offers for rent, and the search `vas offers` sends;
 //! - [`probe`]: the `ssh` probe and its `nvidia-smi` parser;
-//! - [`render`]: the tables.
+//! - [`render`]: the tables;
+//! - [`compact`]: the same readings as JSON Lines, for scripts and monitors.
 
 pub mod api;
+pub mod compact;
 pub mod config;
 pub mod error;
 pub mod instance;

@@ -12,6 +12,7 @@
 mod common;
 
 use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use common::serve;
 
@@ -37,10 +38,15 @@ fn account(target: &str) -> (u16, String) {
     }
 }
 
+/// The calls of [`vas`] so far, to name each one's home.
+static CALLS: AtomicUsize = AtomicUsize::new(0);
+
 /// `vas args` against the mock, with a key in the environment and an empty home; stdout.
 fn vas(args: &[&str]) -> String {
     let (base, _) = serve(account);
-    let home = std::env::temp_dir().join(format!("vas-look-{}-{}", args.len(), std::process::id()));
+    // One home per call: the tests run in parallel, and each removes its own when it is done.
+    let call = CALLS.fetch_add(1, Ordering::Relaxed);
+    let home = std::env::temp_dir().join(format!("vas-look-{call}-{}", std::process::id()));
     std::fs::create_dir_all(&home).unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_vas"))
         .args(args)
@@ -103,4 +109,54 @@ fn without_wide_neither_id_is_shown() {
         assert!(!text.contains(absent), "{absent} in {text}");
     }
     assert!(text.contains("credit $12.93"), "{text}");
+}
+
+#[test]
+fn compact_prints_one_json_object_per_box_then_the_money_and_nothing_else() {
+    let text = vas(&["--compact"]);
+    let lines: Vec<serde_json::Value> = text
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap_or_else(|e| panic!("{e}: {l}")))
+        .collect();
+    let kinds: Vec<&str> = lines.iter().map(|l| l["kind"].as_str().unwrap()).collect();
+    assert_eq!(kinds, ["box", "box", "box", "money"], "{text}");
+    assert_eq!(lines[0]["id"], 56_362_434);
+    assert_eq!(
+        (
+            lines[0]["machine_id"].as_u64(),
+            lines[0]["host_id"].as_u64()
+        ),
+        (Some(100_682), Some(406_325)),
+        "the ids are always there, `--wide` or not"
+    );
+    assert_eq!(
+        (lines[0]["ssh_host"].as_str(), lines[0]["ssh_port"].as_u64()),
+        (Some("ssh6.vast.ai"), Some(36_000))
+    );
+    assert_eq!(
+        lines[1]["machine_id"], 140_734,
+        "a numeric-string id is a number"
+    );
+    assert!(lines[2]["machine_id"].is_null() && lines[2]["probe"].is_null());
+    assert_eq!(lines[3]["credit"], 12.93);
+    assert_eq!(lines[3]["running"], 1);
+    assert!(!text.contains("== vas"), "no stamp line: {text}");
+    assert!(
+        !text.contains("credit $"),
+        "no table, no money line: {text}"
+    );
+}
+
+#[test]
+fn compact_and_wide_are_refused_together() {
+    let (base, _) = serve(account);
+    let out = Command::new(env!("CARGO_BIN_EXE_vas"))
+        .args(["--compact", "--wide"])
+        .env("VAST_URL", &base)
+        .env("VAST_API_KEY", "k3y")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("cannot be used with"), "{stderr}");
 }
