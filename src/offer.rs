@@ -58,9 +58,9 @@ pub struct Offer {
     pub duration: Option<f64>,
     /// The host's location (e.g. `Texas, US`).
     pub geolocation: Option<String>,
-    /// The host's id.
+    /// The host's id (`--exclude-host`).
     pub host_id: Option<u64>,
-    /// The machine's id.
+    /// The machine's id (`--exclude-machine`); one host may own several machines.
     pub machine_id: Option<u64>,
     /// vast.ai's verdict on the machine (`verified`, `unverified`, `deverified`, ...).
     pub verification: Option<String>,
@@ -195,6 +195,8 @@ pub struct OfferQuery {
     pub exclude_countries: Vec<String>,
     /// Host ids excluded.
     pub exclude_hosts: Vec<u64>,
+    /// Machine ids excluded (a host may own several machines, one of which can be the bad one).
+    pub exclude_machines: Vec<u64>,
 }
 
 /// `x` with at most two decimals, trailing zeros dropped (`99`, `99.5`; `57`, not
@@ -211,6 +213,14 @@ fn at_least(value: Option<f64>, bound: Option<f64>) -> bool {
     bound.is_none_or(|b| value.is_none_or(|v| v >= b))
 }
 
+/// `ids`, sorted, each once.
+fn sorted_once(ids: &[u64]) -> Vec<u64> {
+    let mut sorted = ids.to_vec();
+    sorted.sort_unstable();
+    sorted.dedup();
+    sorted
+}
+
 impl OfferQuery {
     /// Whether the query constrains nothing (the identity).
     ///
@@ -220,6 +230,9 @@ impl OfferQuery {
     /// let mut q = OfferQuery::default();
     /// q.exclude_hosts.push(362355);
     /// assert!(!q.is_identity());
+    /// let mut q = OfferQuery::default();
+    /// q.exclude_machines.push(142875);
+    /// assert!(!q.is_identity(), "a machine excluded alone is a constraint");
     /// ```
     #[must_use]
     pub const fn is_identity(&self) -> bool {
@@ -235,6 +248,7 @@ impl OfferQuery {
             && !self.verified
             && self.exclude_countries.is_empty()
             && self.exclude_hosts.is_empty()
+            && self.exclude_machines.is_empty()
     }
 
     /// The storage priced into `$/h`, in GB: the disk asked, else [`DEFAULT_STORAGE_GB`].
@@ -265,10 +279,12 @@ impl OfferQuery {
 
     /// The excluded hosts, sorted, each once: as sent and as summarised.
     fn hosts(&self) -> Vec<u64> {
-        let mut hosts = self.exclude_hosts.clone();
-        hosts.sort_unstable();
-        hosts.dedup();
-        hosts
+        sorted_once(&self.exclude_hosts)
+    }
+
+    /// The excluded machines, sorted, each once: as sent and as summarised.
+    fn machines(&self) -> Vec<u64> {
+        sorted_once(&self.exclude_machines)
     }
 
     /// The search's `q`, for `sort`: always rentable, not rented, on-demand, [`FETCH_LIMIT`] rows,
@@ -285,11 +301,13 @@ impl OfferQuery {
     /// q.disk = Some(50);
     /// q.min_days = Some(2.0);
     /// q.exclude_countries = vec!["US".to_owned(), "CN".to_owned(), "CN".to_owned()];
+    /// q.exclude_machines = vec![142875, 100682, 142875];
     /// let v = q.to_q(OfferSort::Up);
     /// assert_eq!(v["gpu_name"], serde_json::json!({"eq": "RTX 5090"}));
     /// assert_eq!((v["allocated_storage"].as_u64(), v["disk_space"]["gte"].as_u64()), (Some(50), Some(50)));
     /// assert_eq!(v["duration"]["gte"].as_f64(), Some(172_800.0));
     /// assert_eq!(v["geolocation"], serde_json::json!({"notin": ["CN", "US"]}));
+    /// assert_eq!(v["machine_id"], serde_json::json!({"notin": [100682, 142875]}));
     /// assert_eq!(v["order"], serde_json::json!([["inet_up", "desc"]]));
     /// ```
     #[must_use]
@@ -334,6 +352,9 @@ impl OfferQuery {
         }
         if !self.exclude_hosts.is_empty() {
             q.insert("host_id".into(), json!({"notin": self.hosts()}));
+        }
+        if !self.exclude_machines.is_empty() {
+            q.insert("machine_id".into(), json!({"notin": self.machines()}));
         }
         Value::Object(q)
     }
@@ -380,6 +401,9 @@ impl OfferQuery {
         let host_ok = offer
             .host_id
             .is_none_or(|h| !self.exclude_hosts.contains(&h));
+        let machine_ok = offer
+            .machine_id
+            .is_none_or(|m| !self.exclude_machines.contains(&m));
         available
             && same_text(self.gpu.as_ref(), offer.gpu_name.as_ref())
             && same_count(self.num_gpus, offer.num_gpus)
@@ -393,6 +417,7 @@ impl OfferQuery {
             && verified_ok
             && country_ok
             && host_ok
+            && machine_ok
     }
 
     /// The constraints in words, for the footer (so a silent config file shows); `no constraint`
@@ -407,7 +432,9 @@ impl OfferQuery {
     /// q.reliability = Some(0.99);
     /// q.exclude_countries = vec!["CN".to_owned(), "cn".to_owned()];
     /// q.exclude_hosts = vec![362355, 362355];
-    /// assert_eq!(q.summary(), "RTX 5090, 1 GPU, reliability >= 99 %, not in CN, not hosts 362355");
+    /// q.exclude_machines = vec![142875];
+    /// assert_eq!(q.summary(),
+    ///   "RTX 5090, 1 GPU, reliability >= 99 %, not in CN, not hosts 362355, not machines 142875");
     /// q.reliability = Some(0.57);
     /// assert!(q.summary().contains("reliability >= 57 %"), "no float noise");
     /// ```
@@ -451,6 +478,10 @@ impl OfferQuery {
         if !self.exclude_hosts.is_empty() {
             let hosts: Vec<String> = self.hosts().iter().map(u64::to_string).collect();
             parts.push(format!("not hosts {}", hosts.join(" ")));
+        }
+        if !self.exclude_machines.is_empty() {
+            let machines: Vec<String> = self.machines().iter().map(u64::to_string).collect();
+            parts.push(format!("not machines {}", machines.join(" ")));
         }
         if parts.is_empty() {
             String::from("no constraint")

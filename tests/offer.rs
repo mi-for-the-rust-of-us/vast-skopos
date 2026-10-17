@@ -28,6 +28,7 @@ fn every_constraint() -> OfferQuery {
     q.verified = true;
     q.exclude_countries = vec!["CN".to_owned()];
     q.exclude_hosts = vec![362_355];
+    q.exclude_machines = vec![142_875];
     q
 }
 
@@ -36,11 +37,11 @@ fn passing() -> Value {
     json!({"id": 1, "gpu_name": "RTX 5090", "num_gpus": 1, "disk_space": 50.0,
       "cuda_max_good": 12.8, "reliability2": 0.99, "inet_up": 200.0, "inet_down": 300.0,
       "dph_total": 0.8, "duration": 172_800.0, "verification": "verified",
-      "geolocation": "Texas, US", "host_id": 7, "rentable": true, "rented": false})
+      "geolocation": "Texas, US", "host_id": 7, "machine_id": 8, "rentable": true, "rented": false})
 }
 
 /// Each field, and a value contradicting its constraint (bounds are inclusive in `passing`).
-const VIOLATIONS: [(&str, &str); 14] = [
+const VIOLATIONS: [(&str, &str); 15] = [
     ("gpu_name", r#""RTX 4090""#),
     ("num_gpus", "2"),
     ("disk_space", "49.9"),
@@ -53,6 +54,7 @@ const VIOLATIONS: [(&str, &str); 14] = [
     ("verification", r#""deverified""#),
     ("geolocation", r#""Guangdong, CN""#),
     ("host_id", "362355"),
+    ("machine_id", "142875"),
     ("rentable", "false"),
     ("rented", "true"),
 ];
@@ -94,6 +96,7 @@ fn every_constraint_is_sent_in_the_servers_unit() {
         ("verified", json!({"eq": true})),
         ("geolocation", json!({"notin": ["CN"]})),
         ("host_id", json!({"notin": [362_355]})),
+        ("machine_id", json!({"notin": [142_875]})),
         ("rentable", json!({"eq": true})),
         ("rented", json!({"eq": false})),
         ("allocated_storage", json!(50)),
@@ -137,4 +140,41 @@ fn every_order_puts_missing_values_last_and_breaks_ties_by_price_then_id() {
     assert_eq!(ids(OfferSort::Price), [4, 2, 5, 3, 1]);
     assert_eq!(ids(OfferSort::Reliability), [2, 5, 3, 1, 4]);
     assert_eq!(ids(OfferSort::Up), [5, 3, 2, 1, 4]);
+}
+
+#[test]
+fn a_host_and_a_machine_are_told_apart() {
+    // The ids are drawn from the same range, so a host can be numbered like another host's machine.
+    let offer = Offer::from_json(&json!({"id": 1, "host_id": 5, "machine_id": 9})).unwrap();
+    assert_eq!((offer.host_id, offer.machine_id), (Some(5), Some(9)));
+    let admits = |hosts: &[u64], machines: &[u64]| {
+        let mut q = OfferQuery::default();
+        q.exclude_hosts = hosts.to_vec();
+        q.exclude_machines = machines.to_vec();
+        q.admits(&offer)
+    };
+    assert!(!admits(&[5], &[]), "its host");
+    assert!(!admits(&[], &[9]), "its machine");
+    assert!(!admits(&[5], &[9]), "both");
+    assert!(
+        admits(&[9], &[]),
+        "a host numbered like its machine is another host"
+    );
+    assert!(
+        admits(&[], &[5]),
+        "a machine numbered like its host is another machine"
+    );
+    assert!(admits(&[4, 6], &[8, 10]), "neither");
+
+    let mut q = OfferQuery::default();
+    q.exclude_hosts = vec![5];
+    q.exclude_machines = vec![9];
+    let sent = q.to_q(OfferSort::Price);
+    assert_eq!(sent["host_id"], json!({"notin": [5]}));
+    assert_eq!(sent["machine_id"], json!({"notin": [9]}));
+    assert!(
+        q.summary().ends_with("not hosts 5, not machines 9"),
+        "{}",
+        q.summary()
+    );
 }

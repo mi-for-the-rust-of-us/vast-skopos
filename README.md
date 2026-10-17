@@ -115,7 +115,7 @@ ID        LABEL  GPU          WHERE  STATUS   $/H    AGE    COST~  SSH          
 credit $5.94 | burn $0.643/h over 1 running | ~9.2 h left at this rate
 ```
 
-And with no key at all, the offers askesis rents by (captured 2026-10-16, 20:34):
+And with no key at all, the offers askesis rents by (captured 2026-10-16, 20:34, before the footer named the time of the search):
 
 ```text
 $ vas offers --gpu RTX_5090 --num-gpus 1 --cuda 12.8 --disk 50 --reliability 0.99 --inet-up 200 --exclude-country CN --exclude-host 362355 --verified --top 5
@@ -136,6 +136,7 @@ ID        GPU          VRAM  $/H    CUDA  DISK   UP/DOWN Mb/s  REL %  MAX DAYS  
 | `vas --ssh` | also probe every running box over `ssh`, once each, in parallel |
 | `vas --ssh --log PATH_OR_GLOB` | also print, for the newest match of the pattern on each box, its last two path components and its last non-blank line (`s0/train.log: ...`, so a glob whose varying part is among the last two components says which run wrote it); `(empty)` when the file has no line to show, `(not a file)` when the newest match is a directory, `(no file matches)` when nothing matched, `?` when the box's answer was cut short. The pattern is expanded by the box's shell, so quote it locally (and quote a part with spaces again inside, `'"/root/my runs"/*/train.log'`); the line is shown without control characters, at most 120 characters, the path at most 60 |
 | `vas --ssh -i ~/.ssh/id_ed25519` | use this private key (default: `ssh`'s own choice, agent and `~/.ssh/config`) |
+| `vas --wide` | also show each box's machine id and host id (what a rentals log, `--exclude-machine` and `--exclude-host` need) |
 | `vas --watch 60` | refresh every 60 s (at least 30) until Ctrl+C |
 | `vas --key-file FILE` | read the key from `FILE` |
 | `vas offers [FLAGS]` | the offers for rent that pass the flags, cheapest first; no key needed ([below](#vas-offers)) |
@@ -161,7 +162,7 @@ instance is stopped and prices can change; the invoice is the reference.
 | `--inet-up MBIT_S`, `--inet-down MBIT_S` | the lowest ADVERTISED bandwidth (the host's own test, not your route: see the dogfooding note) |
 | `--max-price DOLLARS`, `--min-days DAYS` | the highest `$/h` (storage included), the shortest acceptable maximum rental |
 | `--verified`, `--no-verified` | only machines vast.ai has verified; `--no-verified` cancels a config file's `--verified` |
-| `--exclude-country CC`, `--exclude-host ID` | leave out a country (two letters) or a host; repeatable |
+| `--exclude-country CC`, `--exclude-host ID`, `--exclude-machine ID` | leave out a country (two letters), a host or a machine (a host may own several; `vas --wide` shows yours); repeatable |
 | `--top N` (20), `--sort price\|reliability\|up` | how many rows, in which order |
 | `--config FILE`, `--no-config` | read the flags of `FILE` first, or of no file |
 
@@ -193,7 +194,8 @@ still says `truncated: false`; its order decides which 64 come back, so `--sort`
 server too. When 64 rows come back, the footer says the list may be cut: narrow the search. Every
 constraint is also **re-checked on each row**: a row whose field contradicts one is dropped (and
 counted in the footer); a row MISSING the field is kept, with a dash. The footer also names every
-constraint applied (a config file never acts unseen) and the storage priced into `$/h`.
+constraint applied (a config file never acts unseen), the storage priced into `$/h` and the time of
+the search (UTC): the list is a snapshot of a market where offers vanish within minutes.
 
 ### The API key
 

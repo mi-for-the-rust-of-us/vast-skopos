@@ -396,6 +396,38 @@ fn excluded_hosts_accumulate_too() {
 }
 
 #[test]
+fn excluded_machines_accumulate_too_and_the_footer_names_them_and_the_time() {
+    let (base, seen) = serve(bundles);
+    let home = fresh_home("machines");
+    write_config(
+        &home.join("xdg"),
+        "--exclude-machine 142875
+",
+    );
+    let (out, _, stderr) = vas(&base, &home, true, &["offers", "--exclude-machine", "1"]);
+    assert!(out.status.success(), "{stderr}");
+    assert_eq!(
+        decode_q(&the_request(&seen).target)["machine_id"],
+        serde_json::json!({"notin": [1, 142_875]})
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let footer = stdout
+        .lines()
+        .find(|l| l.contains("not machines"))
+        .unwrap_or("");
+    assert!(footer.contains("not machines 1 142875"), "{stdout}");
+    let (_, at) = footer.rsplit_once("searched ").unwrap_or(("", ""));
+    let digits: Vec<bool> = at.chars().map(|c| c.is_ascii_digit()).collect();
+    assert!(
+        at.ends_with(" UTC")
+            && at.len() == "15:42:07 UTC".len()
+            && digits[..2] == [true, true]
+            && at.as_bytes()[2] == b':',
+        "the search time, UTC, closes the first footer line: {footer}"
+    );
+}
+
+#[test]
 fn a_bad_value_in_the_config_file_names_the_file() {
     let (base, seen) = serve(bundles);
     let home = fresh_home("badvalue");

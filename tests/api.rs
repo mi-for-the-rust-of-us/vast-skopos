@@ -25,7 +25,8 @@ fn vast(target: &str) -> (u16, String) {
         } else {
             (200, r#"{"instances": [
                 {"id": 1, "actual_status": "running", "dph_total": 0.643, "gpu_name": "RTX 5090",
-                 "num_gpus": 1, "ssh_host": "ssh4.vast.ai", "ssh_port": 23484, "start_date": 1.0},
+                 "num_gpus": 1, "ssh_host": "ssh4.vast.ai", "ssh_port": 23484, "start_date": 1.0,
+                 "machine_id": 100682, "host_id": "406325"},
                 {"id": 2, "actual_status": "loading", "intended_status": "running", "dph_total": 0.608},
                 {"label": "a row without an id is skipped"}
               ], "next_token": "tok-2"}"#.to_owned())
@@ -49,6 +50,12 @@ fn pages_are_followed_and_the_key_is_sent_as_a_bearer() {
     let rows = client.instances().unwrap();
     assert_eq!(rows.iter().map(|i| i.id).collect::<Vec<_>>(), vec![1, 2, 3]);
     assert_eq!(rows[0].ssh_endpoint(), Some(("ssh4.vast.ai", 23484)));
+    assert_eq!(
+        (rows[0].machine_id, rows[0].host_id),
+        (Some(100_682), Some(406_325)),
+        "the two ids, a number and a numeric string, each in its own field"
+    );
+    assert_eq!((rows[1].machine_id, rows[1].host_id), (None, None));
     let seen = seen.lock().unwrap().clone();
     assert_eq!(seen.len(), 2, "two pages");
     assert!(seen[0].target.contains("limit=25") && seen[0].target.contains("order_by="));
@@ -165,6 +172,7 @@ fn askesis_query() -> OfferQuery {
     q.inet_up = Some(200.0);
     q.exclude_countries = vec!["CN".to_owned()];
     q.exclude_hosts = vec![362_355];
+    q.exclude_machines = vec![142_875];
     q
 }
 
@@ -201,7 +209,7 @@ fn the_offer_search_is_one_keyless_get_carrying_every_constraint() {
             "gpu_name": {"eq": "RTX 5090"}, "num_gpus": {"eq": 1}, "disk_space": {"gte": 50},
             "cuda_max_good": {"gte": 12.8}, "reliability2": {"gte": 0.99},
             "inet_up": {"gte": 200.0}, "geolocation": {"notin": ["CN"]},
-            "host_id": {"notin": [362_355]}
+            "host_id": {"notin": [362_355]}, "machine_id": {"notin": [142_875]}
         })
     );
 }

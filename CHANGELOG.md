@@ -6,6 +6,23 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- `vas --wide`: two more columns, `MACHINE` and `HOST`, the ids the API gives (`Instance::machine_id`,
+  `Instance::host_id`), for a rentals log and for the `--exclude-*` flags.
+- `vas offers --exclude-machine ID` (repeatable, accumulated with the config file's), beside
+  `--exclude-host`: sent as `machine_id notin [...]` (checked live, 2026-10-17: the server applies it,
+  and still answers 64 rows), re-checked on each row, named in the footer (`not machines ...`).
+  `OfferQuery::exclude_machines`.
+- The footer of `vas offers` names the time of the search (`searched 15:42:07 UTC`): offers vanish
+  within minutes, so a list read later says how old it is. `render::clock`.
+
+### Changed
+
+- BREAKING for library users (0.x: a minor release): `render::table` takes a `wide` flag (after
+  `with_ssh`), and `render::offers_line` the time of the search (`now`, Unix seconds, last).
+  `vas`'s own output gains the `searched ...` clause on the `vas offers` footer.
+
 ## [0.1.0] - 2026-10-17
 
 First release.

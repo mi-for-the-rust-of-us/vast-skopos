@@ -56,6 +56,9 @@ struct LookArgs {
     /// Read the API key from this file (default: VAST_API_KEY, then the vastai CLI's files).
     #[arg(long, value_name = "FILE")]
     key_file: Option<PathBuf>,
+    /// Also show each box's machine id and host id (what a rentals log or an AVOID list needs).
+    #[arg(long)]
+    wide: bool,
     /// Refresh every N seconds (at least 30) until Ctrl+C.
     #[arg(long, value_name = "SECONDS")]
     watch: Option<u64>,
@@ -128,6 +131,10 @@ struct OffersArgs {
     /// Leave out this host. Repeatable; added to the config file's.
     #[arg(long, value_name = "HOST_ID")]
     exclude_host: Vec<u64>,
+    /// Leave out this machine (a host may own several; `vas --wide` shows yours). Repeatable; added
+    /// to the config file's.
+    #[arg(long, value_name = "MACHINE_ID")]
+    exclude_machine: Vec<u64>,
     /// Show at most N offers.
     #[arg(long, value_name = "N", default_value_t = 20, value_parser = clap::value_parser!(u64).range(1..))]
     top: u64,
@@ -158,6 +165,7 @@ impl OffersArgs {
         q.verified = self.verified;
         q.exclude_countries.clone_from(&self.exclude_country);
         q.exclude_hosts.clone_from(&self.exclude_host);
+        q.exclude_machines.clone_from(&self.exclude_machine);
         q
     }
 }
@@ -289,6 +297,7 @@ fn look(client: &Client, args: &LookArgs) -> Result<String, vast_skopos::SkoposE
         &instances,
         &probes,
         args.ssh,
+        args.wide,
         account.as_ref(),
         now(),
     ))
@@ -426,7 +435,7 @@ fn offers(args: OffersArgs) -> ExitCode {
             // BORROW: explicit clone -- the footer reads the page again
             let kept = select(page.offers.clone(), &query, sort);
             let top = usize::try_from(args.top).unwrap_or(usize::MAX);
-            let footer = offers_line(&page, kept.len(), kept.len().min(top), &query, sort);
+            let footer = offers_line(&page, kept.len(), kept.len().min(top), &query, sort, now());
             // A closed pipe (`vas offers | head -3`) is the reader's choice, not a failure.
             let _ = emit(&format!("{}{footer}", offers_table(&kept, top)));
             ExitCode::SUCCESS

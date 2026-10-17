@@ -34,6 +34,27 @@ pub fn age(secs: f64) -> String {
     }
 }
 
+/// The time of day of `unix_secs` in UTC, as `15:42:07 UTC` (the date is not shown: the footer that
+/// carries it is read within minutes, since offers vanish within minutes).
+///
+/// ```
+/// use vast_skopos::render::clock;
+/// assert_eq!(clock(0.0), "00:00:00 UTC");
+/// assert_eq!(clock(86_400.0 + 15.0 * 3600.0 + 42.0 * 60.0 + 7.9), "15:42:07 UTC");
+/// assert_eq!(clock(-5.0), "00:00:00 UTC");
+/// ```
+#[must_use]
+pub fn clock(unix_secs: f64) -> String {
+    // CAST: f64 → u64, a non-negative time in seconds, truncated to whole seconds on purpose
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::as_conversions
+    )]
+    let s = unix_secs.max(0.0) as u64 % 86_400;
+    format!("{:02}:{:02}:{:02} UTC", s / 3600, (s % 3600) / 60, s % 60)
+}
+
 /// A cell, or a dash.
 fn or_dash(v: Option<String>) -> String {
     v.unwrap_or_else(|| String::from("-"))
@@ -208,18 +229,23 @@ fn mib_to_gib(mib: u64) -> f64 {
 /// The table: one row per instance, then the money line.
 ///
 /// `probes` is aligned with `instances` (`None`: not probed, e.g. not running); `with_ssh` shows
-/// the probe columns even when no box was probed; `now` is Unix seconds.
+/// the probe columns even when no box was probed; `wide` adds the machine and host ids; `now` is
+/// Unix seconds.
 #[must_use]
 pub fn table(
     instances: &[Instance],
     probes: &[Option<Result<Probe, SkoposError>>],
     with_ssh: bool,
+    wide: bool,
     account: Option<&Account>,
     now: f64,
 ) -> String {
     let mut header = vec![
         "ID", "LABEL", "GPU", "WHERE", "STATUS", "$/H", "AGE", "COST~", "SSH",
     ];
+    if wide {
+        header.extend(["MACHINE", "HOST"]);
+    }
     if with_ssh {
         header.extend(["GPU% (ssh)", "VRAM", "LAST LOG / SSH ERROR"]);
     }
@@ -236,6 +262,12 @@ pub fn table(
             or_dash(i.cost_so_far(now).map(|c| format!("{c:.2}"))),
             or_dash(i.ssh_endpoint().map(|(h, p)| format!("{h}:{p}"))),
         ];
+        if wide {
+            row.extend([
+                or_dash(i.machine_id.map(|m| m.to_string())),
+                or_dash(i.host_id.map(|h| h.to_string())),
+            ]);
+        }
         if with_ssh {
             match probes.get(n).and_then(Option::as_ref) {
                 Some(Ok(p)) => {
@@ -358,7 +390,9 @@ pub fn offers_table(offers: &[Offer], top: usize) -> String {
 ///
 /// The notes say when the answer may be cut (vast.ai's cap, or the server's own `truncated`), how
 /// many rows the re-check dropped, and how many were skipped for want of an id. `kept` is how many
-/// offers passed the re-check ([`crate::offer::select`]), `shown` how many the table shows.
+/// offers passed the re-check ([`crate::offer::select`]), `shown` how many the table shows. `now`
+/// (Unix seconds) is the time of the search, named on the first line: the list is a snapshot of a
+/// market that moves within minutes.
 ///
 /// ```
 /// use vast_skopos::{offer::{OfferPage, OfferQuery, OfferSort}, render::offers_line};
@@ -366,12 +400,13 @@ pub fn offers_table(offers: &[Offer], top: usize) -> String {
 ///   {"offers": [{"id": 1}, {"id": 2}, {"id": 3}], "truncated": false})).unwrap();
 /// let mut q = OfferQuery::default();
 /// q.disk = Some(50);
-/// assert_eq!(offers_line(&page, 2, 1, &q, OfferSort::Price),
-///   "1 of 2 offers shown, cheapest first | disk >= 50 GB | $/h includes 50 GB of storage\n\
-///    1 dropped here: a field contradicts a constraint\n");
+/// assert_eq!(offers_line(&page, 2, 1, &q, OfferSort::Price, 56_527.0),
+///   "1 of 2 offers shown, cheapest first | disk >= 50 GB | $/h includes 50 GB of storage \
+///    | searched 15:42:07 UTC\n1 dropped here: a field contradicts a constraint\n");
 /// let one = OfferPage::from_json(&serde_json::json!({"offers": [{"id": 1}]})).unwrap();
-/// assert_eq!(offers_line(&one, 1, 1, &OfferQuery::default(), OfferSort::Up),
-///   "1 offer, fastest upload first | no constraint | $/h includes 5 GB of storage\n");
+/// assert_eq!(offers_line(&one, 1, 1, &OfferQuery::default(), OfferSort::Up, 0.0),
+///   "1 offer, fastest upload first | no constraint | $/h includes 5 GB of storage \
+///    | searched 00:00:00 UTC\n");
 /// ```
 #[must_use]
 pub fn offers_line(
@@ -380,6 +415,7 @@ pub fn offers_line(
     shown: usize,
     query: &OfferQuery,
     sort: OfferSort,
+    now: f64,
 ) -> String {
     let count = if shown < kept {
         format!("{shown} of {kept} offers shown")
@@ -389,10 +425,11 @@ pub fn offers_line(
         format!("{kept} offers")
     };
     let mut s = format!(
-        "{count}, {} | {} | $/h includes {} GB of storage\n",
+        "{count}, {} | {} | $/h includes {} GB of storage | searched {}\n",
         sort.words(),
         query.summary(),
-        query.storage_gb()
+        query.storage_gb(),
+        clock(now)
     );
     let mut notes: Vec<String> = Vec::new();
     if page.maybe_cut() {

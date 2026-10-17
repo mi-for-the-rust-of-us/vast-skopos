@@ -44,7 +44,7 @@ fn the_table_shows_cost_status_probe_and_money() {
         })),
     ];
     let account = Account::from_json(&serde_json::json!({"credit": 5.94}));
-    let text = table(&rows, &probes, true, Some(&account), now);
+    let text = table(&rows, &probes, true, false, Some(&account), now);
     assert!(text.contains("1x RTX 5090"), "{text}");
     assert!(
         text.contains("2h 0m") && text.contains("1.29"),
@@ -67,7 +67,7 @@ fn the_table_shows_cost_status_probe_and_money() {
 
 #[test]
 fn no_instances_still_prints_the_money_line() {
-    let text = table(&[], &[], false, None, 0.0);
+    let text = table(&[], &[], false, false, None, 0.0);
     assert!(
         text.contains("(no instances)") && text.contains("credit ? | burn $0.000/h over 0 running")
     );
@@ -78,8 +78,40 @@ fn ssh_columns_show_when_asked_even_with_nothing_probed() {
     let rows = vec![instance(
         &serde_json::json!({"id": 1, "actual_status": "exited"}),
     )];
-    let text = table(&rows, &[None], true, None, 0.0);
+    let text = table(&rows, &[None], true, false, None, 0.0);
     assert!(text.contains("GPU% (ssh)"), "{text}");
+}
+
+#[test]
+fn wide_adds_the_machine_and_the_host_after_ssh_and_before_the_probe_columns() {
+    let rows = vec![
+        instance(
+            &serde_json::json!({"id": 56_362_434, "actual_status": "running",
+            "ssh_host": "ssh6.vast.ai", "ssh_port": 36_000, "machine_id": 100_682, "host_id": 406_325}),
+        ),
+        instance(&serde_json::json!({"id": 2, "actual_status": "exited"})),
+    ];
+    let narrow = table(&rows, &[None, None], true, false, None, 0.0);
+    assert!(
+        !narrow.contains("MACHINE") && !narrow.contains("100682"),
+        "{narrow}"
+    );
+    let text = table(&rows, &[None, None], true, true, None, 0.0);
+    let lines: Vec<&str> = text.lines().collect();
+    let header: Vec<&str> = lines[0].split_whitespace().collect();
+    assert_eq!(&header[8..12], ["SSH", "MACHINE", "HOST", "GPU%"], "{text}");
+    let first: Vec<&str> = lines[1].split_whitespace().collect();
+    assert!(
+        first
+            .windows(3)
+            .any(|w| w == ["ssh6.vast.ai:36000", "100682", "406325"]),
+        "the ids sit under their headers: {text}"
+    );
+    let second: Vec<&str> = lines[2].split_whitespace().collect();
+    assert!(
+        second.windows(2).any(|w| w == ["-", "-"]),
+        "a box the API gave no ids for shows dashes: {text}"
+    );
 }
 
 #[test]
@@ -96,7 +128,7 @@ fn the_log_cell_tells_no_file_from_an_empty_file() {
             "0, 0, 0, 32607\n---vas-log---\nvas-file:/root/runs/s1/train.log\n",
         ))),
     ];
-    let text = table(&rows, &probes, true, None, 0.0);
+    let text = table(&rows, &probes, true, false, None, 0.0);
     assert!(text.contains("(no file matches)"), "{text}");
     assert!(text.contains("s1/train.log: (empty)"), "{text}");
 }
@@ -125,9 +157,9 @@ fn the_offers_table_of_real_rows_is_aligned_and_footed() {
         "{text}"
     );
     assert_eq!(
-        offers_line(&page, kept.len(), 2, &q, OfferSort::Price),
-        "2 of 3 offers shown, cheapest first | verified | $/h includes 5 GB of storage\n\
-         2 dropped here: a field contradicts a constraint\n"
+        offers_line(&page, kept.len(), 2, &q, OfferSort::Price, 56_527.0),
+        "2 of 3 offers shown, cheapest first | verified | $/h includes 5 GB of storage \
+         | searched 15:42:07 UTC\n2 dropped here: a field contradicts a constraint\n"
     );
 }
 
@@ -136,7 +168,7 @@ fn an_answer_at_the_cap_says_the_list_may_be_cut() {
     let rows: Vec<serde_json::Value> = (0..64).map(|id| serde_json::json!({"id": id})).collect();
     let page =
         OfferPage::from_json(&serde_json::json!({"offers": rows, "truncated": false})).unwrap();
-    let footer = offers_line(&page, 64, 20, &OfferQuery::default(), OfferSort::Price);
+    let footer = offers_line(&page, 64, 20, &OfferQuery::default(), OfferSort::Price, 0.0);
     assert!(
         footer.contains("64 returned, vast.ai's cap: the list may be cut"),
         "{footer}"
@@ -148,7 +180,7 @@ fn the_server_saying_truncated_and_rows_without_an_id_are_noted() {
     let page = OfferPage::from_json(&serde_json::json!(
         {"offers": [{"id": 1}, {"gpu_name": "no id"}], "truncated": true}))
     .unwrap();
-    let footer = offers_line(&page, 1, 1, &OfferQuery::default(), OfferSort::Price);
+    let footer = offers_line(&page, 1, 1, &OfferQuery::default(), OfferSort::Price, 0.0);
     assert!(
         footer.ends_with(
             "vast.ai says the list was cut (narrow the search) | 1 without an id skipped\n"

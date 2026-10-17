@@ -40,6 +40,10 @@ pub struct Instance {
     pub image_runtype: Option<String>,
     /// The host's location, when given (e.g. `Vietnam, VN`).
     pub geolocation: Option<String>,
+    /// The machine's id: what `vas offers --exclude-machine` takes, and what a rentals log keeps.
+    pub machine_id: Option<u64>,
+    /// The host's id: what `vas offers --exclude-host` takes.
+    pub host_id: Option<u64>,
 }
 
 /// Whether `c` must not reach a terminal from someone else's text: a control character, or an
@@ -115,6 +119,10 @@ impl Instance {
     /// let i = Instance::from_json(&odd).unwrap();
     /// assert_eq!((i.geolocation.as_deref(), i.dph_total), (Some("Tex[2Jas, US"), None));
     /// assert_eq!(i.gpu_name.as_deref(), Some("RTX 5090"));
+    /// // The machine and the host, as numbers or numeric strings.
+    /// let ids = serde_json::json!({"id": 2, "machine_id": 100682, "host_id": "406325"});
+    /// let i = Instance::from_json(&ids).unwrap();
+    /// assert_eq!((i.machine_id, i.host_id), (Some(100682), Some(406_325)));
     /// ```
     #[must_use]
     pub fn from_json(row: &Value) -> Option<Self> {
@@ -132,6 +140,8 @@ impl Instance {
             ssh_port: integer(row, "ssh_port").and_then(|p| u16::try_from(p).ok()),
             image_runtype: text(row, "image_runtype"),
             geolocation: text(row, "geolocation"),
+            machine_id: integer(row, "machine_id"),
+            host_id: integer(row, "host_id"),
         })
     }
 

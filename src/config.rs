@@ -4,7 +4,8 @@
 //! `--verified`. Blank lines and lines starting with `#` are skipped; one pair of quotes around a
 //! value is removed. The file's flags come FIRST and the command line's after, so a single value
 //! given in both places is the command line's, while the deny-lists (`--exclude-country`,
-//! `--exclude-host`) accumulate: adding one entry on the command line never drops the file's.
+//! `--exclude-host`, `--exclude-machine`) accumulate: adding one entry on the command line never
+//! drops the file's.
 //!
 //! The file is the one `--config FILE` names, else the first that exists of:
 //!
