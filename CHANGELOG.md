@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-17
+
+First release.
+
 ### Added
 
 - `vas`: one table per call over the account's vast.ai instances (status, `$/h`, age, estimated

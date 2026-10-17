@@ -12,6 +12,8 @@ readme = "README.md"
 keywords = ["vast-ai", "gpu", "cloud", "monitoring", "cli"]
 categories = ["command-line-utilities", "development-tools"]
 rust-version = "1.88"
+# Repository tooling and the maintainer's working notes stay out of the published crate.
+exclude = [".github/", "deny.toml", "docs/dogfooding/"]
 
 [dependencies]
 thiserror = "2"
