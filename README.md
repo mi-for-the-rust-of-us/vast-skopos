@@ -150,6 +150,13 @@ vast.ai's `ssh` proxies are reached by port.
 `COST~` is an estimate: today's `$/h` times the hours since creation. vast.ai bills storage while an
 instance is stopped and prices can change; the invoice is the reference.
 
+**The burn counts what may bill.** The money line's burn adds the boxes the API reads as `running` AND
+the boxes it was asked to run (`intended_status`) that read otherwise (`offline`, `loading`...):
+`burn $1.940/h over 3 running + 1 offline (meant to run, billing unknown)`. Whether such a box bills
+is not known from here, and a burn that leaves it out overstates the runway; the `~H h left` figure
+uses the larger burn. A stopped box is not counted, though vast.ai still bills its storage: `vas`
+does not show that cost yet.
+
 ### `vas offers`
 
 | Flag | |

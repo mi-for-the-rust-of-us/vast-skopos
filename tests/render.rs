@@ -14,7 +14,7 @@ use vast_skopos::SkoposError;
 use vast_skopos::instance::{Account, Instance};
 use vast_skopos::offer::{OfferPage, OfferQuery, OfferSort, select};
 use vast_skopos::probe::parse_output;
-use vast_skopos::render::{offers_line, offers_table, table};
+use vast_skopos::render::{money_line, offers_line, offers_table, table};
 
 fn instance(json: &serde_json::Value) -> Instance {
     Instance::from_json(json).unwrap()
@@ -203,4 +203,62 @@ fn a_long_host_written_cell_is_capped_and_its_hidden_characters_dropped() {
         "two capped cells, not 1000 characters: {row}"
     );
     assert_eq!(row.matches('…').count(), 2, "{row}");
+}
+
+/// One instance row for the money line: its actual and intended status, and its `$/h`.
+fn fleet_row(id: u64, actual: Option<&str>, intended: Option<&str>, dph: Option<f64>) -> Instance {
+    let mut row = serde_json::json!({"id": id});
+    if let Some(a) = actual {
+        row["actual_status"] = a.into();
+    }
+    if let Some(i) = intended {
+        row["intended_status"] = i.into();
+    }
+    if let Some(d) = dph {
+        row["dph_total"] = d.into();
+    }
+    instance(&row)
+}
+
+#[test]
+fn the_burn_counts_a_box_meant_to_run_that_reads_otherwise_and_names_it() {
+    let credit = Account::from_json(&serde_json::json!({"credit": 12.0}));
+    let fleet = [
+        fleet_row(1, Some("running"), Some("running"), Some(0.5)),
+        fleet_row(2, Some("offline"), Some("running"), Some(0.25)),
+        fleet_row(3, Some("loading"), Some("running"), Some(0.25)),
+        fleet_row(4, Some("offline"), Some("running"), Some(0.25)),
+        fleet_row(5, Some("exited"), Some("stopped"), Some(9.0)),
+    ];
+    assert_eq!(
+        money_line(&fleet, Some(&credit)),
+        "credit $12.00 | burn $1.250/h over 1 running + 1 loading, 2 offline \
+         (meant to run, billing unknown) | ~9.6 h left at this rate\n",
+        "the runway uses the burn with the uncertain boxes in it; a stopped box is not counted"
+    );
+}
+
+#[test]
+fn a_box_being_stopped_is_still_running_and_a_stopped_one_is_not_named() {
+    let fleet = [
+        fleet_row(1, Some("running"), Some("stopped"), Some(0.5)),
+        fleet_row(2, Some("exited"), Some("stopped"), Some(0.5)),
+        fleet_row(3, Some("exited"), None, Some(0.5)),
+    ];
+    assert_eq!(
+        money_line(&fleet, None),
+        "credit ? | burn $0.500/h over 1 running\n"
+    );
+}
+
+#[test]
+fn a_box_meant_to_run_with_no_status_or_no_price_is_named_not_hidden() {
+    let fleet = [
+        fleet_row(1, None, Some("running"), None),
+        fleet_row(2, Some("running"), Some("running"), Some(0.5)),
+    ];
+    assert_eq!(
+        money_line(&fleet, None),
+        "credit ? | burn $0.500/h over 1 running + 1 unknown (meant to run, billing unknown)\n"
+    );
 }

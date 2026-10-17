@@ -1,6 +1,7 @@
 //! The tables `vas` prints: the instances (with the money line), and the offers (with their
 //! footer).
 
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 use crate::error::SkoposError;
@@ -288,22 +289,37 @@ pub fn table(
     out
 }
 
-/// The credit, the burn rate of the running instances, and the hours that credit buys.
+/// The credit, the burn rate of the instances that bill or may, and the hours that credit buys.
+///
+/// The burn counts the instances the API reads as `running` AND those it was asked to run
+/// (`intended_status`) that read otherwise (`offline`, `loading`, ...): whether those bill is not
+/// known from here, and an under-counted burn overstates the runway. They are named after the
+/// running ones, by state, and the line says so.
 ///
 /// ```
 /// use vast_skopos::{instance::{Account, Instance}, render::money_line};
-/// let i = Instance::from_json(&serde_json::json!(
-///   {"id": 1, "actual_status": "running", "dph_total": 0.5})).unwrap();
+/// let row = |id, actual: &str, intended: &str| Instance::from_json(&serde_json::json!(
+///   {"id": id, "actual_status": actual, "intended_status": intended, "dph_total": 0.5})).unwrap();
 /// let a = Account::from_json(&serde_json::json!({"credit": 5.0}));
-/// assert_eq!(money_line(&[i], Some(&a)),
+/// assert_eq!(money_line(&[row(1, "running", "running")], Some(&a)),
 ///   "credit $5.00 | burn $0.500/h over 1 running | ~10.0 h left at this rate\n");
+/// // A box the API reads offline but was asked to run is counted, and named.
+/// let fleet = [row(1, "running", "running"), row(2, "offline", "running"), row(3, "exited", "stopped")];
+/// assert_eq!(money_line(&fleet, Some(&a)),
+///   "credit $5.00 | burn $1.000/h over 1 running + 1 offline (meant to run, billing unknown) \
+///    | ~5.0 h left at this rate\n");
 /// ```
 #[must_use]
 pub fn money_line(instances: &[Instance], account: Option<&Account>) -> String {
     let running: Vec<&Instance> = instances.iter().filter(|i| i.is_running()).collect();
+    let unsure: Vec<&Instance> = instances
+        .iter()
+        .filter(|i| i.is_meant_to_run() && !i.is_running())
+        .collect();
     // A fold from +0.0, not `sum()`: an empty f64 sum is -0.0, which would print as `$-0.000`.
     let burn = running
         .iter()
+        .chain(&unsure)
         .filter_map(|i| i.dph_total)
         .fold(0.0_f64, |acc, d| acc + d);
     let credit = account.and_then(|a| a.credit);
@@ -312,6 +328,23 @@ pub fn money_line(instances: &[Instance], account: Option<&Account>) -> String {
         credit.map_or_else(|| String::from("?"), |c| format!("${c:.2}")),
         running.len()
     );
+    if !unsure.is_empty() {
+        let mut by_state: BTreeMap<&str, usize> = BTreeMap::new();
+        for i in &unsure {
+            *by_state
+                .entry(i.actual_status.as_deref().unwrap_or("unknown"))
+                .or_default() += 1;
+        }
+        let states: Vec<String> = by_state
+            .iter()
+            .map(|(state, n)| format!("{n} {state}"))
+            .collect();
+        let _ = write!(
+            s,
+            " + {} (meant to run, billing unknown)",
+            states.join(", ")
+        );
+    }
     if let Some(c) = credit
         && burn > 0.0
     {

@@ -173,6 +173,22 @@ impl Instance {
         self.actual_status.as_deref() == Some("running")
     }
 
+    /// Whether the instance was asked to run (`intended_status` is `running`), whatever it reads now:
+    /// a box read `offline` or `loading` that is meant to run may still be billed.
+    ///
+    /// ```
+    /// use vast_skopos::instance::Instance;
+    /// let row = |actual: &str, intended: &str| Instance::from_json(&serde_json::json!(
+    ///   {"id": 1, "actual_status": actual, "intended_status": intended})).unwrap();
+    /// assert!(row("offline", "running").is_meant_to_run());
+    /// assert!(!row("running", "stopped").is_meant_to_run(), "stopping: running, but not meant to");
+    /// assert!(!Instance::from_json(&serde_json::json!({"id": 1})).unwrap().is_meant_to_run());
+    /// ```
+    #[must_use]
+    pub fn is_meant_to_run(&self) -> bool {
+        self.intended_status.as_deref() == Some("running")
+    }
+
     /// The `ssh` proxy endpoint, when the API gave both host and port.
     ///
     /// The official CLI's rule (`_ssh_url`): on the proxy, a Jupyter-launched instance listens on

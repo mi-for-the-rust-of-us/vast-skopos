@@ -19,6 +19,12 @@ All notable changes to this project are documented here. The format is based on
 
 ### Changed
 
+- The money line's burn counts the boxes the API reads as `running` AND those it was asked to run
+  (`intended_status`) that read `offline`, `loading` or anything else, and names them by state
+  (`burn $1.940/h over 3 running + 1 offline (meant to run, billing unknown)`): one such box,
+  during Me36, was left out of the burn although it may still bill, which overstated the runway.
+  `Instance::is_meant_to_run`. A box being stopped (running, meant to stop) is still counted as
+  running; a stopped one is not counted.
 - BREAKING for library users (0.x: a minor release): `render::table` takes a `wide` flag (after
   `with_ssh`), and `render::offers_line` the time of the search (`now`, Unix seconds, last).
   `vas`'s own output gains the `searched ...` clause on the `vas offers` footer.
