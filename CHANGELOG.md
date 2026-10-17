@@ -21,7 +21,8 @@ All notable changes to this project are documented here. The format is based on
   (`kind: "box"`: status, `$/h`, age, cost, `ssh` endpoint, machine and host ids, and with `--ssh` the
   probe: GPUs, the log's state and last line, or the error), then one for the money (`kind: "money"`:
   credit, burn, running, the unsure boxes by state, hours left). The keys never change (`null` for
-  what is not known), every object carries `at`, and `--watch` prints no separator line.
+  what is not known), every object carries `at`, and `--watch` prints no separator line. Money is
+  rounded to ten-thousandths of a dollar: vast.ai sends the credit with float noise.
   Not with `--wide`. `compact::compact`, `render::Money`.
 
 ### Changed

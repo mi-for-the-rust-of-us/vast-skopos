@@ -163,9 +163,8 @@ does not show that cost yet.
 One object per box, then one for the money, each on one line, each with a `kind` (`box` or `money`) and
 `at` (Unix seconds, the same on every line of a look), so a line read alone says what it is and when.
 The keys of an object never change: what is not known is `null`, not a missing key. Keys come out in alphabetical order (`kind` is not first: filter on it with
-`jq` or `grep '"kind":"money"'`). Money is rounded to what means something: `credit` to a millionth of
-a dollar (vast.ai sends it with float noise, `12.059765171599793`; a second of a $0.19/h box is $0.00005),
-`burn` and `cost` to ten-thousandths.
+`jq` or `grep '"kind":"money"'`). Money is rounded to ten-thousandths of a dollar (`credit`, `burn`, `cost`):
+about two seconds of a $0.19/h box, and vast.ai sends the credit with float noise (`12.059765171599793`).
 
 ```text
 $ vas --compact --ssh --log '/root/runs/*/train.log'

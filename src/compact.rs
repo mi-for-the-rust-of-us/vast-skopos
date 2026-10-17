@@ -83,7 +83,7 @@ fn money_json(money: &Money, now: f64) -> Value {
     json!({
         "kind": "money",
         "at": whole_secs(now),
-        "credit": money.credit.map(|c| rounded(c, 6)),
+        "credit": money.credit.map(|c| rounded(c, 4)),
         "burn": rounded(money.burn, 4),
         "running": money.running,
         "unsure": money.unsure,

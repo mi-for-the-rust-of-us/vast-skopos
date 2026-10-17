@@ -188,10 +188,10 @@ fn the_money_carries_the_unsure_boxes_by_state_and_rounds_the_float_noise() {
     assert_eq!(money["running"], 2);
     assert_eq!(money["unsure"], json!({"offline": 1}));
     assert_eq!(money["hours_left"], 20.0);
-    // vast.ai's own credit carries float noise (seen live: 12.059765171599793); a millionth is kept.
+    // vast.ai's own credit carries float noise (seen live: 12.059765171599793); ten-thousandths are kept.
     let noisy = Account::from_json(&json!({"credit": 12.059_765_171_599_793}));
     let lines = objects(&compact(&fleet, &[], Some(&noisy), 3_600.0));
-    assert_eq!(lines.last().unwrap()["credit"], 12.059_765);
+    assert_eq!(lines.last().unwrap()["credit"], 12.0598);
     // The same keys with nothing known: a monitor reads one schema.
     let empty = objects(&compact(&[], &[], None, 0.0));
     assert_eq!(empty.len(), 1, "no boxes: the money alone");
