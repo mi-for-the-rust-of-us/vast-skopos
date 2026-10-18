@@ -97,7 +97,8 @@ fn money_json(money: &Runway, now: f64) -> Value {
 /// The look as JSON Lines: one object per instance, in the API's order, then the money's; each
 /// line ends in a newline.
 ///
-/// `probes` is aligned with `instances` (`None`: not probed); `now` is Unix seconds.
+/// `probes` holds one outcome per instance, in the instances' order (see [`ProbeOutcome`]; a shorter
+/// slice reads as "not probed" for the instances it does not reach); `now` is Unix seconds.
 ///
 /// ```
 /// use vast_skopos::{compact::json_lines, instance::{Account, Instance}};

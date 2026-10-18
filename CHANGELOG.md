@@ -40,6 +40,10 @@ All notable changes to this project are documented here. The format is based on
   hold, now takes the instances and returns one outcome per instance). `probe::ssh_command` builds the
   `ssh` arguments apart from the spawning, so a test can check that a path with a space stays one
   argument and that the target follows `--`.
+- Documentation: the README's install section says what is true now (`cargo install vast-skopos`,
+  `version = "0.2"`), its three Rust examples are compiled by `cargo test --doc` (they cannot rot),
+  the crate docs describe `vas offers`, `--compact` and `--watch`, `render::table` has a doctest, and the
+  `probes` contract (one outcome per instance, in order) is stated where it is taken.
 - Under the hood, no output changes: one table function for the offers (plain or marked), the cell
   helpers every table repeated, one ellipsis cut, one watch loop for `vas` and `vas offers`, one error
   constructor per kind in the API client, one reader for the key and the config file, and `admits` no

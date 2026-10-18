@@ -37,34 +37,58 @@ read-only tool that reads the vast.ai API with your own key, and your boxes over
 
 ## Install
 
-Not yet on crates.io. From a clone:
-
 ```sh
-cargo install --path . --locked      # installs the `vas` binary
+cargo install vast-skopos            # installs the `vas` binary
 ```
 
-Once published, `cargo install vast-skopos`. As a library, without the CLI (no `clap`):
+From a clone: `cargo install --path . --locked`. As a library, without the CLI (no `clap`):
 
 ```toml
 [dependencies]
-vast-skopos = { version = "0.1", default-features = false }
+vast-skopos = { version = "0.2", default-features = false }
 ```
 
 ## Usage
 
-```rust
+The lookout, as a table, in a few lines (the examples below are compiled by the tests, not run: they
+need your key, your boxes or the network):
+
+```rust,no_run
+use vast_skopos::api::Client;
+use vast_skopos::key::ApiKey;
+use vast_skopos::probe::probe_all;
+use vast_skopos::render::{TableOptions, table};
+
+fn main() -> vast_skopos::Result<()> {
+    // The key, by the official `vastai` CLI's search order; it is never printed.
+    let client = Client::new(ApiKey::discover()?);
+    let instances = client.instances()?;
+    let account = client.account().ok();
+    // One `ssh` attempt per running box, all at once: what the GPUs do, and the newest log's last line.
+    let probes = probe_all(&instances, None, Some("/root/runs/*/train.log"));
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0.0, |d| d.as_secs_f64());
+    let options = TableOptions::new().ssh(true);
+    print!("{}", table(&instances, &probes, account.as_ref(), options, now));
+    Ok(())
+}
+```
+
+Or the readings one by one, over your own `ssh` (one attempt, never retried):
+
+```rust,no_run
 use vast_skopos::api::Client;
 use vast_skopos::key::ApiKey;
 use vast_skopos::probe::ssh_probe;
 
 fn main() -> vast_skopos::Result<()> {
-    // The key, by the official `vastai` CLI's search order; it is never printed.
     let client = Client::new(ApiKey::discover()?);
     println!("credit {:?}", client.account()?.credit);
     for i in client.instances()?.iter().filter(|i| i.is_running()) {
         println!("{} {:?} at {:?} $/h", i.id, i.gpu_name, i.dph_total);
         if let Some((host, port)) = i.ssh_endpoint() {
-            // One attempt over the system `ssh`; the GPU as the box itself reads it.
+            // The GPU as the box itself reads it, not as the dashboard does.
             let probe = ssh_probe(host, port, None, Some("/root/runs/*/train.log"))?;
             for g in &probe.gpus {
                 println!("  GPU {}: {} %, {} MiB used", g.index, g.util_pct, g.mem_used_mib);
@@ -76,13 +100,15 @@ fn main() -> vast_skopos::Result<()> {
 }
 ```
 
-`render::table` and `render::money_line` print what `vas` prints, and `compact::json_lines` the same readings as JSON Lines.
+`render::table` and `render::money_line` print what `vas` prints, and `compact::json_lines` the same
+readings as JSON Lines.
 
 The offer search needs no key:
 
-```rust
+```rust,no_run
 use vast_skopos::api::SearchClient;
 use vast_skopos::offer::{OfferQuery, OfferSort, select};
+use vast_skopos::render::{offers_footer, offers_table};
 
 fn main() -> vast_skopos::Result<()> {
     let mut q = OfferQuery::default(); // the identity: every offer rentable now
@@ -90,18 +116,18 @@ fn main() -> vast_skopos::Result<()> {
     q.reliability = Some(0.99);
     q.exclude_countries = vec!["CN".to_owned()];
     let page = SearchClient::new().offers(&q, OfferSort::Price)?;
-    if page.maybe_cut() {
-        eprintln!("{} returned: vast.ai's cap, narrow the search", page.returned);
-    }
     // Every constraint was sent; `select` re-checks each row and sorts again.
-    for o in select(page.offers, &q, OfferSort::Price) {
-        println!("{} {:?} $/h {:?}", o.id, o.dph_total, o.geolocation);
-    }
+    let kept = select(page.offers.clone(), &q, OfferSort::Price);
+    let (top, now) = (20, 0.0); // `now`: Unix seconds, named in the footer
+    // What `vas offers` prints: the table, then the footer (which says when vast.ai's 64-row cap
+    // may have cut the list).
+    print!("{}{}", offers_table(&kept, top), offers_footer(&page, &kept, top, &q, OfferSort::Price, now));
     Ok(())
 }
 ```
 
-`render::offers_table` and `render::offers_footer` print what `vas offers` prints.
+`OfferChanges::between(previous, current)` says what moved between two looks, and
+`render::offers_table_marked` prints the table of a watch.
 
 ## Try it
 
@@ -162,7 +188,7 @@ does not show that cost yet.
 
 One object per box, then one for the money, each on one line, each with a `kind` (`box` or `money`) and
 `at` (Unix seconds, the same on every line of a look), so a line read alone says what it is and when.
-The keys of an object never change: what is not known is `null`, not a missing key. Keys come out in alphabetical order (`kind` is not first: filter on it with
+The keys of an object never change: what is not known is `null`, not a missing key. Keys come out in alphabetical order, as `serde_json` writes them by default (`kind` is not first: filter on it with
 `jq` or `grep '"kind":"money"'`). Money is rounded to ten-thousandths of a dollar (`credit`, `burn`, `cost`):
 about two seconds of a $0.19/h box, and vast.ai sends the credit with float noise (`12.059765171599793`).
 

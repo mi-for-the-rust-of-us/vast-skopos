@@ -1,14 +1,18 @@
-//! `vast-skopos`: a lookout (σκοπός) over your rented vast.ai boxes.
+//! `vast-skopos`: a lookout (σκοπός) over your rented vast.ai boxes, and over the offers to rent more.
 //!
 //! **Not affiliated with vast.ai.** An independent tool that reads the public vast.ai API with
-//! your own key, and your boxes over your own `ssh`.
+//! your own key, and your boxes over your own `ssh`. It only ever reads: it never rents, starts,
+//! stops or destroys anything.
 //!
-//! One table per call: for every instance, its status, `$/h`, age and cost so far, and its `ssh`
-//! endpoint; under it, the account's credit, the burn rate and the hours that credit buys at that
-//! rate. With `--ssh`, each running box is also asked directly, once, what its GPUs are doing
+//! `vas`: one table per call: for every instance, its status, `$/h`, age and cost so far, and its
+//! `ssh` endpoint; under it, the account's credit, the burn rate and the hours that credit buys at
+//! that rate. With `--ssh`, each running box is also asked directly, once, what its GPUs are doing
 //! (`nvidia-smi`) and, with `--log`, which log it read and that log's last non-blank line: the
 //! dashboard's GPU utilisation is not trusted, because it has been seen to read 0 % on boxes at
-//! 97-99 %.
+//! 97-99 %. `--compact` prints the same readings as JSON Lines, and `--watch` repeats the look.
+//!
+//! `vas offers`: the offers for rent that pass your constraints, cheapest first, with no key
+//! ([`api::SearchClient`]); with `--watch`, the list again every so often, marked with what moved.
 //!
 //! The library half is what `vas` is built from:
 //!
@@ -35,3 +39,8 @@ pub mod render;
 pub mod runway;
 
 pub use error::{Result, SkoposError};
+
+// The README's examples are compiled with the tests (`cargo test --doc`), so they cannot rot.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeDoctests;
