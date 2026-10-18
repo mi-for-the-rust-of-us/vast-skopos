@@ -299,14 +299,40 @@ fn now() -> f64 {
         .map_or(0.0, |d| d.as_secs_f64())
 }
 
+/// The longest wait a rate limit may ask of ONE look before `vas` gives up instead of waiting: vast.ai
+/// budgets whole windows of calls (ONE per window for the instances list, seen 2026-10-18), and a
+/// person running `vas` twice in a row should not meet an error for a wait of a few seconds.
+const PATIENCE_SECS: f64 = 15.0;
+
+/// Added to every wait for vast.ai's reset: its clock and this machine's differ by a little.
+const MARGIN_SECS: f64 = 1.0;
+
+/// The wait a rate-limit refusal asks for, when it is short enough to sit out.
+fn short_rate_wait(result: &Result<String, vast_skopos::SkoposError>) -> Option<f64> {
+    if let Err(vast_skopos::SkoposError::RateLimited {
+        retry_after: Some(wait),
+        ..
+    }) = result
+        && *wait <= PATIENCE_SECS
+    {
+        Some(*wait)
+    } else {
+        None
+    }
+}
+
 /// Runs `look` once, or every `--watch` seconds until Ctrl+C; the exit code.
 ///
 /// `who` names the command in what it says on stderr. `look(missed)` is one look: its text, or why
-/// it failed, `missed` being whether a look failed since the last one that was printed. A closed
-/// pipe (`vas --watch 60 | head`) ends the run quietly: the reader is gone.
+/// it failed, `missed` being whether a look failed since the last one that was printed. `budget()`
+/// is how many seconds vast.ai's answers say to leave it alone (see `Client::budget_wait_secs`): a
+/// look refused for a short rate limit waits it out ONCE, aloud, and a watch leaves at least that
+/// long between two looks. A closed pipe (`vas --watch 60 | head`) ends the run quietly: the reader
+/// is gone.
 fn run_looks(
     who: &str,
     watch: Option<u64>,
+    budget: impl Fn() -> Option<f64>,
     mut look: impl FnMut(bool) -> Result<String, vast_skopos::SkoposError>,
 ) -> ExitCode {
     if let Some(every) = watch
@@ -316,7 +342,16 @@ fn run_looks(
     }
     let (mut succeeded, mut missed) = (false, false);
     loop {
-        match look(missed) {
+        let mut result = look(missed);
+        if let Some(wait) = short_rate_wait(&result) {
+            eprintln!(
+                "{who}: rate-limited: waiting {:.0} s, then trying again",
+                wait.ceil().max(1.0)
+            );
+            std::thread::sleep(Duration::from_secs_f64(wait + MARGIN_SECS));
+            result = look(missed);
+        }
+        match result {
             Ok(text) => {
                 if !emit(&text) {
                     return ExitCode::SUCCESS;
@@ -334,7 +369,18 @@ fn run_looks(
         let Some(every) = watch else {
             return ExitCode::SUCCESS;
         };
-        std::thread::sleep(watch_pause(every));
+        let mut pause = watch_pause(every);
+        if let Some(wait) = budget() {
+            let wait = Duration::from_secs_f64(wait + MARGIN_SECS);
+            if wait > pause {
+                eprintln!(
+                    "{who}: vast.ai's request budget renews in {:.0} s: the next look waits for it",
+                    wait.as_secs_f64()
+                );
+                pause = wait;
+            }
+        }
+        std::thread::sleep(pause);
     }
 }
 
@@ -401,18 +447,23 @@ fn lookout(args: &LookArgs) -> ExitCode {
             client.base()
         );
     }
-    run_looks("vas", args.watch, |_| {
-        let text = look(&client, args)?;
-        // JSON Lines carry their own `at`: a stamp line would not parse.
-        Ok(if args.watch.is_some() && !args.compact {
-            let secs = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_or(0, |d| d.as_secs());
-            format!("== vas, unix time {secs}\n{text}")
-        } else {
-            text
-        })
-    })
+    run_looks(
+        "vas",
+        args.watch,
+        || client.budget_wait_secs(),
+        |_| {
+            let text = look(&client, args)?;
+            // JSON Lines carry their own `at`: a stamp line would not parse.
+            Ok(if args.watch.is_some() && !args.compact {
+                let secs = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_or(0, |d| d.as_secs());
+                format!("== vas, unix time {secs}\n{text}")
+            } else {
+                text
+            })
+        },
+    )
 }
 
 /// The `offers` flags again, the config file's first and the command line's after; on failure,
@@ -496,34 +547,39 @@ fn offers(args: OffersArgs) -> ExitCode {
     let top = usize::try_from(args.top).unwrap_or(usize::MAX);
     let nothing = OfferChanges::default();
     let mut previous: Option<Vec<Offer>> = None;
-    run_looks("vas offers", args.watch, |missed| {
-        let page = client.offers(&query, sort)?;
-        // BORROW: explicit clone -- the footer reads the page again
-        let kept = select(page.offers.clone(), &query, sort);
-        let at = now();
-        let moved = previous.as_deref().map(|p| OfferChanges::between(p, &kept));
-        let text = if args.changes {
-            offers_changes_only(&page, moved.as_ref(), &kept, missed, at)
-        } else {
-            // The first look has nothing to mark (and a one-shot never has a second); a blank line
-            // parts the looks of a watch.
-            let gap = if previous.is_some() { "\n" } else { "" };
-            let table = if args.watch.is_some() {
-                offers_table_marked(&kept, top, moved.as_ref().unwrap_or(&nothing))
+    run_looks(
+        "vas offers",
+        args.watch,
+        || client.budget_wait_secs(),
+        |missed| {
+            let page = client.offers(&query, sort)?;
+            // BORROW: explicit clone -- the footer reads the page again
+            let kept = select(page.offers.clone(), &query, sort);
+            let at = now();
+            let moved = previous.as_deref().map(|p| OfferChanges::between(p, &kept));
+            let text = if args.changes {
+                offers_changes_only(&page, moved.as_ref(), &kept, missed, at)
             } else {
-                offers_table(&kept, top)
+                // The first look has nothing to mark (and a one-shot never has a second); a blank line
+                // parts the looks of a watch.
+                let gap = if previous.is_some() { "\n" } else { "" };
+                let table = if args.watch.is_some() {
+                    offers_table_marked(&kept, top, moved.as_ref().unwrap_or(&nothing))
+                } else {
+                    offers_table(&kept, top)
+                };
+                let footer = offers_footer(&page, &kept, top, &query, sort, at);
+                let shown = kept.get(..top).unwrap_or(&kept);
+                let note = moved
+                    .as_ref()
+                    .map(|m| offers_changes_note(&page, m, shown, missed))
+                    .unwrap_or_default();
+                format!("{gap}{table}{footer}{note}")
             };
-            let footer = offers_footer(&page, &kept, top, &query, sort, at);
-            let shown = kept.get(..top).unwrap_or(&kept);
-            let note = moved
-                .as_ref()
-                .map(|m| offers_changes_note(&page, m, shown, missed))
-                .unwrap_or_default();
-            format!("{gap}{table}{footer}{note}")
-        };
-        previous = Some(kept);
-        Ok(text)
-    })
+            previous = Some(kept);
+            Ok(text)
+        },
+    )
 }
 
 fn main() -> ExitCode {

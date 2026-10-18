@@ -714,3 +714,63 @@ fn a_key_file_may_be_utf8_with_a_bom_or_utf16_of_either_endian() {
         );
     }
 }
+
+/// The instances list refused once, for a rate limit that clears in 1 s; everything else answers.
+static INSTANCES_LIMITED: AtomicUsize = AtomicUsize::new(0);
+
+fn instances_limited_once(target: &str) -> (u16, Vec<(String, String)>, String) {
+    if target.starts_with("/api/v1/instances/")
+        && INSTANCES_LIMITED.fetch_add(1, Ordering::SeqCst) == 0
+    {
+        return (
+            429,
+            vec![("Retry-After".to_owned(), "1".to_owned())],
+            "{}".to_owned(),
+        );
+    }
+    let (status, body) = account(target);
+    (status, Vec::new(), body)
+}
+
+#[test]
+fn the_lookout_waits_out_a_short_rate_limit_once_and_says_so() {
+    let (base, seen) = common::serve_with(instances_limited_once);
+    let home = empty_dir("limited");
+    let _cleanup = common::RemoveOnDrop(home.clone());
+    let mut child = Command::new(env!("CARGO_BIN_EXE_vas"))
+        .env("VAST_URL", &base)
+        .env("VAST_API_KEY", ENV_KEY)
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .env_remove("XDG_CONFIG_HOME")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let status = exit_within_deadline(&mut child);
+    let mut stderr = String::new();
+    std::io::Read::read_to_string(&mut child.stderr.take().unwrap(), &mut stderr).unwrap();
+    let mut stdout = String::new();
+    std::io::Read::read_to_string(&mut child.stdout.take().unwrap(), &mut stdout).unwrap();
+    assert_eq!(status.code(), Some(0), "{stderr}");
+    assert!(
+        stderr.contains("vas: rate-limited: waiting 1 s, then trying again"),
+        "{stderr}"
+    );
+    assert!(
+        stdout.contains("56362434"),
+        "the table of the retry: {stdout}"
+    );
+    let instances: Vec<_> = seen
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|r| r.target.starts_with("/api/v1/instances/"))
+        .map(|r| r.at)
+        .collect();
+    assert_eq!(instances.len(), 2, "one refusal and one retry of the list");
+    assert!(
+        instances[1].duration_since(instances[0]) >= std::time::Duration::from_millis(1500),
+        "the wait was sat out"
+    );
+}

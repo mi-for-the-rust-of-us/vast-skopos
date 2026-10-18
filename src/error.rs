@@ -60,6 +60,17 @@ pub enum SkoposError {
         hint: &'static str,
     },
 
+    /// vast.ai refused the request for its rate limit (HTTP 429): every endpoint has a budget of
+    /// calls per window, and says so in `X-RateLimit-*` headers.
+    #[error("vast.ai rate-limited {endpoint}: {}", wait_text(.retry_after.as_ref()))]
+    RateLimited {
+        /// The endpoint path (no query, no key).
+        endpoint: String,
+        /// How many seconds to wait before the next call, when vast.ai said (`Retry-After`, else
+        /// the time to the budget's reset).
+        retry_after: Option<f64>,
+    },
+
     /// The request could not be made or its body could not be read.
     #[error("failed to request {endpoint}: {message}")]
     Http {
@@ -119,6 +130,15 @@ impl SkoposError {
         }
     }
 
+    /// A rate-limit refusal (HTTP 429) from `path`, with the wait vast.ai named, if it did.
+    pub(crate) fn rate_limited(path: &str, retry_after: Option<f64>) -> Self {
+        Self::RateLimited {
+            // BORROW: explicit to_owned -- the error outlives the request that named the path
+            endpoint: path.to_owned(),
+            retry_after,
+        }
+    }
+
     /// A non-success `status` from `path`, with a `hint` when the status is a common one.
     pub(crate) fn status(path: &str, status: u16, hint: &'static str) -> Self {
         Self::Status {
@@ -128,4 +148,12 @@ impl SkoposError {
             hint,
         }
     }
+}
+
+/// The advice of a rate-limit error: how long to wait, rounded up to the second, or just to wait.
+fn wait_text(retry_after: Option<&f64>) -> String {
+    retry_after.map_or_else(
+        || String::from("wait before the next call"),
+        |secs| format!("try again in {:.0} s", secs.ceil().max(1.0)),
+    )
 }

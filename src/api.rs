@@ -8,8 +8,15 @@
 //!   (see [`crate::offer`]).
 //!
 //! The base URL is `https://console.vast.ai`, or `VAST_URL` when set (the CLI's own override).
+//!
+//! vast.ai rate-limits each endpoint and says so in the `X-RateLimit-*` headers of its answers (seen
+//! 2026-10-18: 30 calls for the offer search, ONE for the instances). The clients keep what each
+//! answer said ([`RateLimit`]), and [`Client::budget_wait_secs`] tells a caller that loops how long
+//! to leave vast.ai alone; a refusal is [`SkoposError::RateLimited`], with the wait it named.
 
-use std::time::Duration;
+use std::collections::HashMap;
+use std::sync::Mutex;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 
@@ -79,7 +86,6 @@ const fn redirect_hint(status: u16) -> &'static str {
 const fn keyed_hint(status: u16) -> &'static str {
     match status {
         401 | 403 => " (is the API key right, and not revoked?)",
-        429 => " (rate-limited: wait before the next call)",
         _ => redirect_hint(status),
     }
 }
@@ -93,15 +99,107 @@ const fn search_hint(status: u16) -> &'static str {
         404 | 405 => {
             " (the legacy GET form of the offer search may be gone: vas offers needs an update)"
         }
-        429 => " (rate-limited: wait before the next call)",
         _ => redirect_hint(status),
     }
 }
 
+/// What vast.ai says about the request budget of an endpoint, in the `X-RateLimit-*` headers of
+/// its answers.
+///
+/// Seen 2026-10-18: the offer search allowed 30 calls, the instances list ONE, per window.
+///
+/// ```
+/// use vast_skopos::api::RateLimit;
+/// let headers = |name: &str| match name {
+///     "x-ratelimit-limit" => Some("1".to_owned()),
+///     "x-ratelimit-remaining" => Some("0".to_owned()),
+///     "x-ratelimit-reset" => Some("1792318828".to_owned()),
+///     _ => None,
+/// };
+/// let limit = RateLimit::from_headers(headers);
+/// assert_eq!(limit.wait_secs(1792318820.0), Some(8.0), "spent: wait for the reset");
+/// assert_eq!(limit.wait_secs(1792318830.0), None, "the reset has passed");
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[non_exhaustive]
+pub struct RateLimit {
+    /// The calls the window allows (`X-RateLimit-Limit`; the API writes `30.0` or `1`).
+    pub limit: Option<f64>,
+    /// The calls left in it (`X-RateLimit-Remaining`).
+    pub remaining: Option<f64>,
+    /// When the budget is renewed, in Unix seconds (`X-RateLimit-Reset`).
+    pub reset_at: Option<f64>,
+}
+
+impl RateLimit {
+    /// Reads the three headers through `header` (given a LOWER-CASE name, returns its value); a
+    /// header that is absent or not a finite number is `None`.
+    pub fn from_headers(header: impl Fn(&str) -> Option<String>) -> Self {
+        let number = |name: &str| {
+            header(name)
+                .and_then(|v| v.trim().parse::<f64>().ok())
+                .filter(|n| n.is_finite())
+        };
+        Self {
+            limit: number("x-ratelimit-limit"),
+            remaining: number("x-ratelimit-remaining"),
+            reset_at: number("x-ratelimit-reset"),
+        }
+    }
+
+    /// Whether the answer said anything about a budget.
+    #[must_use]
+    pub const fn is_known(&self) -> bool {
+        self.limit.is_some() || self.remaining.is_some() || self.reset_at.is_some()
+    }
+
+    /// The seconds from `now` (Unix) until a call is allowed again: `Some` only when the budget is
+    /// spent (nothing remaining) and its reset is still ahead.
+    #[must_use]
+    pub fn wait_secs(&self, now: f64) -> Option<f64> {
+        let spent = self.remaining.is_some_and(|r| r < 1.0);
+        let reset = self.reset_at?;
+        (spent && reset > now).then_some(reset - now)
+    }
+}
+
+/// What each endpoint last said about its budget, by path.
+#[derive(Debug, Default)]
+struct Limits(Mutex<HashMap<String, RateLimit>>);
+
+impl Limits {
+    /// Remembers what `path` said, when it said anything.
+    fn record(&self, path: &str, limit: RateLimit) {
+        if limit.is_known()
+            && let Ok(mut by_path) = self.0.lock()
+        {
+            // BORROW: explicit to_owned -- the map owns its keys
+            by_path.insert(path.to_owned(), limit);
+        }
+    }
+
+    /// The longest wait any endpoint asks for at `now` (Unix seconds).
+    fn wait_secs(&self, now: f64) -> Option<f64> {
+        let by_path = self.0.lock().ok()?;
+        by_path
+            .values()
+            .filter_map(|limit| limit.wait_secs(now))
+            .max_by(f64::total_cmp)
+    }
+}
+
+/// Unix seconds now.
+fn unix_now() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0.0, |d| d.as_secs_f64())
+}
+
 /// `GET {base}{path}` with `query`, as JSON; the key as a bearer only when `bearer` is given;
-/// `hint` words a non-success status.
+/// `hint` words a non-success status. What the answer says about the budget goes to `limits`.
 fn get_json(
     agent: &ureq::Agent,
+    limits: &Limits,
     base: &str,
     path: &str,
     query: &[(&str, &str)],
@@ -119,7 +217,28 @@ fn get_json(
     let mut response = request
         .call()
         .map_err(|e| SkoposError::http(path, e.to_string()))?;
+    let header = |name: &str| {
+        response
+            .headers()
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned)
+    };
+    let budget = RateLimit::from_headers(header);
+    limits.record(path, budget);
     let status = response.status().as_u16();
+    if status == 429 {
+        let named = response
+            .headers()
+            .get("retry-after")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.trim().parse::<f64>().ok())
+            .filter(|n| n.is_finite() && *n >= 0.0);
+        return Err(SkoposError::rate_limited(
+            path,
+            named.or_else(|| budget.wait_secs(unix_now())),
+        ));
+    }
     if !(200..300).contains(&status) {
         return Err(SkoposError::status(path, status, hint(status)));
     }
@@ -138,6 +257,8 @@ pub struct Client {
     key: ApiKey,
     /// The base URL, without a trailing slash.
     base: String,
+    /// What each endpoint last said about its request budget.
+    limits: Limits,
 }
 
 impl Client {
@@ -156,6 +277,7 @@ impl Client {
             agent: agent(&base),
             key,
             base,
+            limits: Limits::default(),
         }
     }
 
@@ -169,6 +291,7 @@ impl Client {
     fn get_json(&self, path: &str, query: &[(&str, &str)]) -> Result<Value> {
         get_json(
             &self.agent,
+            &self.limits,
             &self.base,
             path,
             query,
@@ -177,11 +300,20 @@ impl Client {
         )
     }
 
+    /// How many seconds to leave vast.ai alone, from what its last answers said: the longest wait
+    /// of any endpoint whose request budget is spent; `None` when no budget is spent. A caller that
+    /// loops sleeps at least this long between two looks.
+    #[must_use]
+    pub fn budget_wait_secs(&self) -> Option<f64> {
+        self.limits.wait_secs(unix_now())
+    }
+
     /// Every instance of the account, all pages.
     ///
     /// # Errors
     /// Returns [`SkoposError::Http`] if a request cannot be made.
-    /// Returns [`SkoposError::Status`] if vast.ai answers with a non-success status.
+    /// Returns [`SkoposError::RateLimited`] if vast.ai answers 429.
+    /// Returns [`SkoposError::Status`] if vast.ai answers with another non-success status.
     /// Returns [`SkoposError::Json`] if a page is not JSON, has no `instances` list, repeats a
     /// `next_token`, or the pages exceed the guard.
     pub fn instances(&self) -> Result<Vec<Instance>> {
@@ -231,7 +363,8 @@ impl Client {
     ///
     /// # Errors
     /// Returns [`SkoposError::Http`] if the request cannot be made.
-    /// Returns [`SkoposError::Status`] if vast.ai answers with a non-success status.
+    /// Returns [`SkoposError::RateLimited`] if vast.ai answers 429.
+    /// Returns [`SkoposError::Status`] if vast.ai answers with another non-success status.
     /// Returns [`SkoposError::Json`] if the answer is not JSON.
     pub fn account(&self) -> Result<Account> {
         // The trailing slash is the canonical path: without it the API answers 301 (dogfooding,
@@ -248,6 +381,8 @@ pub struct SearchClient {
     agent: ureq::Agent,
     /// The base URL, without a trailing slash.
     base: String,
+    /// What the search last said about its request budget.
+    limits: Limits,
 }
 
 impl Default for SearchClient {
@@ -277,6 +412,7 @@ impl SearchClient {
         Self {
             agent: agent(&base),
             base,
+            limits: Limits::default(),
         }
     }
 
@@ -286,19 +422,28 @@ impl SearchClient {
         &self.base
     }
 
+    /// How many seconds to leave the search alone, from what its last answer said; `None` when its
+    /// request budget is not spent (see [`Client::budget_wait_secs`]).
+    #[must_use]
+    pub fn budget_wait_secs(&self) -> Option<f64> {
+        self.limits.wait_secs(unix_now())
+    }
+
     /// One search: the offers `query` asks for, in the server's `sort` order (at most
     /// [`crate::offer::OFFER_CAP`] rows, whatever is asked). The rows are NOT re-checked here:
     /// [`crate::offer::select`] does that.
     ///
     /// # Errors
     /// Returns [`SkoposError::Http`] if the request cannot be made.
-    /// Returns [`SkoposError::Status`] if vast.ai answers with a non-success status.
+    /// Returns [`SkoposError::RateLimited`] if vast.ai answers 429.
+    /// Returns [`SkoposError::Status`] if vast.ai answers with another non-success status.
     /// Returns [`SkoposError::Json`] if the answer is not JSON or has no `offers` list.
     pub fn offers(&self, query: &OfferQuery, sort: OfferSort) -> Result<OfferPage> {
         let path = "/api/v0/bundles/";
         let q = query.to_search_json(sort).to_string();
         let answer = get_json(
             &self.agent,
+            &self.limits,
             &self.base,
             path,
             &[("q", &q)],

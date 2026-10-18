@@ -297,6 +297,16 @@ predecessor the official CLI keeps commented out beside its `POST`: it is still
 answered, and keeps `vas` to `GET`. If it goes (404/405, hinted), moving to `POST`
 is a change of rule, with its own review, not a silent fallback.
 
+### Rate Limits
+
+vast.ai budgets the calls of each endpoint per window and says so in `X-RateLimit-Limit`, `-Remaining`
+and `-Reset` (seen 2026-10-18: 30 for the offer search, ONE for the instances list). The library
+REPORTS: the clients keep what each answer said (`api::RateLimit`, `budget_wait_secs`), and a 429 is
+`SkoposError::RateLimited` with the wait; it never sleeps and never retries. The binary decides:
+one wait of at most `PATIENCE_SECS` per look, said on stderr, then one retry; a longer wait is named
+and ends the run; a watch leaves at least the budget's reset between two looks. No loop of retries,
+ever: a refused call is a person's decision, as for a refused `ssh`.
+
 ### Lenient Reading
 
 Rows are read field by field from `serde_json::Value` (`instance.rs`, `offer.rs`),

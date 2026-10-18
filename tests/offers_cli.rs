@@ -822,3 +822,161 @@ fn a_closed_stdout_ends_an_offers_watch_quietly_instead_of_looping_on() {
     let status = common::exit_within_deadline(&mut child);
     assert_eq!(status.code(), Some(0), "a closed pipe is not a failure");
 }
+
+/// Unix seconds now.
+fn unix_now() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs_f64()
+}
+
+/// A `vas offers` child (no config, no key) with its stderr piped, its stdout `stdout`, and a home
+/// that goes with the test.
+fn offers_child(
+    base: &str,
+    name: &str,
+    args: &[&str],
+    floor_ms: Option<&str>,
+    stdout: Stdio,
+) -> (std::process::Child, RemoveOnDrop) {
+    let home = fresh_home(name);
+    let mut command = Command::new(env!("CARGO_BIN_EXE_vas"));
+    command
+        .args(["offers", "--no-config"])
+        .args(args)
+        .env("VAST_URL", base)
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .env_remove("VAST_API_KEY")
+        .env_remove("XDG_CONFIG_HOME")
+        .stdout(stdout)
+        .stderr(Stdio::piped());
+    match floor_ms {
+        Some(ms) => command.env("VAS_WATCH_FLOOR_MS", ms),
+        None => command.env_remove("VAS_WATCH_FLOOR_MS"),
+    };
+    (command.spawn().unwrap(), RemoveOnDrop(home))
+}
+
+/// The first search is refused for a rate limit that clears in 1 s; the next ones answer.
+static LIMITED_ONCE: AtomicUsize = AtomicUsize::new(0);
+
+fn rate_limited_once(_: &str) -> (u16, Vec<(String, String)>, String) {
+    if LIMITED_ONCE.fetch_add(1, Ordering::SeqCst) == 0 {
+        (
+            429,
+            vec![("Retry-After".to_owned(), "1".to_owned())],
+            "{}".to_owned(),
+        )
+    } else {
+        (200, Vec::new(), fixture("offers.json"))
+    }
+}
+
+/// Every search refused, for two minutes.
+fn rate_limited_long(_: &str) -> (u16, Vec<(String, String)>, String) {
+    (
+        429,
+        vec![("Retry-After".to_owned(), "120".to_owned())],
+        "{}".to_owned(),
+    )
+}
+
+/// Every search answers, and says its budget (ONE call) is spent and renews in 3 s.
+fn spent_budget(_: &str) -> (u16, Vec<(String, String)>, String) {
+    let reset = format!("{:.0}", unix_now() + 3.0);
+    (
+        200,
+        vec![
+            ("X-RateLimit-Limit".to_owned(), "1".to_owned()),
+            ("X-RateLimit-Remaining".to_owned(), "0".to_owned()),
+            ("X-RateLimit-Reset".to_owned(), reset),
+        ],
+        fixture("offers.json"),
+    )
+}
+
+#[test]
+fn a_short_rate_limit_is_waited_out_once_and_said_aloud() {
+    let (base, seen) = common::serve_with(rate_limited_once);
+    let (mut child, _home) = offers_child(&base, "limited-once", &[], None, Stdio::piped());
+    let status = common::exit_within_deadline(&mut child);
+    let mut stderr = String::new();
+    std::io::Read::read_to_string(&mut child.stderr.take().unwrap(), &mut stderr).unwrap();
+    let mut stdout = String::new();
+    std::io::Read::read_to_string(&mut child.stdout.take().unwrap(), &mut stdout).unwrap();
+    assert_eq!(status.code(), Some(0), "{stderr}");
+    assert!(
+        stderr.contains("vas offers: rate-limited: waiting 1 s, then trying again"),
+        "{stderr}"
+    );
+    assert!(
+        stdout.contains("5 offers"),
+        "the retry's answer is shown: {stdout}"
+    );
+    let (first, second) = {
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 2, "one refusal, one retry");
+        (seen[0].at, seen[1].at)
+    };
+    let gap = second.duration_since(first);
+    assert!(
+        gap >= std::time::Duration::from_millis(1500),
+        "the 1 s named, and a margin: {gap:?}"
+    );
+}
+
+#[test]
+fn a_long_rate_limit_is_named_not_waited_out() {
+    let (base, seen) = common::serve_with(rate_limited_long);
+    let (mut child, _home) = offers_child(&base, "limited-long", &[], None, Stdio::null());
+    // The deadline of the helper is 20 s: sitting out 120 s would fail here, not hang the suite.
+    let status = common::exit_within_deadline(&mut child);
+    let mut stderr = String::new();
+    std::io::Read::read_to_string(&mut child.stderr.take().unwrap(), &mut stderr).unwrap();
+    assert_eq!(status.code(), Some(1), "{stderr}");
+    assert!(
+        stderr.contains("vast.ai rate-limited /api/v0/bundles/: try again in 120 s"),
+        "{stderr}"
+    );
+    assert_eq!(seen.lock().unwrap().len(), 1, "no second request");
+}
+
+#[test]
+fn a_watch_leaves_vast_ai_alone_until_its_budget_renews() {
+    let (base, seen) = common::serve_with(spent_budget);
+    // `--watch 0` with the test floor of 50 ms would look again at once, were it not for the budget.
+    let (mut child, _home) = offers_child(
+        &base,
+        "spent-budget",
+        &["--watch", "0"],
+        Some("50"),
+        Stdio::piped(),
+    );
+    let started = std::time::Instant::now();
+    while seen.lock().unwrap().len() < 2 {
+        assert!(
+            started.elapsed() < common::PROCESS_DEADLINE,
+            "the second look never came"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    let mut stderr = String::new();
+    std::io::Read::read_to_string(&mut child.stderr.take().unwrap(), &mut stderr).unwrap();
+    let (first, second) = {
+        let seen = seen.lock().unwrap();
+        (seen[0].at, seen[1].at)
+    };
+    let gap = second.duration_since(first);
+    assert!(
+        gap >= std::time::Duration::from_millis(2500),
+        "the budget renews in about 3 s (plus a margin), not in 50 ms: {gap:?}"
+    );
+    assert!(
+        stderr.contains("vas offers: vast.ai's request budget renews in"),
+        "the wait is said once, on stderr: {stderr}"
+    );
+}

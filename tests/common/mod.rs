@@ -10,6 +10,7 @@
 // EXPLICIT: test code -- a failed unwrap IS the failed assertion; and each test crate that includes
 // this module uses only part of it, so the rest reads as dead there.
 
+use std::fmt::Write as _;
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
@@ -23,6 +24,8 @@ pub struct Request {
     pub target: String,
     /// The `Authorization` header, when one was sent.
     pub authorization: Option<String>,
+    /// When the mock read it.
+    pub at: std::time::Instant,
 }
 
 /// Every request the mock saw, in order.
@@ -31,9 +34,28 @@ pub type Seen = Arc<Mutex<Vec<Request>>>;
 /// The mock's answer to a request target: status and body.
 pub type Respond = fn(&str) -> (u16, String);
 
+/// The mock's answer with headers: status, extra headers (name, value), body.
+pub type RespondWith = fn(&str) -> (u16, Vec<(String, String)>, String);
+
 /// Serves `respond(target) -> (status, body)` on a free port, one request per connection; returns
 /// the base URL and the requests seen.
 pub fn serve(respond: Respond) -> (String, Seen) {
+    serve_inner(move |target| {
+        let (status, body) = respond(target);
+        (status, Vec::new(), body)
+    })
+}
+
+/// [`serve`], with headers on the answer (a rate limit's, say).
+pub fn serve_with(respond: RespondWith) -> (String, Seen) {
+    serve_inner(respond)
+}
+
+/// The mock itself: `respond` answers each request.
+fn serve_inner<F>(respond: F) -> (String, Seen)
+where
+    F: Fn(&str) -> (u16, Vec<(String, String)>, String) + Send + 'static,
+{
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     let seen: Seen = Arc::default();
@@ -63,10 +85,15 @@ pub fn serve(respond: Respond) -> (String, Seen) {
                 method,
                 target: target.clone(),
                 authorization,
+                at: std::time::Instant::now(),
             });
-            let (status, body) = respond(&target);
+            let (status, headers, body) = respond(&target);
+            let mut extra = String::new();
+            for (name, value) in &headers {
+                let _ = write!(extra, "{name}: {value}\r\n");
+            }
             let reply = format!(
-                "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\n{extra}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
                 body.len()
             );
             stream.write_all(reply.as_bytes()).unwrap();

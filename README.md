@@ -177,6 +177,15 @@ vast.ai's `ssh` proxies are reached by port.
 `COST~` is an estimate: today's `$/h` times the hours since creation. vast.ai bills storage while an
 instance is stopped and prices can change; the invoice is the reference.
 
+**vast.ai rate-limits its API**, per endpoint, and says so in `X-RateLimit-*` headers (on 2026-10-18: 30
+calls for the offer search, ONE for the instances list). `vas` reads them. A look refused with a 429 that
+clears within 15 s waits it out once and says so (`vas: rate-limited: waiting 3 s, then trying again`), so
+two runs in a row do not fail; a longer wait is named and ends the run (`vast.ai rate-limited
+/api/v1/instances/: try again in 120 s`); and a `--watch` whose budget is spent leaves at least until the
+reset between two looks, whatever N says (`vast.ai's request budget renews in 5 s: the next look waits for
+it`). The library only reports (`api::RateLimit`, `Client::budget_wait_secs`, `SkoposError::RateLimited`)
+and never waits by itself.
+
 **The burn counts what may bill.** The money line's burn adds the boxes the API reads as `running` AND
 the boxes it was asked to run (`intended_status`) that read otherwise (`offline`, `loading`...):
 `burn $1.940/h over 3 running + 1 offline (meant to run, billing unknown)`. Whether such a box bills

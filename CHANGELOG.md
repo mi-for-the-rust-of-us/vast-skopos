@@ -34,8 +34,20 @@ All notable changes to this project are documented here. The format is based on
   page first, like `render::offers_footer`). `VAS_WATCH_FLOOR_MS` lowers the 30 s floor of both
   watches, for tests only.
 
+- vast.ai's rate limit is read and obeyed. Every endpoint has a budget of calls per window, written in
+  `X-RateLimit-Limit`, `-Remaining` and `-Reset` (seen 2026-10-18: 30 for the offer search, ONE for the
+  instances list: a script that ran `vas` a dozen times in a minute met a 429 on the second call). The
+  clients keep what each answer said (`api::RateLimit`, `Client::budget_wait_secs`,
+  `SearchClient::budget_wait_secs`); a 429 is `SkoposError::RateLimited` with the wait (`Retry-After`, else
+  the time to the reset): `vast.ai rate-limited /api/v1/instances/: try again in 7 s`. In `vas`, a look
+  refused for a wait of 15 s or less waits it out once, says so on stderr and tries again; a longer wait is
+  named and ends the run; a `--watch` leaves at least the reset between two looks. The library never
+  sleeps or retries.
+
 ### Changed
 
+- BREAKING for library users: a 429 is no longer `SkoposError::Status { status: 429, .. }` but
+  `SkoposError::RateLimited { .. }` (the enum is `#[non_exhaustive]`, so a `match` already had a wildcard).
 - `vas --ssh` asks the account for its credit WHILE the probes run, instead of before them: the
   request needs nothing from them, and they take seconds (`probe::probe_all`, which the binary used to
   hold, now takes the instances and returns one outcome per instance). `probe::ssh_command` (hidden

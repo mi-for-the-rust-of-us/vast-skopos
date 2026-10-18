@@ -11,9 +11,9 @@
 
 mod common;
 
-use common::{Respond, decode_q, fixture, serve};
+use common::{Respond, RespondWith, decode_q, fixture, serve};
 use vast_skopos::SkoposError;
-use vast_skopos::api::{Client, SearchClient};
+use vast_skopos::api::{Client, RateLimit, SearchClient};
 use vast_skopos::key::ApiKey;
 use vast_skopos::offer::{OFFER_CAP, OfferQuery, OfferSort, select};
 
@@ -291,11 +291,10 @@ fn a_search_answer_without_offers_is_a_json_error() {
 
 #[test]
 fn the_search_statuses_carry_their_own_hints_and_never_the_query() {
-    let cases: [(Respond, u16, &str); 5] = [
+    let cases: [(Respond, u16, &str); 4] = [
         (|_| (401, "{}".to_owned()), 401, "vas offers sends none"),
         (|_| (404, "{}".to_owned()), 404, "legacy GET form"),
         (|_| (405, "{}".to_owned()), 405, "legacy GET form"),
-        (|_| (429, "{}".to_owned()), 429, "rate-limited"),
         (
             |_| (302, "{}".to_owned()),
             302,
@@ -344,4 +343,149 @@ fn a_numeric_next_token_is_followed_like_a_string_one() {
     let rows = client.instances().unwrap();
     assert_eq!(rows.iter().map(|i| i.id).collect::<Vec<_>>(), [1, 2]);
     assert!(seen.lock().unwrap()[1].target.contains("after_token=7"));
+}
+
+/// Unix seconds now, as a header value.
+fn unix_now() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs_f64()
+}
+
+/// The instances list with a budget of ONE call spent and renewed in 5 s; the account and the offer
+/// search with a budget to spare (what vast.ai answered on 2026-10-18).
+fn budgets(target: &str) -> (u16, Vec<(String, String)>, String) {
+    let reset = format!("{:.0}", unix_now() + 5.0);
+    if target.starts_with("/api/v1/instances/") {
+        (
+            200,
+            vec![
+                ("X-RateLimit-Limit".to_owned(), "1".to_owned()),
+                ("X-RateLimit-Remaining".to_owned(), "0".to_owned()),
+                ("X-RateLimit-Reset".to_owned(), reset),
+            ],
+            r#"{"instances": [{"id": 1}], "next_token": null}"#.to_owned(),
+        )
+    } else {
+        (
+            200,
+            vec![
+                ("X-RateLimit-Limit".to_owned(), "30.0".to_owned()),
+                ("X-RateLimit-Remaining".to_owned(), "29".to_owned()),
+                ("X-RateLimit-Reset".to_owned(), reset),
+            ],
+            fixture("offers.json"),
+        )
+    }
+}
+
+#[test]
+fn each_endpoint_budget_is_kept_apart_and_only_a_spent_one_asks_for_a_wait() {
+    let (base, _) = common::serve_with(budgets);
+    let client = Client::with_base(ApiKey::new("k3y").unwrap(), &base);
+    assert_eq!(client.budget_wait_secs(), None, "nothing said yet");
+    client.instances().unwrap();
+    let wait = client
+        .budget_wait_secs()
+        .expect("the instances budget is spent");
+    assert!((3.0..=5.5).contains(&wait), "renewed in about 5 s: {wait}");
+    // The account answers with another budget (not spent): it does not erase the first.
+    client.account().unwrap();
+    assert!(
+        client.budget_wait_secs().is_some(),
+        "the spent budget is still remembered"
+    );
+    // The offer search, with 29 of 30 left, asks for nothing.
+    let search = SearchClient::with_base(&base);
+    search
+        .offers(&OfferQuery::default(), OfferSort::Price)
+        .unwrap();
+    assert_eq!(search.budget_wait_secs(), None);
+}
+
+#[test]
+fn a_429_is_its_own_error_with_the_wait_vast_ai_named_or_implied() {
+    let named: RespondWith = |_| {
+        (
+            429,
+            vec![("Retry-After".to_owned(), "7".to_owned())],
+            "{}".to_owned(),
+        )
+    };
+    let implied: RespondWith = |_| {
+        let reset = format!("{:.0}", unix_now() + 4.0);
+        (
+            429,
+            vec![
+                ("X-RateLimit-Limit".to_owned(), "1".to_owned()),
+                ("X-RateLimit-Remaining".to_owned(), "0".to_owned()),
+                ("X-RateLimit-Reset".to_owned(), reset),
+            ],
+            "{}".to_owned(),
+        )
+    };
+    let silent: RespondWith = |_| (429, Vec::new(), "{}".to_owned());
+    let ask = |respond: RespondWith| {
+        let (base, seen) = common::serve_with(respond);
+        let err = Client::with_base(ApiKey::new("k3y").unwrap(), &base)
+            .instances()
+            .unwrap_err();
+        assert_eq!(seen.lock().unwrap().len(), 1, "the library never retries");
+        err
+    };
+    let err = ask(named);
+    assert!(
+        matches!(err, SkoposError::RateLimited { retry_after: Some(w), .. } if (w - 7.0).abs() < 1e-9),
+        "{err}"
+    );
+    assert_eq!(
+        err.to_string(),
+        "vast.ai rate-limited /api/v1/instances/: try again in 7 s"
+    );
+    let err = ask(implied);
+    let SkoposError::RateLimited {
+        retry_after: Some(w),
+        ..
+    } = err
+    else {
+        panic!("the reset header gives the wait: {err}");
+    };
+    assert!((2.0..=4.5).contains(&w), "{w}");
+    let err = ask(silent);
+    assert!(
+        matches!(
+            err,
+            SkoposError::RateLimited {
+                retry_after: None,
+                ..
+            }
+        ),
+        "{err}"
+    );
+    assert_eq!(
+        err.to_string(),
+        "vast.ai rate-limited /api/v1/instances/: wait before the next call"
+    );
+}
+
+#[test]
+fn the_budget_headers_are_read_leniently() {
+    let read = |value: &'static str| {
+        RateLimit::from_headers(move |name| (name == "x-ratelimit-limit").then(|| value.to_owned()))
+    };
+    assert_eq!(
+        read(" 30.0 ").limit,
+        Some(30.0),
+        "the API writes 30.0, or 1"
+    );
+    assert_eq!(read("1").limit, Some(1.0));
+    assert_eq!(read("soon").limit, None);
+    assert_eq!(read("NaN").limit, None);
+    assert!(!read("soon").is_known());
+    assert!(read("1").is_known());
+    // A budget with nothing remaining but no reset gives no wait to be certain of.
+    let spent =
+        RateLimit::from_headers(|name| (name == "x-ratelimit-remaining").then(|| "0".to_owned()));
+    assert_eq!(spent.wait_secs(0.0), None);
 }
