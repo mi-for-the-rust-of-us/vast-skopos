@@ -15,7 +15,7 @@ use crate::instance::whole_secs;
 use crate::instance::{Account, Instance};
 use crate::probe::{LogReading, Probe, ProbeOutcome, outcome_at};
 use crate::runway::Runway;
-use crate::trend::{PowerChange, Trend};
+use crate::trend::{GpuChange, Trend};
 
 /// `x` rounded to `decimals` places: a sum would print as `1.2860000000000003`, and vast.ai's own
 /// credit arrives as `12.059765171599793`, float noise from its arithmetic.
@@ -56,6 +56,7 @@ fn probe_json(
                 "util_pct": g.util_pct,
                 "mem_used_mib": g.mem_used_mib,
                 "mem_total_mib": g.mem_total_mib,
+                "other_mem_mib": g.other_mem_mib,
                 "power_w": g.power_w,
                 "power_limit_w": g.power_limit_w,
                 "power_default_w": g.power_default_w,
@@ -97,7 +98,7 @@ fn box_json(i: &Instance, probe: Option<&Result<Probe>>, trend: Option<&Trend>, 
 }
 
 /// One change of a box's power, as an object.
-fn event_json(change: &PowerChange, now: f64) -> Value {
+fn event_json(change: &GpuChange, now: f64) -> Value {
     json!({
         "kind": "event",
         "at": whole_secs(now),
@@ -105,6 +106,8 @@ fn event_json(change: &PowerChange, now: f64) -> Value {
         "gpu": change.gpu,
         "limit_was": change.limit.map(|(was, _)| was),
         "limit_now": change.limit.map(|(_, now)| now),
+        "other_mib_was": change.other_mib.map(|(was, _)| was),
+        "other_mib_now": change.other_mib.map(|(_, now)| now),
         "began": change.began,
         "ended": change.ended,
     })

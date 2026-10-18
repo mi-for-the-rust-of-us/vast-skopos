@@ -197,13 +197,26 @@ application clocks and sync boost are not restraints and are not shown. `--compa
 of those words: empty when nothing holds the card, `null` when the box did not say). The power is asked in a
 second `nvidia-smi` query, so a driver that lacks a field costs the power cells (`-`) and nothing else.
 
+**Someone else on the GPU.** On 2026-10-18 a rented RTX 5090 held 24,809 MiB while its only visible process, the
+training, held 8,720: about 16 GiB belonged to something outside the container (another tenant of the card,
+or the host), which also took roughly half of the GPU's time (`nvidia-smi pmon` gave the training 24-82 % of
+the SM, while the card read 100 %). Its twin on another machine, same workload, added up to the MiB. Under
+`--ssh`, the `OTHER` column (after `VRAM`) says that memory, per GPU (`15.7G`), or `-` when nothing notable is
+held (the driver's own few MiB are not shown: the threshold is 1 GiB) or the box did not say. It is the
+device's memory in use minus what the compute processes the box lists hold, so nothing is concluded unless
+that list was read whole (a figure that is not a number, or a missing bus id, gives `-`). Under `--watch`, a
+line says when it appears or goes: `! 56533728 gpu 0: memory held outside the container 0.0 -> 15.7 GiB`.
+`--compact` carries the raw gap as `other_mem_mib` per GPU (`null` when unknown) and the change as an `event`
+object (`other_mib_was`, `other_mib_now`). `vas` cannot name the process (it is outside the box): report the
+machine to vast.ai with the figures (`vas offers --exclude-machine ID` keeps it out of the next search).
+
 The clock itself is the `CLOCK` column (`1702/3090`: the SM clock now over the highest the card reaches, in
 MHz), and under `--watch` a `CLOCK TREND` column after `TREND` keeps its last six samples, the mean of the box's
 GPUs: a card that fell from 3000 to 1700 MHz reads `3000 2900 1700 1700 1700 1700`, while its utilisation
 still reads `100`. `--compact` carries them as `probe.clock_trend` (`null` in a one-shot).
 
-A cap can also arrive mid-run. Under `vas --ssh --watch N`, a line under the money says when a GPU's limit or
-its throttle reasons change from one look to the next: `! 56533728 gpu 0: power limit 575 -> 400 W, power_cap
+A cap can also arrive mid-run. Under `vas --ssh --watch N`, a line under the money says when a GPU's limit,
+its throttle reasons or its other users change from one look to the next: `! 56533728 gpu 0: power limit 575 -> 400 W, power_cap
 began` (and `... ended`). The first look of a box is the baseline, a reading the box did not give changes
 nothing, and a box that stops starts afresh. `--compact` prints each change as an object before the money
 one: `{"kind":"event","at":...,"id":...,"gpu":0,"limit_was":575,"limit_now":400,"began":["power_cap"],"ended":[]}`.

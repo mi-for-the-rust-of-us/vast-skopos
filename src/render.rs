@@ -119,6 +119,26 @@ fn status(i: &Instance) -> String {
     }
 }
 
+/// The cell of memory held by processes outside the container, from a probe: each GPU's
+/// (`16.1G`), or `-` when nothing notable is held or the box did not say.
+fn other_cell(probe: &Probe) -> String {
+    let cells: Vec<String> = probe
+        .gpus
+        .iter()
+        .map(|g| {
+            g.other_user_mib().map_or_else(
+                || String::from("-"),
+                |mib| format!("{:.1}G", mib_to_gib(mib)),
+            )
+        })
+        .collect();
+    if cells.is_empty() {
+        String::from("-")
+    } else {
+        cells.join(" ")
+    }
+}
+
 /// The power cell from a probe: the limit set on each GPU, with the default when it is lower
 /// (`400/575W`), and what holds its clocks down (`400/575W+power_cap`); `-` for a GPU whose limit
 /// the box did not give.
@@ -361,7 +381,7 @@ pub fn table(
         header.extend(["MACHINE", "HOST"]);
     }
     if with_ssh {
-        header.extend(["GPU% (ssh)", "VRAM", "POWER", "CLOCK"]);
+        header.extend(["GPU% (ssh)", "VRAM", "OTHER", "POWER", "CLOCK"]);
         if trend.is_some() {
             header.extend(["TREND", "CLOCK TREND"]);
         }
@@ -387,33 +407,18 @@ pub fn table(
             ]);
         }
         if with_ssh {
-            let (util, mem, power, clock, last) = match outcome_at(probes, n) {
+            let (cells, last) = match outcome_at(probes, n) {
                 Some(Ok(p)) => {
                     let (util, mem) = gpu_cells(p);
                     (
-                        util,
-                        mem,
-                        power_cell(p),
-                        clock_cell(p),
+                        [util, mem, other_cell(p), power_cell(p), clock_cell(p)],
                         log_cell(p.log.as_ref()),
                     )
                 }
-                Some(Err(e)) => (
-                    String::from("?"),
-                    String::from("?"),
-                    String::from("?"),
-                    String::from("?"),
-                    e.to_string(),
-                ),
-                None => (
-                    String::from("-"),
-                    String::from("-"),
-                    String::from("-"),
-                    String::from("-"),
-                    String::from("-"),
-                ),
+                Some(Err(e)) => ([(); 5].map(|()| String::from("?")), e.to_string()),
+                None => ([(); 5].map(|()| String::from("-")), String::from("-")),
             };
-            row.extend([util, mem, power, clock]);
+            row.extend(cells);
             if let Some(history) = trend {
                 row.push(history.text(i.id));
                 row.push(history.clock_text(i.id));

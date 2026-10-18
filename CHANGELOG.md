@@ -52,6 +52,14 @@ All notable changes to this project are documented here. The format is based on
   at ~1,700 of 3,090 MHz by the software power cap, with 100 % utilisation. A second `nvidia-smi` query, so
   an old driver costs only these cells. `probe::GpuReading` gains the six fields (it is `#[non_exhaustive]`),
   `GpuReading::throttle_words`.
+- Someone else on the GPU, under `vas --ssh`: an `OTHER` column after `VRAM` with the memory held by processes
+  outside the container (`15.7G`: the device's memory in use minus what the box's compute processes hold; `-`
+  below 1 GiB or when the box did not say), a line in a watch when it appears or goes (`! 56533728 gpu 0: memory
+  held outside the container 0.0 -> 15.7 GiB`), `other_mem_mib` per GPU and `other_mib_was`/`other_mib_now`
+  on the event in `--compact`. Seen on a rented RTX 5090: 24,809 MiB in use, 8,720 its own, and about half the
+  GPU's time taken by someone it could not see. A third `nvidia-smi` query (the GPUs' bus ids, then the compute
+  processes' memory per bus id, ended by a success line), so an old driver costs only this cell.
+  `GpuReading::other_mem_mib`, `GpuReading::other_user_mib`, `probe::OTHER_MIB_MIN`.
 - The clock, under `vas --ssh`: a `CLOCK` column after `POWER` (`1702/3090` MHz: now over the highest the card
   reaches) and, under `--watch`, a `CLOCK TREND` column after `TREND` with the last six samples of each box
   (the mean SM clock of its GPUs, oldest first, `3000 2900 1700 1700 1700 1700`), and `probe.clock_trend` in
@@ -60,7 +68,8 @@ All notable changes to this project are documented here. The format is based on
   power limit or throttle reasons change between two looks (`! 56533728 gpu 0: power limit 575 -> 400 W,
   power_cap began`), and in `--compact` an `event` object before the money one (`id`, `gpu`, `limit_was`,
   `limit_now`, `began`, `ended`). A box's first look is the baseline; a reading the box did not give changes
-  nothing. `trend::PowerChange`, `Trend::changes` (what the last `record` found).
+  nothing. `trend::GpuChange` (power limit, throttle reasons, other users), `Trend::changes` (what the last
+  `record` found).
 - Every `vas offers` search ends with a line saying that vast.ai's answers vary from one search to the
   next (a watch says it under its first look, `--changes` does not): `render::offers_variance_note`.
 

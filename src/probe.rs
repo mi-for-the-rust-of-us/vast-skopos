@@ -40,7 +40,16 @@ pub struct GpuReading {
     /// Why the clocks are held down: `nvidia-smi`'s bit mask of clock event reasons (`0x4` is the
     /// software power cap); `None` when the box did not say.
     pub throttle_mask: Option<u64>,
+    /// The memory in use that no compute process of the box accounts for, in MiB: what the device
+    /// holds (`mem_used_mib`) minus what the processes `nvidia-smi` lists on it hold. `None` when
+    /// the box did not give the process list or one of its figures. A few MiB is the driver's own;
+    /// gigabytes belong to a process outside the container ([`GpuReading::other_user_mib`]).
+    pub other_mem_mib: Option<u64>,
 }
+
+/// The least memory, in MiB, that no process of the box accounts for before it is called the work
+/// of someone else: the driver and its contexts hold tens to a few hundred MiB themselves.
+pub const OTHER_MIB_MIN: u64 = 1024;
 
 /// The clock event reasons that mean the card is held below what it could do, as `nvidia-smi`
 /// names their bits: the software power cap, the thermal slowdowns, the hardware slowdown and the
@@ -55,6 +64,25 @@ const THROTTLE_WORDS: [(u64, &str); 5] = [
 ];
 
 impl GpuReading {
+    /// The memory held by processes outside the container, in MiB: [`GpuReading::other_mem_mib`]
+    /// when it reaches [`OTHER_MIB_MIN`], else `None`.
+    ///
+    /// On 2026-10-18 a rented RTX 5090 held 24,809 MiB while its only visible process held 8,720:
+    /// something outside the container used the rest, and about half of the GPU's time.
+    ///
+    /// ```
+    /// use vast_skopos::probe::parse_output;
+    /// let out = "0, 100, 24809, 32607\n---vas-power---\n---vas-apps---\n0, 00000000:C1:00.0\n\
+    ///            ---vas-apps-by-gpu---\n00000000:C1:00.0, 8720\nvas-apps-ok\n";
+    /// let g = &parse_output(out).gpus[0];
+    /// assert_eq!(g.other_mem_mib, Some(16_089));
+    /// assert_eq!(g.other_user_mib(), Some(16_089));
+    /// ```
+    #[must_use]
+    pub fn other_user_mib(&self) -> Option<u64> {
+        self.other_mem_mib.filter(|mib| *mib >= OTHER_MIB_MIN)
+    }
+
     /// The reasons the clocks are held down, as short words (`power_cap`, `thermal`, `slowdown`,
     /// `power_brake`); `None` when the box did not say, empty when nothing holds the card.
     ///
@@ -133,6 +161,17 @@ const LOG_WIDTH: usize = 120;
 /// The line separating `nvidia-smi`'s output from the log's in the remote command's output.
 const SEPARATOR: &str = "---vas-log---";
 
+/// The line opening the apps section: each GPU's PCI bus id, then ([`APPS_BY_GPU`]) the memory the
+/// compute processes hold on each bus id.
+const APPS_SEPARATOR: &str = "---vas-apps---";
+
+/// The line separating the GPUs' bus ids from the compute processes' memory.
+const APPS_BY_GPU: &str = "---vas-apps-by-gpu---";
+
+/// The last line of the processes' list when the query succeeded: without it, an empty list could
+/// be a failed query, and the memory would be wrongly all "someone else's".
+const APPS_OK: &str = "vas-apps-ok";
+
 /// The line separating the main `nvidia-smi` query from the power query that follows it. The power
 /// query is asked on its own, so a driver that lacks one of its fields costs the power readings
 /// and nothing else.
@@ -173,6 +212,7 @@ pub fn parse_nvidia_smi(csv: &str) -> Vec<GpuReading> {
                 util_pct: f.next()?.parse().ok()?,
                 mem_used_mib: f.next()?.parse().ok()?,
                 mem_total_mib: f.next()?.parse().ok()?,
+                other_mem_mib: None,
                 power_w: None,
                 power_limit_w: None,
                 power_default_w: None,
@@ -209,7 +249,11 @@ pub fn remote_command(log: Option<&str>) -> String {
          --format=csv,noheader,nounits; echo '{POWER_SEPARATOR}'; \
          timeout 20 nvidia-smi --query-gpu=index,power.draw,power.limit,power.default_limit,\
          clocks.sm,clocks.max.sm,clocks_throttle_reasons.active \
-         --format=csv,noheader,nounits 2>/dev/null"
+         --format=csv,noheader,nounits 2>/dev/null; echo '{APPS_SEPARATOR}'; \
+         timeout 20 nvidia-smi --query-gpu=index,pci.bus_id --format=csv,noheader,nounits 2>/dev/null; \
+         echo '{APPS_BY_GPU}'; \
+         timeout 20 nvidia-smi --query-compute-apps=gpu_bus_id,used_gpu_memory \
+         --format=csv,noheader,nounits 2>/dev/null && echo '{APPS_OK}'"
     );
     // The glob is left unquoted on purpose so the box's shell expands it: the pattern is the
     // user's own, sent to the user's own box. Everything else interpolated here is a constant.
@@ -292,12 +336,56 @@ pub fn parse_output(stdout: &str) -> Probe {
         Some((smi, log)) => (smi, Some(parse_log(log))),
         None => (stdout, None),
     };
-    let (smi, power) = gpus_and_power
+    let (smi, rest) = gpus_and_power
         .split_once(POWER_SEPARATOR)
         .unwrap_or((gpus_and_power, ""));
+    let (power, apps) = rest.split_once(APPS_SEPARATOR).unwrap_or((rest, ""));
     let mut gpus = parse_nvidia_smi(smi);
     merge_power(&mut gpus, power);
+    merge_apps(&mut gpus, apps);
     Probe { gpus, log }
+}
+
+/// The PCI bus id of GPU `index` in the apps section's first half (`0, 00000000:C1:00.0`), in lower
+/// case so the two halves compare whatever case the driver prints.
+fn bus_of(buses: &str, index: u32) -> Option<String> {
+    buses.lines().find_map(|line| {
+        let (i, bus) = line.split_once(',')?;
+        (i.trim().parse::<u32>().ok()? == index).then(|| bus.trim().to_lowercase())
+    })
+}
+
+/// Reads the apps section into each GPU's [`GpuReading::other_mem_mib`]: the device's memory in use
+/// minus the sum of what the compute processes hold on its bus id. Nothing is concluded unless the
+/// processes' query ended with its success line, the GPU's bus id is known, and every figure of
+/// that GPU's processes parses (`[N/A]` is not zero).
+fn merge_apps(gpus: &mut [GpuReading], apps: &str) {
+    let Some((buses, by_gpu)) = apps.split_once(APPS_BY_GPU) else {
+        return;
+    };
+    if !by_gpu.lines().any(|line| line.trim() == APPS_OK) {
+        return;
+    }
+    for gpu in gpus {
+        let Some(bus) = bus_of(buses, gpu.index) else {
+            continue;
+        };
+        let mut accounted: u64 = 0;
+        let mut complete = true;
+        for line in by_gpu.lines() {
+            let Some((on, memory)) = line.split_once(',') else {
+                continue;
+            };
+            if on.trim().to_lowercase() != bus {
+                continue;
+            }
+            match memory.trim().parse::<u64>() {
+                Ok(mib) => accounted = accounted.saturating_add(mib),
+                Err(_) => complete = false,
+            }
+        }
+        gpu.other_mem_mib = complete.then(|| gpu.mem_used_mib.saturating_sub(accounted));
+    }
 }
 
 /// A number of watts or MHz as `nvidia-smi` prints it (`399.86`), rounded; `None` for `[N/A]`,

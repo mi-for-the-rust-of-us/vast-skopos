@@ -176,7 +176,12 @@ fn the_remote_command_asks_the_power_apart_so_an_old_driver_costs_only_that() {
     // without a field says so on the box's stderr, not on the table.
     let plain = remote_command(None);
     assert!(plain.contains("power.draw") && !plain.contains("---vas-log---"));
-    assert!(plain.ends_with("nounits 2>/dev/null"), "{plain}");
+    assert!(
+        plain.contains(
+            "clocks_throttle_reasons.active --format=csv,noheader,nounits 2>/dev/null; echo"
+        ),
+        "the power query's stderr is thrown away: {plain}"
+    );
 }
 
 #[test]
@@ -269,7 +274,8 @@ fn compact_prints_the_change_as_an_event_before_the_money_that_closes_the_look()
     assert_eq!(
         event,
         serde_json::json!({"kind": "event", "at": 42, "id": 1, "gpu": 0,
-          "limit_was": 575, "limit_now": 400, "began": ["power_cap"], "ended": []})
+          "limit_was": 575, "limit_now": 400, "other_mib_was": null, "other_mib_now": null,
+          "began": ["power_cap"], "ended": []})
     );
     // A change of reasons only: the limit keys stay, null.
     let mut trend = vast_skopos::trend::Trend::default();

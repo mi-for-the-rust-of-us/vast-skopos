@@ -17,7 +17,7 @@ use std::fmt::Write as _;
 use vast_skopos::SkoposError;
 use vast_skopos::instance::Instance;
 use vast_skopos::probe::{ProbeOutcome, parse_output};
-use vast_skopos::trend::{PowerChange, TREND_LEN, Trend};
+use vast_skopos::trend::{GpuChange, TREND_LEN, Trend};
 
 fn running(id: u64) -> Instance {
     Instance::from_json(&serde_json::json!({"id": id, "actual_status": "running"})).unwrap()
@@ -123,7 +123,7 @@ fn powered(limit: &str, mask: &str) -> ProbeOutcome {
 }
 
 fn lines(trend: &Trend) -> Vec<String> {
-    trend.changes().iter().map(PowerChange::line).collect()
+    trend.changes().iter().map(GpuChange::line).collect()
 }
 
 #[test]
