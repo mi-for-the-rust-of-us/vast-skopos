@@ -205,7 +205,7 @@ does not show that cost yet.
 One object per box, then one for the money, each on one line, each with a `kind` (`box` or `money`) and
 `at` (Unix seconds, the same on every line of a look), so a line read alone says what it is and when.
 The keys of each object never change: what is not known is `null`, not a missing key. Keys come out in alphabetical order, as `serde_json` writes them by default (`kind` is not first: filter on it with
-`jq` or `grep '"kind":"money"'`). Money is rounded to ten-thousandths of a dollar (`credit`, `burn`, `cost`):
+`jq` or `grep '"kind":"money"'`). Money is rounded to ten-thousandths of a dollar (`credit`, `burn`, `cost`, `dph`):
 about two seconds of a $0.19/h box, and vast.ai sends the credit with float noise (`12.059765171599793`).
 
 ```text

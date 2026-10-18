@@ -207,6 +207,16 @@ fn the_money_carries_the_unsure_boxes_by_state_and_rounds_the_float_noise() {
 }
 
 #[test]
+fn the_price_is_rounded_like_the_rest_of_the_money() {
+    // vast.ai's own price, seen live on 2026-10-18: sixteen digits of float noise.
+    let row = instance(
+        &json!({"id": 1, "actual_status": "running", "dph_total": 0.490_740_740_740_740_7}),
+    );
+    let lines = objects(&json_lines(&[row], &[], None, None, 0.0));
+    assert_eq!(lines[0]["dph"], 0.4907, "{}", lines[0]);
+}
+
+#[test]
 fn money_that_rounds_to_zero_is_zero_not_minus_zero() {
     // A sliver of owed money: -0.00001 rounds to `0.0`, and `-0.0` would be printed otherwise.
     let owed = Account::from_json(&json!({"credit": -0.000_01}));

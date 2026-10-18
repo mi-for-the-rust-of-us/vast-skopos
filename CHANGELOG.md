@@ -21,7 +21,8 @@ All notable changes to this project are documented here. The format is based on
   probe: GPUs, the log's state and last line, or the error), then one for the money (`kind: "money"`:
   credit, burn, running, the unsure boxes by state, hours left). The keys never change (`null` for
   what is not known), every object carries `at`, and `--watch` prints no separator line. Money is
-  rounded to ten-thousandths of a dollar: vast.ai sends the credit with float noise.
+  rounded to ten-thousandths of a dollar (the credit, the burn, the cost and the price per hour): vast.ai
+  sends them with float noise (`0.4907407407407407`).
   Not with `--wide`. `compact::json_lines`, `runway::Runway` (the credit, the burn and the hours they
   last: the money line and the `money` object are both read from one).
 - `vas offers --watch SECONDS` (at least 30) searches again until Ctrl+C: each look is the whole table
