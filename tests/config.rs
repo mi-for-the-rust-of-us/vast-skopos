@@ -51,3 +51,30 @@ fn a_malformed_line_names_the_file_and_the_line() {
         "{text}"
     );
 }
+
+#[test]
+fn a_file_of_filters_cannot_turn_the_run_into_a_loop() {
+    for (flag, line) in [("watch", "--watch 60"), ("changes", "--changes")] {
+        let dir = std::env::temp_dir().join(format!("vas-config-{flag}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("offers");
+        std::fs::write(
+            &file,
+            format!(
+                "--gpu RTX_5090
+{line}
+"
+            ),
+        )
+        .unwrap();
+        let err = read_flag_file(&file).unwrap_err();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(matches!(err, SkoposError::Config { line: 2, .. }), "{err}");
+        let text = err.to_string();
+        assert!(
+            text.contains(&format!("`--{flag}` cannot be set from a config file"))
+                && text.contains("must not turn a run into a loop"),
+            "{text}"
+        );
+    }
+}

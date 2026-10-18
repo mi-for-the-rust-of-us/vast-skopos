@@ -13,7 +13,8 @@ use vast_skopos::compact::compact;
 use vast_skopos::config::{default_offers_file, read_flag_file};
 use vast_skopos::key::ApiKey;
 use vast_skopos::offer::{
-    Offer, OfferQuery, OfferSort, changes as offer_changes, country_code, gpu_model, select,
+    Offer, OfferChanges, OfferQuery, OfferSort, changes as offer_changes, country_code, gpu_model,
+    select,
 };
 use vast_skopos::probe::ssh_probe;
 use vast_skopos::render::{
@@ -272,6 +273,24 @@ fn watch_pause(every: u64) -> Duration {
     Duration::from_secs(every).max(floor)
 }
 
+/// The notice that a `--watch` shorter than the floor was raised to it; `who` names the command.
+fn floor_notice(who: &str, every: u64) -> Option<String> {
+    let pause = watch_pause(every);
+    (pause > Duration::from_secs(every)).then(|| {
+        format!(
+            "{who}: --watch {every} is raised to {} s, the shortest pause between two looks (no loop hammers vast.ai)",
+            pause.as_secs_f64()
+        )
+    })
+}
+
+/// Whether a failed look ends the run. A one-shot does; so does a watch whose first look fails,
+/// since a wrong `VAST_URL` or key would loop on stderr forever. Once a look has succeeded, a
+/// failure is a hiccup in a long watch, and the next look is tried.
+const fn ends_on_failure(watching: bool, succeeded_before: bool) -> bool {
+    !watching || !succeeded_before
+}
+
 /// Unix seconds now.
 fn now() -> f64 {
     SystemTime::now()
@@ -362,9 +381,16 @@ fn lookout(args: &LookArgs) -> ExitCode {
             client.base()
         );
     }
+    if let Some(every) = args.watch
+        && let Some(note) = floor_notice("vas", every)
+    {
+        eprintln!("{note}");
+    }
+    let mut succeeded = false;
     loop {
         match look(&client, args) {
             Ok(text) => {
+                succeeded = true;
                 // JSON Lines carry their own `at`: a stamp line would not parse.
                 let stamp = if args.watch.is_some() && !args.compact {
                     let secs = SystemTime::now()
@@ -381,7 +407,7 @@ fn lookout(args: &LookArgs) -> ExitCode {
             }
             Err(e) => {
                 eprintln!("vas: {e}");
-                if args.watch.is_none() {
+                if ends_on_failure(args.watch.is_some(), succeeded) {
                     return ExitCode::FAILURE;
                 }
             }
@@ -465,8 +491,16 @@ fn offers(args: OffersArgs) -> ExitCode {
     if client.base() != DEFAULT_BASE {
         eprintln!("vas offers: VAST_URL is set: searching {}", client.base());
     }
+    if let Some(every) = args.watch
+        && let Some(note) = floor_notice("vas offers", every)
+    {
+        eprintln!("{note}");
+    }
     let top = usize::try_from(args.top).unwrap_or(usize::MAX);
+    let nothing = OfferChanges::default();
     let mut previous: Option<Vec<Offer>> = None;
+    // Whether a search failed since the last look that was printed.
+    let mut missed = false;
     loop {
         match client.offers(&query, sort) {
             Ok(page) => {
@@ -475,7 +509,9 @@ fn offers(args: OffersArgs) -> ExitCode {
                 let at = now();
                 let moved = previous.as_deref().map(|p| offer_changes(p, &kept));
                 let text = match (args.watch, args.changes) {
-                    (_, true) => changes_only(moved.as_ref(), kept.len(), page.maybe_cut(), at),
+                    (_, true) => {
+                        changes_only(moved.as_ref(), kept.len(), page.maybe_cut(), missed, at)
+                    }
                     (None, false) => format!(
                         "{}{}",
                         offers_table(&kept, top),
@@ -484,14 +520,14 @@ fn offers(args: OffersArgs) -> ExitCode {
                     (Some(_), false) => {
                         // The first look has nothing to mark; a blank line parts the looks.
                         let gap = if previous.is_some() { "\n" } else { "" };
-                        let marks = moved.clone().unwrap_or_default();
+                        let shown = kept.get(..top).unwrap_or(&kept);
                         let note = moved
                             .as_ref()
-                            .map(|m| changes_note(m, page.maybe_cut()))
+                            .map(|m| changes_note(m, shown, page.maybe_cut(), missed))
                             .unwrap_or_default();
                         format!(
                             "{gap}{}{}{note}",
-                            offers_table_marked(&kept, top, &marks),
+                            offers_table_marked(&kept, top, moved.as_ref().unwrap_or(&nothing)),
                             offers_line(&page, kept.len(), kept.len().min(top), &query, sort, at)
                         )
                     }
@@ -501,12 +537,14 @@ fn offers(args: OffersArgs) -> ExitCode {
                     return ExitCode::SUCCESS;
                 }
                 previous = Some(kept);
+                missed = false;
             }
             Err(e) => {
                 eprintln!("vas offers: {e}");
-                if args.watch.is_none() {
+                if ends_on_failure(args.watch.is_some(), previous.is_some()) {
                     return ExitCode::FAILURE;
                 }
+                missed = true;
             }
         }
         let Some(every) = args.watch else {

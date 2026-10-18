@@ -567,7 +567,8 @@ fn compare(a: Option<f64>, b: Option<f64>, ascending: bool) -> std::cmp::Orderin
 }
 
 /// The offers `query` admits, ordered by `sort` (price ascending, reliability and upload
-/// descending), missing values last, ties by price and then id.
+/// descending), missing values last, ties by price and then id; an id listed twice keeps the
+/// row that sorts first.
 ///
 /// ```
 /// use vast_skopos::offer::{Offer, OfferQuery, OfferSort, select};
@@ -578,6 +579,10 @@ fn compare(a: Option<f64>, b: Option<f64>, ascending: bool) -> std::cmp::Orderin
 ///     .collect();
 /// let ids: Vec<u64> = select(offers, &OfferQuery::default(), OfferSort::Price).iter().map(|o| o.id).collect();
 /// assert_eq!(ids, vec![1, 2, 3, 9]);
+/// // An id answered twice is one offer: the cheaper row stays.
+/// let twice = [(7, 0.9), (7, 0.5)].map(|(id, p)| Offer::from_json(&serde_json::json!({"id": id, "dph_total": p})).unwrap());
+/// let kept = select(twice.to_vec(), &OfferQuery::default(), OfferSort::Price);
+/// assert_eq!(kept.iter().map(|o| o.dph_total).collect::<Vec<_>>(), [Some(0.5)]);
 /// ```
 #[must_use]
 pub fn select(offers: Vec<Offer>, query: &OfferQuery, sort: OfferSort) -> Vec<Offer> {
@@ -588,6 +593,8 @@ pub fn select(offers: Vec<Offer>, query: &OfferQuery, sort: OfferSort) -> Vec<Of
             .then_with(|| compare(a.dph_total, b.dph_total, true))
             .then(a.id.cmp(&b.id))
     });
+    let mut seen = std::collections::HashSet::new();
+    kept.retain(|o| seen.insert(o.id));
     kept
 }
 

@@ -239,10 +239,20 @@ since the last look: 1 new, 1 repriced, 1 gone
 
 `--changes` prints only what moved, one line each, for a log or a monitor: a first line for the baseline,
 then one line per look (`no change`, or the counts followed by a line per offer: `+` new, `~` repriced,
-`-` gone). Two details keep the notes honest. "Gone" is measured against the whole list the search kept,
-not the rows shown, so an offer that sank below the last row is not gone. And vast.ai answers at most 64
-rows per search: when it does, a change in who entered or left may only be an offer crossing that line, and
-the note says so.
+`-` gone), none left out. Under the table, at most ten gone offers are listed, the rest counted.
+
+A few details keep the notes honest:
+
+- "Gone" is measured against the whole list the search kept, not the rows shown, so an offer that sank
+  below the last row is not gone. With `--top 3`, a new offer that is not among the three rows has no `+`:
+  the note counts it (`1 new (1 below the table)`).
+- vast.ai answers at most 64 rows per search: when it does, a change in who entered or left may only be an
+  offer crossing that line, and the note says so.
+- A search that fails ends a watch whose FIRST look failed (a wrong `VAST_URL` or key would otherwise loop on
+  stderr forever); after one look has succeeded, a failure is only said on stderr, and the next look reads
+  `since the last successful look`. The lookout's `vas --watch` does the same.
+- A `--watch` under 30 s is raised to 30 s, and `vas` says so on stderr.
+- A config file cannot hold `--watch` or `--changes`: a file of filters must not turn a run into a loop.
 
 ### The API key
 

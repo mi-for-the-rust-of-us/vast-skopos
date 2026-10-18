@@ -199,3 +199,17 @@ fn the_money_carries_the_unsure_boxes_by_state_and_rounds_the_float_noise() {
     assert!(empty[0]["credit"].is_null() && empty[0]["hours_left"].is_null());
     assert_eq!(empty[0]["unsure"], json!({}));
 }
+
+#[test]
+fn money_that_rounds_to_zero_is_zero_not_minus_zero() {
+    // A sliver of owed money: -0.00001 rounds to `0.0`, and `-0.0` would be printed otherwise.
+    let owed = Account::from_json(&json!({"credit": -0.000_01}));
+    let text = compact(&[], &[], Some(&owed), 0.0);
+    assert!(text.contains("\"credit\":0.0"), "{text}");
+    assert!(!text.contains("-0.0"), "{text}");
+    // A burn too small to give a runway: `hours_left` is null, as the text line leaves it out.
+    let tiny = instance(&json!({"id": 1, "actual_status": "running", "dph_total": 1e-320}));
+    let credit = Account::from_json(&json!({"credit": 5.0}));
+    let lines = objects(&compact(&[tiny], &[], Some(&credit), 0.0));
+    assert!(lines.last().unwrap()["hours_left"].is_null());
+}

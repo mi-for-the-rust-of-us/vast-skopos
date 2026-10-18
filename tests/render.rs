@@ -298,12 +298,12 @@ fn the_marked_table_keeps_its_columns_aligned_with_a_mark_and_a_was() {
 }
 
 #[test]
-fn the_notes_cap_their_lines_and_say_when_the_cap_of_vast_ai_may_explain_a_change() {
+fn the_table_note_caps_its_gone_lines_but_changes_lists_every_change() {
     use vast_skopos::offer::changes;
     use vast_skopos::render::{changes_note, changes_only};
     let before: Vec<_> = (1..=13).map(|id| watched(id, 0.5)).collect();
     let c = changes(&before, &[]);
-    let note = changes_note(&c, false);
+    let note = changes_note(&c, &[], false, false);
     assert!(note.starts_with("since the last look: 13 gone\n"), "{note}");
     assert_eq!(
         note.lines().filter(|l| l.starts_with("- ")).count(),
@@ -311,15 +311,101 @@ fn the_notes_cap_their_lines_and_say_when_the_cap_of_vast_ai_may_explain_a_chang
         "ten, then the rest counted"
     );
     assert!(note.contains("- ... and 3 more\n"), "{note}");
-    assert!(!note.contains("caps a search"), "{note}");
-    assert!(changes_note(&c, true).contains("vast.ai caps a search at 64 rows"));
+    // A log must not lose ids: `--changes` names every one.
+    let all = changes_only(Some(&c), 0, false, false, 0.0);
+    assert_eq!(
+        all.lines().filter(|l| l.starts_with("- ")).count(),
+        13,
+        "{all}"
+    );
+    assert!(!all.contains("more"), "{all}");
+}
+
+#[test]
+fn the_cap_of_vast_ai_is_said_only_when_something_entered_or_left() {
+    use vast_skopos::offer::changes;
+    use vast_skopos::render::{changes_note, changes_only};
+    let before: Vec<_> = (1..=3).map(|id| watched(id, 0.5)).collect();
+    let gone = changes(&before, &[]);
+    assert!(!changes_note(&gone, &[], false, false).contains("caps a search"));
+    assert!(changes_note(&gone, &[], true, false).contains("vast.ai caps a search at 64 rows"));
     // Nothing entered or left: the cap explains nothing, and is not said.
     let steady = changes(&before, &before);
-    assert!(!changes_note(&steady, true).contains("caps a search"));
-    assert!(!changes_only(Some(&steady), 13, true, 0.0).contains("caps a search"));
-    assert!(changes_only(Some(&c), 0, true, 0.0).contains("caps a search"));
+    assert!(!changes_note(&steady, &before, true, false).contains("caps a search"));
+    assert!(!changes_only(Some(&steady), 3, true, false, 0.0).contains("caps a search"));
+    assert!(changes_only(Some(&gone), 0, true, false, 0.0).contains("caps a search"));
     assert!(
-        changes_only(None, 1, false, 0.0).starts_with("searched 00:00:00 UTC: 1 offer (the first"),
+        changes_only(None, 1, false, false, 0.0)
+            .starts_with("searched 00:00:00 UTC: 1 offer (the first"),
         "singular"
+    );
+}
+
+#[test]
+fn the_note_counts_the_new_and_repriced_offers_the_table_does_not_show() {
+    use vast_skopos::offer::changes;
+    use vast_skopos::render::changes_note;
+    let before = [watched(1, 0.5), watched(2, 0.6), watched(3, 0.7)];
+    // Sorted by price, as the table shows them: 1, 2, 3, 4.
+    let now = [
+        watched(1, 0.5),
+        watched(2, 0.65),
+        watched(3, 0.7),
+        watched(4, 0.9),
+    ];
+    let c = changes(&before, &now);
+    let note = |shown: &[vast_skopos::offer::Offer]| changes_note(&c, shown, false, false);
+    assert_eq!(note(&now), "since the last look: 1 new, 1 repriced\n");
+    assert_eq!(
+        note(&now[..2]),
+        "since the last look: 1 new (1 below the table), 1 repriced\n",
+        "the new offer is row 4, the repriced one row 2"
+    );
+    assert_eq!(
+        note(&now[..1]),
+        "since the last look: 1 new (1 below the table), 1 repriced (1 below the table)\n"
+    );
+    assert_eq!(
+        note(&[]),
+        "since the last look: 1 new (1 below the table), 1 repriced (1 below the table)\n",
+        "a table of no rows shows nothing"
+    );
+}
+
+#[test]
+fn a_look_after_a_failed_search_says_so_in_both_modes() {
+    use vast_skopos::offer::changes;
+    use vast_skopos::render::{changes_note, changes_only};
+    let before = [watched(1, 0.5)];
+    let c = changes(&before, &before);
+    assert_eq!(
+        changes_note(&c, &before, false, true),
+        "since the last successful look: no change\n"
+    );
+    assert_eq!(
+        changes_only(Some(&c), 1, false, true, 0.0),
+        "searched 00:00:00 UTC: 1 offer, no change (a search failed in between)\n"
+    );
+}
+
+#[test]
+fn a_credit_that_rounds_to_zero_has_no_sign_and_a_tiny_burn_no_infinite_runway() {
+    let credit = |c: f64| Account::from_json(&serde_json::json!({"credit": c}));
+    let running = |dph: f64| fleet_row(1, Some("running"), Some("running"), Some(dph));
+    // A sliver of owed money rounds to $0.00, not $-0.00; a real debt keeps its sign.
+    assert_eq!(
+        money_line(&[], Some(&credit(-0.001))),
+        "credit $0.00 | burn $0.000/h over 0 running\n"
+    );
+    assert!(money_line(&[], Some(&credit(-5.0))).starts_with("credit $-5.00 | "));
+    // 1e-320 $/h is a burn that is not zero: five dollars would last `inf` hours.
+    let line = money_line(&[running(1e-320)], Some(&credit(5.0)));
+    assert!(
+        line.starts_with("credit $5.00 | burn $0.000/h over 1 running") && !line.contains("left"),
+        "{line}"
+    );
+    assert_eq!(
+        vast_skopos::render::Money::of(&[running(1e-320)], Some(&credit(5.0))).hours_left(),
+        None
     );
 }

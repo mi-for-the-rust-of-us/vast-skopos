@@ -46,6 +46,25 @@ All notable changes to this project are documented here. The format is based on
   `with_ssh`), and `render::offers_line` the time of the search (`now`, Unix seconds, last).
   `vas`'s own output gains the `searched ...` clause on the `vas offers` footer.
 
+### Fixed
+
+(Found by a review of the code since 0.1.0, before 0.2.0 shipped.)
+
+- A config file's `--watch` or `--changes` is refused, naming the file and the line: a file of filters
+  silently turned every `vas offers` into an endless loop, and `--changes` on the command line then failed
+  with a confusing "`--watch` not provided".
+- A `--watch` whose first look fails ends (exit 1) instead of repeating the error forever, for `vas offers`
+  and for the lookout alike; once a look has succeeded, a failure is said and the watch goes on, and the next
+  look reads `since the last successful look` (`--changes`: `(a search failed in between)`).
+- The note under a watch's table counts the new and repriced offers that the table does not show:
+  `1 new (1 below the table)`, where it used to count them with no mark on screen to match.
+- `--changes` lists every change; only the note under a table caps its gone offers at ten.
+- A `--watch` shorter than the 30 s floor is raised to it, and `vas` says so on stderr.
+- An offer id answered twice in one search is one offer (the row that sorts first), not two rows marked and
+  counted twice.
+- A credit or burn that rounds to zero no longer prints as `$-0.00` or `-0.0`, and a burn too small to give a
+  runway no longer prints `~inf h left`.
+
 ## [0.1.0] - 2026-10-17
 
 First release.

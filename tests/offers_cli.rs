@@ -11,14 +11,11 @@
 
 mod common;
 
-use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::mpsc;
-use std::time::{Duration, Instant};
 
-use common::{Request, decode_q, fixture, serve};
+use common::{Request, decode_q, fixture, read_lines_until, serve};
 
 /// Every target answered with the fixture's real rows.
 fn bundles(_: &str) -> (u16, String) {
@@ -492,35 +489,8 @@ fn watch_lines(base: &str, name: &str, args: &[&str], marker: &str, times: usize
         .stderr(Stdio::null())
         .spawn()
         .unwrap();
-    let stdout = child.stdout.take().unwrap();
-    let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-            if tx.send(line).is_err() {
-                break;
-            }
-        }
-    });
-    // One deadline for the whole read, not a timeout per line: a `vas` that never reaches the marker
-    // but keeps printing must fail the test, not feed it forever.
-    let deadline = Instant::now() + Duration::from_secs(20);
-    let (mut lines, mut seen) = (Vec::new(), 0);
-    while seen < times {
-        let Some(left) = deadline.checked_duration_since(Instant::now()) else {
-            break;
-        };
-        match rx.recv_timeout(left) {
-            Ok(line) => {
-                seen += usize::from(line.contains(marker));
-                lines.push(line);
-            }
-            Err(_) => break,
-        }
-    }
-    let _ = child.kill();
-    let _ = child.wait();
+    let lines = read_lines_until(&mut child, marker, times);
     std::fs::remove_dir_all(&home).unwrap();
-    assert_eq!(seen, times, "{marker:?} seen {seen} times in {lines:#?}");
     lines
 }
 
@@ -598,4 +568,166 @@ fn changes_needs_a_watch() {
     assert_eq!(out.status.code(), Some(2), "{stderr}");
     assert!(stderr.contains("--watch"), "{stderr}");
     assert!(seen.lock().unwrap().is_empty(), "refused before any search");
+}
+
+/// Every search refused with a 500.
+fn refusing(_: &str) -> (u16, String) {
+    (500, "{}".to_owned())
+}
+
+/// The first search answers, the second is refused, the next ones answer with the evolved market.
+static HICCUP_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+fn hiccup(_: &str) -> (u16, String) {
+    match HICCUP_CALLS.fetch_add(1, Ordering::SeqCst) {
+        0 => (200, evolved(0)),
+        1 => (500, "{}".to_owned()),
+        _ => (200, evolved(1)),
+    }
+}
+
+/// The evolved market, for the test that watches with `--top 1`.
+static TOP_LOOKS: AtomicUsize = AtomicUsize::new(0);
+
+fn evolving_top(_: &str) -> (u16, String) {
+    (200, evolved(TOP_LOOKS.fetch_add(1, Ordering::SeqCst)))
+}
+
+/// Every search counted, the answer never changing.
+static FLOOR_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+fn counted_bundles(_: &str) -> (u16, String) {
+    FLOOR_CALLS.fetch_add(1, Ordering::SeqCst);
+    (200, fixture("offers.json"))
+}
+
+#[test]
+fn a_watch_whose_first_search_fails_gives_up_instead_of_looping_on_stderr() {
+    let (base, seen) = serve(refusing);
+    let home = fresh_home("watch-refused");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_vas"))
+        .args(["offers", "--no-config", "--watch", "0"])
+        .env("VAST_URL", &base)
+        .env("VAS_WATCH_FLOOR_MS", "50")
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .env_remove("VAST_API_KEY")
+        .env_remove("XDG_CONFIG_HOME")
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let status = common::exit_within_deadline(&mut child);
+    let mut stderr = String::new();
+    std::io::Read::read_to_string(&mut child.stderr.take().unwrap(), &mut stderr).unwrap();
+    std::fs::remove_dir_all(&home).unwrap();
+    assert_eq!(status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("status 500"), "{stderr}");
+    assert_eq!(seen.lock().unwrap().len(), 1, "one search, no retry loop");
+}
+
+#[test]
+fn a_watch_goes_on_after_a_failure_once_a_look_has_succeeded_and_says_so() {
+    let (base, _) = serve(hiccup);
+    // The notes closing the look after the failed search, and the look after that.
+    let lines = watch_lines(&base, "watch-hiccup", &[], "since the last", 2);
+    let notes: Vec<&String> = lines
+        .iter()
+        .filter(|l| l.starts_with("since the last"))
+        .collect();
+    assert_eq!(
+        notes[0], "since the last successful look: 1 new, 1 repriced, 1 gone",
+        "the look before the refused search is the one compared with: {lines:#?}"
+    );
+    assert_eq!(notes[1], "since the last look: no change");
+}
+
+#[test]
+fn a_watch_compares_the_whole_list_not_the_rows_it_shows() {
+    let (base, _) = serve(evolving_top);
+    let lines = watch_lines(
+        &base,
+        "watch-top",
+        &["--top", "1"],
+        "since the last look",
+        1,
+    );
+    let note = lines
+        .iter()
+        .find(|l| l.starts_with("since the last look"))
+        .unwrap();
+    // One row is on screen; the newcomer and the repriced offer are among the 4 below it, and the
+    // gone offer is gone from the whole list, not just from the screen.
+    assert_eq!(
+        note,
+        "since the last look: 1 new (1 below the table), 1 repriced (1 below the table), 1 gone",
+        "{lines:#?}"
+    );
+}
+
+#[test]
+fn a_config_file_cannot_hold_a_watch() {
+    let (base, seen) = serve(bundles);
+    for flag in ["--watch 60", "--changes"] {
+        let home = fresh_home("config-watch");
+        let file = write_config(&home.join("xdg"), &format!("--gpu RTX_5090\n{flag}\n"));
+        // Spawned, not run to completion: were the flag accepted, `vas` would loop, and the test
+        // must fail at the deadline, not hang the suite.
+        let mut child = Command::new(env!("CARGO_BIN_EXE_vas"))
+            .arg("offers")
+            .env("VAST_URL", &base)
+            .env("HOME", &home)
+            .env("USERPROFILE", &home)
+            .env("XDG_CONFIG_HOME", home.join("xdg"))
+            .env_remove("VAST_API_KEY")
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let status = common::exit_within_deadline(&mut child);
+        let mut stderr = String::new();
+        std::io::Read::read_to_string(&mut child.stderr.take().unwrap(), &mut stderr).unwrap();
+        std::fs::remove_dir_all(&home).unwrap();
+        assert_eq!(status.code(), Some(1), "{flag}: {stderr}");
+        assert!(
+            stderr.contains(&format!("line 2 of the config file {}", file.display()))
+                && stderr.contains("must not turn a run into a loop"),
+            "{flag}: {stderr}"
+        );
+    }
+    assert!(seen.lock().unwrap().is_empty(), "refused before any search");
+}
+
+#[test]
+fn the_pause_between_two_looks_is_at_least_thirty_seconds_unless_a_test_says_otherwise() {
+    let (base, seen) = serve(counted_bundles);
+    let home = fresh_home("floor");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_vas"))
+        .args(["offers", "--no-config", "--watch", "1"])
+        .env("VAST_URL", &base)
+        .env_remove("VAS_WATCH_FLOOR_MS")
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .env_remove("VAST_API_KEY")
+        .env_remove("XDG_CONFIG_HOME")
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    // 2.5 s: well past the 1 s asked, far short of the 30 s floor.
+    std::thread::sleep(std::time::Duration::from_millis(2500));
+    let _ = child.kill();
+    let out = child.wait_with_output().unwrap();
+    std::fs::remove_dir_all(&home).unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        FLOOR_CALLS.load(Ordering::SeqCst),
+        1,
+        "the second search waits for the floor"
+    );
+    assert_eq!(seen.lock().unwrap().len(), 1);
+    assert!(
+        stderr.contains("--watch 1 is raised to 30 s"),
+        "the raise is said once, on stderr: {stderr}"
+    );
 }

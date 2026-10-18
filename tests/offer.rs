@@ -255,3 +255,33 @@ fn an_offer_that_sank_in_the_ranking_is_not_gone_and_the_first_look_has_everythi
     let first = vast_skopos::offer::changes(&[], &all);
     assert_eq!((first.appeared.len(), first.gone.len()), (3, 0));
 }
+
+#[test]
+fn an_id_answered_twice_is_one_offer_and_the_row_that_sorts_first_stays() {
+    let rows = [(7, 0.9, 0.5), (3, 0.6, 0.9), (7, 0.5, 0.2), (3, 0.6, 0.95)];
+    let offers: Vec<Offer> = rows
+        .iter()
+        .map(|&(id, price, reliability)| {
+            Offer::from_json(&json!({"id": id, "dph_total": price, "reliability2": reliability}))
+                .unwrap()
+        })
+        .collect();
+    let by_price = select(offers.clone(), &OfferQuery::default(), OfferSort::Price);
+    assert_eq!(
+        by_price
+            .iter()
+            .map(|o| (o.id, o.dph_total))
+            .collect::<Vec<_>>(),
+        [(7, Some(0.5)), (3, Some(0.6))],
+        "the cheaper 7; the first of two equal 3s"
+    );
+    let by_reliability = select(offers, &OfferQuery::default(), OfferSort::Reliability);
+    assert_eq!(
+        by_reliability
+            .iter()
+            .map(|o| (o.id, o.reliability))
+            .collect::<Vec<_>>(),
+        [(3, Some(0.95)), (7, Some(0.5))],
+        "the most reliable row of each id, since that is how the list is ordered"
+    );
+}

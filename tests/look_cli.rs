@@ -11,10 +11,10 @@
 
 mod common;
 
-use std::process::Command;
+use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use common::serve;
+use common::{exit_within_deadline, read_lines_until, serve};
 
 /// Three instances (the ids from the Me36 dogfooding note, box 2 and box 3, and a box the API
 /// gave no ids for), then the account.
@@ -140,7 +140,6 @@ fn compact_prints_one_json_object_per_box_then_the_money_and_nothing_else() {
     assert!(lines[2]["machine_id"].is_null() && lines[2]["probe"].is_null());
     assert_eq!(lines[3]["credit"], 12.93);
     assert_eq!(lines[3]["running"], 1);
-    assert!(!text.contains("== vas"), "no stamp line: {text}");
     assert!(
         !text.contains("credit $"),
         "no table, no money line: {text}"
@@ -159,4 +158,105 @@ fn compact_and_wide_are_refused_together() {
     assert_eq!(out.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("cannot be used with"), "{stderr}");
+}
+
+/// `vas args` as a WATCH against `respond`, the 30 s floor set to `floor_ms` (none: the real one),
+/// with piped stdout and stderr; the caller reads it and the home is left for the OS (a temp dir).
+fn spawn_watch(respond: common::Respond, args: &[&str], floor_ms: Option<&str>) -> Child {
+    let (base, _) = serve(respond);
+    let call = CALLS.fetch_add(1, Ordering::Relaxed);
+    let home = std::env::temp_dir().join(format!("vas-look-watch-{call}-{}", std::process::id()));
+    std::fs::create_dir_all(&home).unwrap();
+    let mut command = Command::new(env!("CARGO_BIN_EXE_vas"));
+    command
+        .args(args)
+        .env("VAST_URL", &base)
+        .env("VAST_API_KEY", "k3y")
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .env_remove("XDG_CONFIG_HOME")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    match floor_ms {
+        Some(ms) => command.env("VAS_WATCH_FLOOR_MS", ms),
+        None => command.env_remove("VAS_WATCH_FLOOR_MS"),
+    };
+    command.spawn().unwrap()
+}
+
+/// Every request refused: a key vast.ai does not know.
+fn refused(_: &str) -> (u16, String) {
+    (401, "{}".to_owned())
+}
+
+#[test]
+fn a_compact_watch_prints_json_lines_only_and_each_look_carries_its_clock() {
+    let mut child = spawn_watch(account, &["--compact", "--watch", "0"], Some("50"));
+    // Two looks: each is three boxes and the money.
+    let lines = read_lines_until(&mut child, "\"kind\":\"money\"", 2);
+    let objects: Vec<serde_json::Value> = lines
+        .iter()
+        .map(|l| serde_json::from_str(l).unwrap_or_else(|e| panic!("{e}: {l:?} in {lines:#?}")))
+        .collect();
+    assert!(objects.len() >= 8, "{lines:#?}");
+    assert!(
+        lines.iter().all(|l| !l.starts_with("==")),
+        "no stamp line between looks, which would not parse: {lines:#?}"
+    );
+    let clocks: Vec<u64> = objects.iter().map(|o| o["at"].as_u64().unwrap()).collect();
+    assert!(
+        clocks.windows(2).all(|w| w[0] <= w[1]),
+        "`at` never goes back: {clocks:?}"
+    );
+    // The looks are told apart by the money line closing each of them.
+    let money = objects.iter().filter(|o| o["kind"] == "money").count();
+    assert_eq!(money, 2, "{lines:#?}");
+}
+
+#[test]
+fn a_table_watch_stamps_each_look() {
+    let mut child = spawn_watch(account, &["--watch", "0"], Some("50"));
+    let lines = read_lines_until(&mut child, "== vas, unix time", 2);
+    assert!(
+        lines[0].starts_with("== vas, unix time "),
+        "a stamp opens the first look: {lines:#?}"
+    );
+    assert!(
+        lines.iter().any(|l| l.starts_with("credit $12.93")),
+        "{lines:#?}"
+    );
+}
+
+#[test]
+fn a_watch_whose_first_look_is_refused_gives_up_instead_of_looping_on_stderr() {
+    let mut child = spawn_watch(refused, &["--watch", "0"], Some("50"));
+    let status = exit_within_deadline(&mut child);
+    let mut stderr = String::new();
+    std::io::Read::read_to_string(&mut child.stderr.take().unwrap(), &mut stderr).unwrap();
+    assert_eq!(status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("status 401"), "{stderr}");
+    assert_eq!(
+        stderr.matches("status 401").count(),
+        1,
+        "said once, not on every look: {stderr}"
+    );
+}
+
+#[test]
+fn a_watch_shorter_than_the_floor_is_raised_and_says_so() {
+    // The real floor (30 s): the first look is immediate, and the raise is said on stderr.
+    let mut child = spawn_watch(account, &["--compact", "--watch", "1"], None);
+    let _ = read_lines_until(&mut child, "\"kind\":\"money\"", 1);
+    let mut stderr = String::new();
+    std::io::Read::read_to_string(&mut child.stderr.take().unwrap(), &mut stderr).unwrap();
+    assert!(
+        stderr.contains("vas: --watch 1 is raised to 30 s"),
+        "{stderr}"
+    );
+    // And with the floor of the tests (50 ms, below the 1 s asked) nothing is raised.
+    let mut child = spawn_watch(account, &["--compact", "--watch", "1"], Some("50"));
+    let _ = read_lines_until(&mut child, "\"kind\":\"money\"", 1);
+    let mut stderr = String::new();
+    std::io::Read::read_to_string(&mut child.stderr.take().unwrap(), &mut stderr).unwrap();
+    assert!(!stderr.contains("raised"), "{stderr}");
 }

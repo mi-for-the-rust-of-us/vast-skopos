@@ -19,7 +19,9 @@ use crate::render::{Money, whole_secs};
 /// credit arrives as `12.059765171599793`, float noise from its arithmetic.
 fn rounded(x: f64, decimals: i32) -> f64 {
     let scale = 10_f64.powi(decimals);
-    (x * scale).round() / scale
+    let r = (x * scale).round() / scale;
+    // A value that rounds to zero is `0.0`, not `-0.0`: both are valid JSON, only one is sane.
+    if r == 0.0 { 0.0 } else { r }
 }
 
 /// What `--log` found, as an object with a `state`; `null` when `--log` was not given.

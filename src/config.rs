@@ -106,6 +106,11 @@ fn flag_word(line: &str) -> std::result::Result<String, String> {
             "`--{name}` cannot be set from a config file (it chooses the file)"
         ));
     }
+    if name == "watch" || name == "changes" {
+        return Err(format!(
+            "`--{name}` cannot be set from a config file: a file of filters must not turn a run into a loop (give it on the command line)"
+        ));
+    }
     if name == "help" || name == "version" {
         return Err(format!(
             "`--{name}` prints and stops: it has no place in a config file"
