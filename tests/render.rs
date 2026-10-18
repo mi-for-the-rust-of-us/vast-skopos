@@ -514,3 +514,67 @@ fn a_debt_has_no_runway() {
     let some = Account::from_json(&serde_json::json!({"credit": 3.0}));
     assert!(money_line(&[running], Some(&some)).ends_with("~3.0 h left at this rate\n"));
 }
+
+#[test]
+fn the_trend_is_a_column_after_the_vram_and_only_when_a_watch_has_one() {
+    use vast_skopos::probe::ProbeOutcome;
+    use vast_skopos::trend::Trend;
+    let rows = vec![
+        instance(&serde_json::json!({"id": 1, "actual_status": "running"})),
+        instance(&serde_json::json!({"id": 2, "actual_status": "exited"})),
+    ];
+    let probe = |util: u32| -> ProbeOutcome {
+        Some(Ok(parse_output(&format!(
+            "0, {util}, 100, 200\n---vas-log---\nvas-no-file\n"
+        ))))
+    };
+    let mut trend = Trend::default();
+    for util in [97, 99, 0, 98] {
+        trend.record(&rows, &[probe(util), None]);
+    }
+    let words = |text: &str, id: &str| -> Vec<String> {
+        text.lines()
+            .find(|l| l.starts_with(id))
+            .unwrap()
+            .split_whitespace()
+            .map(str::to_owned)
+            .collect()
+    };
+    let with = table(
+        &rows,
+        &[probe(98), None],
+        None,
+        TableOptions::new().ssh(true).trend(&trend),
+        0.0,
+    );
+    let header: Vec<&str> = with.lines().next().unwrap().split_whitespace().collect();
+    let at = header.iter().position(|h| *h == "VRAM").unwrap();
+    assert_eq!(
+        &header[at..at + 4],
+        ["VRAM", "TREND", "LAST", "LOG"],
+        "{with}"
+    );
+    let running = words(&with, "1");
+    assert!(
+        running.windows(4).any(|w| w == ["97", "99", "0", "98"]),
+        "the four samples, oldest first: {with}"
+    );
+    assert!(
+        words(&with, "2").contains(&"-".to_owned()),
+        "a box with none: {with}"
+    );
+    // Without a trend, or without the probe columns, there is no such column.
+    let plain = table(
+        &rows,
+        &[probe(98), None],
+        None,
+        TableOptions::new().ssh(true),
+        0.0,
+    );
+    assert!(!plain.contains("TREND"), "{plain}");
+    let quiet = table(&rows, &[], None, TableOptions::new().trend(&trend), 0.0);
+    assert!(
+        !quiet.contains("TREND") && !quiet.contains("VRAM"),
+        "{quiet}"
+    );
+}

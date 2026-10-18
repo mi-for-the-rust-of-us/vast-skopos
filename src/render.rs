@@ -7,6 +7,7 @@ use crate::instance::{Account, Instance, shortened, whole_secs};
 use crate::offer::{OFFER_CAP, Offer, OfferChanges, OfferPage, OfferQuery, OfferSort};
 use crate::probe::{LogReading, Probe, ProbeOutcome, outcome_at};
 use crate::runway::Runway;
+use crate::trend::Trend;
 
 /// `secs` as `2d 3h`, `4h 15m` or `7m`.
 ///
@@ -220,29 +221,42 @@ fn mib_to_gib(mib: u64) -> f64 {
 /// columns are asked for by name, so no call site reads as two bare booleans.
 ///
 /// ```
-/// use vast_skopos::render::TableOptions;
+/// use vast_skopos::{render::TableOptions, trend::Trend};
 /// let options = TableOptions::new().ssh(true).wide(true);
-/// assert!(options.ssh && options.wide);
+/// assert!(options.ssh && options.wide && options.trend.is_none());
 /// assert_eq!(TableOptions::default(), TableOptions::new());
+/// let history = Trend::default();
+/// assert!(TableOptions::new().ssh(true).trend(&history).trend.is_some());
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
-pub struct TableOptions {
+pub struct TableOptions<'a> {
     /// Show the probe columns (`GPU% (ssh)`, `VRAM`, `LAST LOG / SSH ERROR`), even when no box was
     /// probed.
     pub ssh: bool,
     /// Show each box's machine id and host id.
     pub wide: bool,
+    /// The samples a watch has kept: adds a `TREND` column after `VRAM` (with the probe columns).
+    pub trend: Option<&'a Trend>,
 }
 
-impl TableOptions {
-    /// The plain table: no probe columns, no ids.
+impl<'a> TableOptions<'a> {
+    /// The plain table: no probe columns, no ids, no trend.
     #[must_use]
     pub const fn new() -> Self {
         Self {
             ssh: false,
             wide: false,
+            trend: None,
         }
+    }
+
+    /// With the last GPU samples of each box (see [`Trend`]), as a `TREND` column after `VRAM`;
+    /// it shows with the probe columns.
+    #[must_use]
+    pub const fn trend(mut self, trend: &'a Trend) -> Self {
+        self.trend = Some(trend);
+        self
     }
 
     /// With the probe columns (`on`), or without.
@@ -282,12 +296,13 @@ pub fn table(
     instances: &[Instance],
     probes: &[ProbeOutcome],
     account: Option<&Account>,
-    options: TableOptions,
+    options: TableOptions<'_>,
     now: f64,
 ) -> String {
     let TableOptions {
         ssh: with_ssh,
         wide,
+        trend,
         ..
     } = options;
     let mut header = vec![
@@ -297,7 +312,11 @@ pub fn table(
         header.extend(["MACHINE", "HOST"]);
     }
     if with_ssh {
-        header.extend(["GPU% (ssh)", "VRAM", "LAST LOG / SSH ERROR"]);
+        header.extend(["GPU% (ssh)", "VRAM"]);
+        if trend.is_some() {
+            header.push("TREND");
+        }
+        header.push("LAST LOG / SSH ERROR");
     }
     let mut rows: Vec<Vec<String>> = Vec::new();
     for (n, i) in instances.iter().enumerate() {
@@ -319,14 +338,19 @@ pub fn table(
             ]);
         }
         if with_ssh {
-            match outcome_at(probes, n) {
+            let (util, mem, last) = match outcome_at(probes, n) {
                 Some(Ok(p)) => {
                     let (util, mem) = gpu_cells(p);
-                    row.extend([util, mem, log_cell(p.log.as_ref())]);
+                    (util, mem, log_cell(p.log.as_ref()))
                 }
-                Some(Err(e)) => row.extend([String::from("?"), String::from("?"), e.to_string()]),
-                None => row.extend([String::from("-"), String::from("-"), String::from("-")]),
+                Some(Err(e)) => (String::from("?"), String::from("?"), e.to_string()),
+                None => (String::from("-"), String::from("-"), String::from("-")),
+            };
+            row.extend([util, mem]);
+            if let Some(history) = trend {
+                row.push(history.text(i.id));
             }
+            row.push(last);
         }
         rows.push(row);
     }

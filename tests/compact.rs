@@ -49,7 +49,13 @@ fn a_box_with_everything_and_a_box_with_nothing_have_the_same_keys() {
         ))),
         None,
     ];
-    let lines = objects(&json_lines(&[full, bare], &probes, None, 1_000.0 + 8_100.0));
+    let lines = objects(&json_lines(
+        &[full, bare],
+        &probes,
+        None,
+        None,
+        1_000.0 + 8_100.0,
+    ));
     assert_eq!(lines.len(), 3, "two boxes and the money");
     assert_eq!(
         keys(&lines[0]),
@@ -134,7 +140,7 @@ fn a_failed_probe_and_every_log_state_are_objects() {
         log("vas-file:/root/runs/s1/train.log\nlast\n"),
         log("garbage\n"),
     ];
-    let text = json_lines(&rows, &probes, None, 0.0);
+    let text = json_lines(&rows, &probes, None, None, 0.0);
     assert_eq!(
         text.lines().count(),
         7,
@@ -176,7 +182,7 @@ fn the_money_carries_the_unsure_boxes_by_state_and_rounds_the_float_noise() {
         row(4, "exited", "stopped", 5.0),
     ];
     let credit = Account::from_json(&json!({"credit": 12.0}));
-    let lines = objects(&json_lines(&fleet, &[], Some(&credit), 3_600.0));
+    let lines = objects(&json_lines(&fleet, &[], None, Some(&credit), 3_600.0));
     let money = lines.last().unwrap();
     assert_eq!(money["kind"], "money");
     assert_eq!(money["at"], 3_600);
@@ -190,10 +196,10 @@ fn the_money_carries_the_unsure_boxes_by_state_and_rounds_the_float_noise() {
     assert_eq!(money["hours_left"], 20.0);
     // vast.ai's own credit carries float noise (seen live: 12.059765171599793); ten-thousandths are kept.
     let noisy = Account::from_json(&json!({"credit": 12.059_765_171_599_793}));
-    let lines = objects(&json_lines(&fleet, &[], Some(&noisy), 3_600.0));
+    let lines = objects(&json_lines(&fleet, &[], None, Some(&noisy), 3_600.0));
     assert_eq!(lines.last().unwrap()["credit"], 12.0598);
     // The same keys with nothing known: a monitor reads one schema.
-    let empty = objects(&json_lines(&[], &[], None, 0.0));
+    let empty = objects(&json_lines(&[], &[], None, None, 0.0));
     assert_eq!(empty.len(), 1, "no boxes: the money alone");
     assert_eq!(keys(&empty[0]), keys(money));
     assert!(empty[0]["credit"].is_null() && empty[0]["hours_left"].is_null());
@@ -204,13 +210,13 @@ fn the_money_carries_the_unsure_boxes_by_state_and_rounds_the_float_noise() {
 fn money_that_rounds_to_zero_is_zero_not_minus_zero() {
     // A sliver of owed money: -0.00001 rounds to `0.0`, and `-0.0` would be printed otherwise.
     let owed = Account::from_json(&json!({"credit": -0.000_01}));
-    let text = json_lines(&[], &[], Some(&owed), 0.0);
+    let text = json_lines(&[], &[], None, Some(&owed), 0.0);
     assert!(text.contains("\"credit\":0.0"), "{text}");
     assert!(!text.contains("-0.0"), "{text}");
     // A burn too small to give a runway: `hours_left` is null, as the text line leaves it out.
     let tiny = instance(&json!({"id": 1, "actual_status": "running", "dph_total": 1e-320}));
     let credit = Account::from_json(&json!({"credit": 5.0}));
-    let lines = objects(&json_lines(&[tiny], &[], Some(&credit), 0.0));
+    let lines = objects(&json_lines(&[tiny], &[], None, Some(&credit), 0.0));
     assert!(lines.last().unwrap()["hours_left"].is_null());
 }
 
@@ -218,8 +224,50 @@ fn money_that_rounds_to_zero_is_zero_not_minus_zero() {
 fn a_debt_has_no_hours_left_in_the_json_either() {
     let owed = Account::from_json(&json!({"credit": -5.0}));
     let running = instance(&json!({"id": 1, "actual_status": "running", "dph_total": 1.0}));
-    let lines = objects(&json_lines(&[running], &[], Some(&owed), 0.0));
+    let lines = objects(&json_lines(&[running], &[], None, Some(&owed), 0.0));
     let money = lines.last().unwrap();
     assert_eq!(money["credit"], -5.0, "the debt is shown");
     assert!(money["hours_left"].is_null(), "{money}");
+}
+
+#[test]
+fn the_probe_carries_its_trend_or_a_null_one_and_an_error_has_none() {
+    use vast_skopos::trend::Trend;
+    let boxes = [
+        instance(&json!({"id": 1, "actual_status": "running"})),
+        instance(&json!({"id": 2, "actual_status": "running"})),
+    ];
+    let ok = |util: u32| -> vast_skopos::probe::ProbeOutcome {
+        Some(Ok(parse_output(&format!("0, {util}, 100, 200\n"))))
+    };
+    let mut trend = Trend::default();
+    for util in [99, 98, 0] {
+        trend.record(&boxes[..1], &[ok(util)]);
+    }
+    let probes = vec![
+        ok(1),
+        Some(Err(vast_skopos::SkoposError::Ssh {
+            target: "h:1".to_owned(),
+            message: "Connection refused".to_owned(),
+        })),
+    ];
+    let watching = objects(&json_lines(&boxes, &probes, Some(&trend), None, 0.0));
+    assert_eq!(watching[0]["probe"]["util_trend"], json!([99, 98, 0]));
+    assert!(
+        watching[1]["probe"].get("util_trend").is_none(),
+        "an error has no readings, so no trend"
+    );
+    // A one-shot has no history: the key is there, null (the keys of an object never change).
+    let once = objects(&json_lines(&boxes, &probes, None, None, 0.0));
+    assert!(once[0]["probe"]["util_trend"].is_null(), "{}", once[0]);
+    assert_eq!(keys(&once[0]["probe"]), keys(&watching[0]["probe"]));
+    // A watch that has not read this box yet: an empty array, not null.
+    let fresh = objects(&json_lines(
+        &boxes,
+        &probes,
+        Some(&Trend::default()),
+        None,
+        0.0,
+    ));
+    assert_eq!(fresh[0]["probe"]["util_trend"], json!([]));
 }

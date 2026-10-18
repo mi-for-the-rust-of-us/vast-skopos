@@ -177,6 +177,13 @@ vast.ai's `ssh` proxies are reached by port.
 `COST~` is an estimate: today's `$/h` times the hours since creation. vast.ai bills storage while an
 instance is stopped and prices can change; the invoice is the reference.
 
+**The GPU trend.** One `nvidia-smi` sample is not a diagnosis (it has read 100 % with 0 MiB used while
+nothing held the card). Under `vas --ssh --watch N`, the table gains a `TREND` column after `VRAM`: the
+last six samples of each box, oldest first, as the mean utilisation of its GPUs (`97 99 0 98 99 99`),
+kept in memory for the length of the watch; `--compact` carries the same numbers as `probe.util_trend`. A
+probe that failed adds nothing and keeps the history (one dropped `ssh` is not the run stopping), and a box
+that stops or leaves is forgotten. A single look has no history, and no such column.
+
 **vast.ai rate-limits its API**, per endpoint, and says so in `X-RateLimit-*` headers (on 2026-10-18: 30
 calls for the offer search, ONE for the instances list). `vas` reads them. A look refused with a 429 that
 clears within 15 s waits it out once and says so (`vas: rate-limited: waiting 3 s, then trying again`), so
@@ -203,12 +210,13 @@ about two seconds of a $0.19/h box, and vast.ai sends the credit with float nois
 
 ```text
 $ vas --compact --ssh --log '/root/runs/*/train.log'
-{"age_s":8100,"at":1792250000,"cost":2.025,"dph":0.9,"gpu_name":"RTX 5090","host_id":406325,"id":56362434,"intended":"running","kind":"box","label":"me36 box 2","machine_id":100682,"num_gpus":1,"probe":{"gpus":[{"index":0,"mem_total_mib":32607,"mem_used_mib":29400,"util_pct":99}],"log":{"file":"/root/runs/s0/train.log","line":"e41 loss 0.3","state":"line"}},"ssh_host":"ssh6.vast.ai","ssh_port":36000,"status":"running","where":"South Korea, KR"}
+{"age_s":8100,"at":1792250000,"cost":2.025,"dph":0.9,"gpu_name":"RTX 5090","host_id":406325,"id":56362434,"intended":"running","kind":"box","label":"me36 box 2","machine_id":100682,"num_gpus":1,"probe":{"gpus":[{"index":0,"mem_total_mib":32607,"mem_used_mib":29400,"util_pct":99}],"log":{"file":"/root/runs/s0/train.log","line":"e41 loss 0.3","state":"line"},"util_trend":null},"ssh_host":"ssh6.vast.ai","ssh_port":36000,"status":"running","where":"South Korea, KR"}
 {"at":1792250000,"burn":0.9,"credit":12.93,"hours_left":14.4,"kind":"money","running":1,"unsure":{}}
 ```
 
 `probe` is `null` for a box not probed (no `--ssh`, or not running), `{"error": "..."}` when the probe failed,
-else `gpus` and `log`; `log` is `null` without `--log`, else an object whose `state` is `line`, `empty`,
+else `gpus`, `log` and `util_trend` (`null` in a one-shot, else the last GPU samples of a `--watch`, see
+below); `log` is `null` without `--log`, else an object whose `state` is `line`, `empty`,
 `not_a_file`, `no_match` or `unreadable`. `unsure` counts, by state, the boxes meant to run that read
 otherwise (the burn, above). With `--watch N`, a look is printed every N seconds with no separator line (the table form of `--watch`
 stamps each look with `== vas, unix time N`; JSON lines would not parse with it): the `at`

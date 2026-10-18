@@ -20,6 +20,7 @@ use vast_skopos::render::{
     TableOptions, offers_changes_note, offers_changes_only, offers_footer, offers_table,
     offers_table_marked, table,
 };
+use vast_skopos::trend::Trend;
 
 /// The command line: the lookout's flags, or the `offers` subcommand. (`--help` opens with `about`,
 /// which is Cargo.toml's `description`: one place to say what `vas` is.)
@@ -386,8 +387,14 @@ fn run_looks(
 
 /// One look: the instances, then the account while the probes run, then the table.
 ///
-/// The account request needs nothing from the probes, which take seconds: the two overlap.
-fn look(client: &Client, args: &LookArgs) -> Result<String, vast_skopos::SkoposError> {
+/// The account request needs nothing from the probes, which take seconds: the two overlap. With a
+/// `trend` (a watch that probes), this look's GPU samples join the history, and the table and the
+/// JSON show it.
+fn look(
+    client: &Client,
+    args: &LookArgs,
+    trend: Option<&mut Trend>,
+) -> Result<String, vast_skopos::SkoposError> {
     let instances = client.instances()?;
     let (account, probes) = std::thread::scope(|scope| {
         let account = scope.spawn(|| client.account());
@@ -409,16 +416,18 @@ fn look(client: &Client, args: &LookArgs) -> Result<String, vast_skopos::SkoposE
             None
         }
     };
+    let trend: Option<&Trend> = trend.map(|history| {
+        history.record(&instances, &probes);
+        &*history
+    });
     Ok(if args.compact {
-        json_lines(&instances, &probes, account.as_ref(), now())
+        json_lines(&instances, &probes, trend, account.as_ref(), now())
     } else {
-        table(
-            &instances,
-            &probes,
-            account.as_ref(),
-            TableOptions::new().ssh(args.ssh).wide(args.wide),
-            now(),
-        )
+        let mut options = TableOptions::new().ssh(args.ssh).wide(args.wide);
+        if let Some(history) = trend {
+            options = options.trend(history);
+        }
+        table(&instances, &probes, account.as_ref(), options, now())
     })
 }
 
@@ -447,12 +456,15 @@ fn lookout(args: &LookArgs) -> ExitCode {
             client.base()
         );
     }
+    // The GPU samples of the watch, in memory: one look says little, the last few say more.
+    let mut trend = Trend::default();
+    let tracking = args.ssh && args.watch.is_some();
     run_looks(
         "vas",
         args.watch,
         || client.budget_wait_secs(),
         |_| {
-            let text = look(&client, args)?;
+            let text = look(&client, args, tracking.then_some(&mut trend))?;
             // JSON Lines carry their own `at`: a stamp line would not parse.
             Ok(if args.watch.is_some() && !args.compact {
                 let secs = SystemTime::now()

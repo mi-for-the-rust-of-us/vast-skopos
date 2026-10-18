@@ -24,7 +24,8 @@
 //! - [`probe`]: the `ssh` probe and its `nvidia-smi` parser;
 //! - [`render`]: the tables;
 //! - [`runway`]: the credit, the burn and the hours they last, as the money line and `--compact` read them;
-//! - [`compact`]: the same readings as JSON Lines, for scripts and monitors.
+//! - [`compact`]: the same readings as JSON Lines, for scripts and monitors;
+//! - [`trend`]: the last GPU utilisation samples of each box, kept by a watch.
 
 pub mod api;
 pub mod compact;
@@ -37,6 +38,7 @@ pub mod offer;
 pub mod probe;
 pub mod render;
 pub mod runway;
+pub mod trend;
 
 pub use error::{Result, SkoposError};
 

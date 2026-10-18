@@ -774,3 +774,26 @@ fn the_lookout_waits_out_a_short_rate_limit_once_and_says_so() {
         "the wait was sat out"
     );
 }
+
+#[test]
+fn a_watch_that_probes_has_a_trend_column_and_a_one_shot_does_not() {
+    // The probe of 127.0.0.1:9 fails, so no sample: the column is there, saying so.
+    let mut watch = spawn_watch(box_on_loopback, &["--ssh", "--watch", "0"], Some("50"));
+    let lines = read_lines_until(&mut watch, "== vas, unix time", 2);
+    let header = lines.iter().find(|l| l.contains("GPU% (ssh)")).unwrap();
+    assert!(
+        header.contains("VRAM") && header.contains("TREND") && header.contains("LAST LOG"),
+        "{header}"
+    );
+    let row = lines.iter().find(|l| l.starts_with("77")).unwrap();
+    assert!(row.contains("failed to probe 127.0.0.1:9"), "{row}");
+    // One look has no history to show: no TREND column.
+    let home = empty_dir("trend-once");
+    let once = vas_with(box_on_loopback, &["--ssh"], &key_env(&home, ENV_KEY), &[]);
+    std::fs::remove_dir_all(&home).unwrap();
+    assert!(!once.stdout.contains("TREND"), "{}", once.stdout);
+    // A watch that does not probe has none either.
+    let mut quiet = spawn_watch(box_on_loopback, &["--watch", "0"], Some("50"));
+    let lines = read_lines_until(&mut quiet, "== vas, unix time", 1);
+    assert!(!lines.join("\n").contains("TREND"), "{lines:#?}");
+}

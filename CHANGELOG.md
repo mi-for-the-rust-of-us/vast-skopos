@@ -34,6 +34,12 @@ All notable changes to this project are documented here. The format is based on
   page first, like `render::offers_footer`). `VAS_WATCH_FLOOR_MS` lowers the 30 s floor of both
   watches, for tests only.
 
+- The GPU trend: under `vas --ssh --watch N` the table gains a `TREND` column after `VRAM`, the last six
+  samples of each box oldest first (`97 99 0 98 99 99`: the mean utilisation of its GPUs), and `--compact`
+  carries them as `probe.util_trend` (`null` in a one-shot). One `nvidia-smi` sample is not a diagnosis: it has
+  read 100 % with 0 MiB used while nothing held the card. In memory only; a failed probe adds nothing and keeps
+  the history, a box that stops or leaves is forgotten. `trend::Trend`, `TableOptions::trend`; `json_lines`
+  takes the trend after the probes.
 - vast.ai's rate limit is read and obeyed. Every endpoint has a budget of calls per window, written in
   `X-RateLimit-Limit`, `-Remaining` and `-Reset` (seen 2026-10-18: 30 for the offer search, ONE for the
   instances list: a script that ran `vas` a dozen times in a minute met a 429 on the second call). The
