@@ -35,6 +35,15 @@ All notable changes to this project are documented here. The format is based on
 
 ### Changed
 
+- `vas --ssh` asks the account for its credit WHILE the probes run, instead of before them: the
+  request needs nothing from them, and they take seconds (`probe::probe_all`, which the binary used to
+  hold, now takes the instances and returns one outcome per instance). `probe::ssh_command` builds the
+  `ssh` arguments apart from the spawning, so a test can check that a path with a space stays one
+  argument and that the target follows `--`.
+- Under the hood, no output changes: one table function for the offers (plain or marked), the cell
+  helpers every table repeated, one ellipsis cut, one watch loop for `vas` and `vas offers`, one error
+  constructor per kind in the API client, one reader for the key and the config file, and `admits` no
+  longer rebuilds the country list for every row.
 - The money line's burn counts the boxes the API reads as `running` AND those it was asked to run
   (`intended_status`) that read `offline`, `loading` or anything else, and names them by state
   (`burn $1.940/h over 3 running + 1 offline (meant to run, billing unknown)`): one such box,

@@ -1,7 +1,7 @@
 //! `vas`: a lookout over your rented vast.ai boxes, and over the offers to rent more. Not
 //! affiliated with vast.ai.
 
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -15,7 +15,7 @@ use vast_skopos::key::ApiKey;
 use vast_skopos::offer::{
     Offer, OfferChanges, OfferQuery, OfferSort, country_code, gpu_model, select,
 };
-use vast_skopos::probe::ssh_probe;
+use vast_skopos::probe::probe_all;
 use vast_skopos::render::{
     TableOptions, offers_changes_note, offers_changes_only, offers_footer, offers_table,
     offers_table_marked, table,
@@ -298,49 +298,69 @@ fn now() -> f64 {
         .map_or(0.0, |d| d.as_secs_f64())
 }
 
-/// One look: the API, then the probes in parallel, then the table.
+/// Runs `look` once, or every `--watch` seconds until Ctrl+C; the exit code.
+///
+/// `who` names the command in what it says on stderr. `look(missed)` is one look: its text, or why
+/// it failed, `missed` being whether a look failed since the last one that was printed. A closed
+/// pipe (`vas --watch 60 | head`) ends the run quietly: the reader is gone.
+fn run_looks(
+    who: &str,
+    watch: Option<u64>,
+    mut look: impl FnMut(bool) -> Result<String, vast_skopos::SkoposError>,
+) -> ExitCode {
+    if let Some(every) = watch
+        && let Some(note) = floor_notice(who, every)
+    {
+        eprintln!("{note}");
+    }
+    let (mut succeeded, mut missed) = (false, false);
+    loop {
+        match look(missed) {
+            Ok(text) => {
+                if !emit(&text) {
+                    return ExitCode::SUCCESS;
+                }
+                (succeeded, missed) = (true, false);
+            }
+            Err(e) => {
+                eprintln!("{who}: {e}");
+                if ends_on_failure(watch.is_some(), succeeded) {
+                    return ExitCode::FAILURE;
+                }
+                missed = true;
+            }
+        }
+        let Some(every) = watch else {
+            return ExitCode::SUCCESS;
+        };
+        std::thread::sleep(watch_pause(every));
+    }
+}
+
+/// One look: the instances, then the account while the probes run, then the table.
+///
+/// The account request needs nothing from the probes, which take seconds: the two overlap.
 fn look(client: &Client, args: &LookArgs) -> Result<String, vast_skopos::SkoposError> {
     let instances = client.instances()?;
-    let account = match client.account() {
-        Ok(a) => Some(a),
-        Err(e) => {
+    let (account, probes) = std::thread::scope(|scope| {
+        let account = scope.spawn(|| client.account());
+        let probes = if args.ssh {
+            probe_all(&instances, args.identity.as_deref(), args.log.as_deref())
+        } else {
+            Vec::new()
+        };
+        (account.join(), probes)
+    });
+    let account = match account {
+        Ok(Ok(a)) => Some(a),
+        Ok(Err(e)) => {
             eprintln!("vas: no credit shown: {e}");
             None
         }
-    };
-    let probes: Vec<_> = if args.ssh {
-        std::thread::scope(|scope| {
-            // EXPLICIT: collected so every probe is SPAWNED before any is joined; a lazy chain would
-            // run them one after another.
-            #[allow(clippy::needless_collect)]
-            let handles: Vec<_> = instances
-                .iter()
-                .map(|i| {
-                    scope.spawn(|| {
-                        let (host, port) = i.ssh_endpoint().filter(|_| i.is_running())?;
-                        Some(ssh_probe(
-                            host,
-                            port,
-                            args.identity.as_deref(),
-                            args.log.as_deref(),
-                        ))
-                    })
-                })
-                .collect();
-            handles
-                .into_iter()
-                .map(|h| {
-                    h.join().unwrap_or_else(|_| {
-                        Some(Err(vast_skopos::SkoposError::Ssh {
-                            target: String::from("?"),
-                            message: String::from("the probe thread panicked"),
-                        }))
-                    })
-                })
-                .collect()
-        })
-    } else {
-        Vec::new()
+        Err(_) => {
+            eprintln!("vas: no credit shown: the account request panicked");
+            None
+        }
     };
     Ok(if args.compact {
         json_lines(&instances, &probes, account.as_ref(), now())
@@ -380,42 +400,18 @@ fn lookout(args: &LookArgs) -> ExitCode {
             client.base()
         );
     }
-    if let Some(every) = args.watch
-        && let Some(note) = floor_notice("vas", every)
-    {
-        eprintln!("{note}");
-    }
-    let mut succeeded = false;
-    loop {
-        match look(&client, args) {
-            Ok(text) => {
-                succeeded = true;
-                // JSON Lines carry their own `at`: a stamp line would not parse.
-                let stamp = if args.watch.is_some() && !args.compact {
-                    let secs = SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .map_or(0, |d| d.as_secs());
-                    format!("== vas, unix time {secs}\n")
-                } else {
-                    String::new()
-                };
-                if !emit(&format!("{stamp}{text}")) {
-                    // The reader is gone (`vas --watch 60 | head`): nothing more to show.
-                    return ExitCode::SUCCESS;
-                }
-            }
-            Err(e) => {
-                eprintln!("vas: {e}");
-                if ends_on_failure(args.watch.is_some(), succeeded) {
-                    return ExitCode::FAILURE;
-                }
-            }
-        }
-        let Some(every) = args.watch else {
-            return ExitCode::SUCCESS;
-        };
-        std::thread::sleep(watch_pause(every));
-    }
+    run_looks("vas", args.watch, |_| {
+        let text = look(&client, args)?;
+        // JSON Lines carry their own `at`: a stamp line would not parse.
+        Ok(if args.watch.is_some() && !args.compact {
+            let secs = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs());
+            format!("== vas, unix time {secs}\n{text}")
+        } else {
+            text
+        })
+    })
 }
 
 /// The `offers` flags again, the config file's first and the command line's after; on failure,
@@ -425,17 +421,15 @@ fn with_file(path: &Path) -> Result<OffersArgs, ExitCode> {
         eprintln!("vas offers: {e}");
         ExitCode::FAILURE
     })?;
-    let command_line: Vec<OsString> = std::env::args_os().collect();
-    // The first parse accepted `offers` with no `vas` flag before it: what follows is its own
-    // (the first word, the program, is not searched).
-    let after = command_line
-        .iter()
+    // The first parse accepted `offers` with no `vas` flag before it: what follows the first
+    // `offers` (after the program name) is the command line's own.
+    let own = std::env::args_os()
         .skip(1)
-        .position(|a| a.as_os_str() == OsStr::new("offers"))
-        .map_or(command_line.len(), |at| at + 2);
+        .skip_while(|a| a != "offers")
+        .skip(1);
     let mut merged = vec![OsString::from("vas"), OsString::from("offers")];
     merged.extend(words.into_iter().map(OsString::from));
-    merged.extend(command_line.into_iter().skip(after));
+    merged.extend(own);
     match Cli::try_parse_from(merged) {
         Ok(Cli {
             command: Some(Command::Offers(args)),
@@ -458,19 +452,27 @@ fn with_file(path: &Path) -> Result<OffersArgs, ExitCode> {
     }
 }
 
-/// `vas offers`: the config file's flags, then the command line's; one search; the table.
-fn offers(args: OffersArgs) -> ExitCode {
+/// The flags `vas offers` runs with: the config file's merged under the command line's, and the
+/// file that was read, if any; on failure, the exit code (the error already printed).
+fn resolve(args: OffersArgs) -> Result<(OffersArgs, Option<PathBuf>), ExitCode> {
     let file = if args.no_config {
         None
     } else {
         args.config.clone().or_else(default_offers_file)
     };
-    let args = match file.as_deref() {
-        None => args,
-        Some(path) => match with_file(path) {
-            Ok(merged) => merged,
-            Err(code) => return code,
-        },
+    let Some(path) = file.as_deref() else {
+        return Ok((args, None));
+    };
+    let merged = with_file(path)?;
+    Ok((merged, file))
+}
+
+/// `vas offers`: the config file's flags, then the command line's; one search, or one every
+/// `--watch` seconds; the table, or with `--changes` only what moved.
+fn offers(args: OffersArgs) -> ExitCode {
+    let (args, file) = match resolve(args) {
+        Ok(resolved) => resolved,
+        Err(code) => return code,
     };
     let query = args.query();
     let sort = OfferSort::from(args.sort);
@@ -490,65 +492,37 @@ fn offers(args: OffersArgs) -> ExitCode {
     if client.base() != DEFAULT_BASE {
         eprintln!("vas offers: VAST_URL is set: searching {}", client.base());
     }
-    if let Some(every) = args.watch
-        && let Some(note) = floor_notice("vas offers", every)
-    {
-        eprintln!("{note}");
-    }
     let top = usize::try_from(args.top).unwrap_or(usize::MAX);
     let nothing = OfferChanges::default();
     let mut previous: Option<Vec<Offer>> = None;
-    // Whether a search failed since the last look that was printed.
-    let mut missed = false;
-    loop {
-        match client.offers(&query, sort) {
-            Ok(page) => {
-                // BORROW: explicit clone -- the footer reads the page again
-                let kept = select(page.offers.clone(), &query, sort);
-                let at = now();
-                let moved = previous.as_deref().map(|p| OfferChanges::between(p, &kept));
-                let text = match (args.watch, args.changes) {
-                    (_, true) => offers_changes_only(moved.as_ref(), &kept, &page, missed, at),
-                    (None, false) => format!(
-                        "{}{}",
-                        offers_table(&kept, top),
-                        offers_footer(&page, &kept, top, &query, sort, at)
-                    ),
-                    (Some(_), false) => {
-                        // The first look has nothing to mark; a blank line parts the looks.
-                        let gap = if previous.is_some() { "\n" } else { "" };
-                        let shown = kept.get(..top).unwrap_or(&kept);
-                        let note = moved
-                            .as_ref()
-                            .map(|m| offers_changes_note(m, shown, &page, missed))
-                            .unwrap_or_default();
-                        format!(
-                            "{gap}{}{}{note}",
-                            offers_table_marked(&kept, top, moved.as_ref().unwrap_or(&nothing)),
-                            offers_footer(&page, &kept, top, &query, sort, at)
-                        )
-                    }
-                };
-                // A closed pipe (`vas offers | head -3`) is the reader's choice, not a failure.
-                if !emit(&text) {
-                    return ExitCode::SUCCESS;
-                }
-                previous = Some(kept);
-                missed = false;
-            }
-            Err(e) => {
-                eprintln!("vas offers: {e}");
-                if ends_on_failure(args.watch.is_some(), previous.is_some()) {
-                    return ExitCode::FAILURE;
-                }
-                missed = true;
-            }
-        }
-        let Some(every) = args.watch else {
-            return ExitCode::SUCCESS;
+    run_looks("vas offers", args.watch, |missed| {
+        let page = client.offers(&query, sort)?;
+        // BORROW: explicit clone -- the footer reads the page again
+        let kept = select(page.offers.clone(), &query, sort);
+        let at = now();
+        let moved = previous.as_deref().map(|p| OfferChanges::between(p, &kept));
+        let text = if args.changes {
+            offers_changes_only(moved.as_ref(), &kept, &page, missed, at)
+        } else {
+            // The first look has nothing to mark (and a one-shot never has a second); a blank line
+            // parts the looks of a watch.
+            let gap = if previous.is_some() { "\n" } else { "" };
+            let table = if args.watch.is_some() {
+                offers_table_marked(&kept, top, moved.as_ref().unwrap_or(&nothing))
+            } else {
+                offers_table(&kept, top)
+            };
+            let footer = offers_footer(&page, &kept, top, &query, sort, at);
+            let shown = kept.get(..top).unwrap_or(&kept);
+            let note = moved
+                .as_ref()
+                .map(|m| offers_changes_note(m, shown, &page, missed))
+                .unwrap_or_default();
+            format!("{gap}{table}{footer}{note}")
         };
-        std::thread::sleep(watch_pause(every));
-    }
+        previous = Some(kept);
+        Ok(text)
+    })
 }
 
 fn main() -> ExitCode {

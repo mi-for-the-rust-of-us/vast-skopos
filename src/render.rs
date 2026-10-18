@@ -3,7 +3,7 @@
 
 use std::fmt::Write as _;
 
-use crate::instance::{Account, Instance};
+use crate::instance::{Account, Instance, shortened};
 use crate::offer::{OFFER_CAP, Offer, OfferChanges, OfferPage, OfferQuery, OfferSort};
 use crate::probe::{LogReading, Probe, ProbeOutcome};
 use crate::runway::Runway;
@@ -61,14 +61,18 @@ const TEXT_WIDTH: usize = 40;
 /// `text`, at most [`TEXT_WIDTH`] characters; a longer one loses its tail to an ellipsis (tested
 /// through `offers_table`, in `tests/render.rs`).
 fn capped(text: &str) -> String {
-    if text.chars().count() > TEXT_WIDTH {
-        let mut cut: String = text.chars().take(TEXT_WIDTH).collect();
-        cut.push('…');
-        cut
-    } else {
-        // BORROW: explicit to_owned -- the cell is owned by the row
-        text.to_owned()
-    }
+    // BORROW: explicit to_owned -- the cell is owned by the row
+    shortened(text, TEXT_WIDTH).unwrap_or_else(|| text.to_owned())
+}
+
+/// A price cell: dollars per hour to the thousandth, or a dash.
+fn price_cell(price: Option<f64>) -> String {
+    or_dash(price.map(|d| format!("{d:.3}")))
+}
+
+/// A cell of a host's text (a location, a verdict), capped, or a dash.
+fn text_cell(text: Option<&str>) -> String {
+    or_dash(text.map(capped))
 }
 
 /// The GPU cell: `1x RTX 5090`, with a `?` or a dash for what is missing.
@@ -90,26 +94,28 @@ fn layout(header: &[&str], rows: &[Vec<String>]) -> String {
         }
     }
     let mut out = String::new();
-    let line = |cells: &[String], out: &mut String| {
-        let last = cells.len().saturating_sub(1);
-        for (k, (cell, w)) in cells.iter().zip(&widths).enumerate() {
-            if k == last {
-                let _ = write!(out, "{cell}");
-            } else {
-                let _ = write!(out, "{cell:<w$}  ");
-            }
-        }
-        out.push('\n');
-    };
-    line(
-        // BORROW: explicit to_owned -- the header cells join the owned rows
-        &header.iter().map(|h| (*h).to_owned()).collect::<Vec<_>>(),
-        &mut out,
-    );
+    push_line(&mut out, header.iter().copied(), &widths);
     for row in rows {
-        line(row, &mut out);
+        push_line(&mut out, row.iter().map(String::as_str), &widths);
     }
     out
+}
+
+/// One line of [`layout`]: the cells padded to `widths`, the last one not.
+fn push_line<'a>(
+    out: &mut String,
+    cells: impl ExactSizeIterator<Item = &'a str>,
+    widths: &[usize],
+) {
+    let last = cells.len().saturating_sub(1);
+    for (k, (cell, w)) in cells.zip(widths).enumerate() {
+        if k == last {
+            out.push_str(cell);
+        } else {
+            let _ = write!(out, "{cell:<w$}  ");
+        }
+    }
+    out.push('\n');
 }
 
 /// The status cell: the actual status, with the intended one when they differ.
@@ -311,9 +317,9 @@ pub fn table(
             i.id.to_string(),
             or_dash(i.label.clone()),
             gpu_cell(i.num_gpus, i.gpu_name.as_deref()),
-            or_dash(i.geolocation.as_deref().map(capped)),
+            text_cell(i.geolocation.as_deref()),
             status(i),
-            or_dash(i.dph_total.map(|d| format!("{d:.3}"))),
+            price_cell(i.dph_total),
             or_dash(i.age_secs(now).map(age)),
             or_dash(i.cost_so_far(now).map(|c| format!("{c:.2}"))),
             or_dash(i.ssh_endpoint().map(|(h, p)| format!("{h}:{p}"))),
@@ -381,26 +387,29 @@ const OFFER_HEADER: [&str; 12] = [
     "WHERE",
 ];
 
-/// One offer's cells, in [`OFFER_HEADER`]'s order.
-fn offer_row(o: &Offer) -> Vec<String> {
+/// One offer's cells, in [`OFFER_HEADER`]'s order; `was` is the price it had at the previous look,
+/// when it moved, shown beside the current one.
+fn offer_row(o: &Offer, was: Option<f64>) -> Vec<String> {
     let whole = |v: Option<f64>| or_dash(v.map(|x| format!("{x:.0}")));
     let bandwidth = match (o.inet_up, o.inet_down) {
         (None, None) => String::from("-"),
         (up, down) => format!("{}/{}", whole(up), whole(down)),
     };
+    let price = price_cell(o.dph_total);
+    let price = was.map_or_else(|| price.clone(), |old| format!("{price} (was {old:.3})"));
     vec![
         o.id.to_string(),
         gpu_cell(o.num_gpus, o.gpu_name.as_deref()),
         or_dash(o.gpu_ram.map(|mb| format!("{:.0}G", mb / 1024.0))),
-        or_dash(o.dph_total.map(|d| format!("{d:.3}"))),
+        price,
         or_dash(o.cuda_max_good.map(|c| format!("{c:.1}"))),
         or_dash(o.disk_space.map(|gb| format!("{gb:.0}G"))),
         bandwidth,
         or_dash(o.reliability.map(|r| format!("{:.2}", r * 100.0))),
         or_dash(o.duration.map(|s| format!("{:.1}", s / 86_400.0))),
         or_dash(o.host_id.map(|h| h.to_string())),
-        or_dash(o.verification.as_deref().map(capped)),
-        or_dash(o.geolocation.as_deref().map(capped)),
+        text_cell(o.verification.as_deref()),
+        text_cell(o.geolocation.as_deref()),
     ]
 }
 
@@ -422,16 +431,42 @@ fn offer_row(o: &Offer) -> Vec<String> {
 /// ```
 #[must_use]
 pub fn offers_table(offers: &[Offer], top: usize) -> String {
-    let rows: Vec<Vec<String>> = offers.iter().take(top).map(offer_row).collect();
-    let mut out = layout(&OFFER_HEADER, &rows);
+    offers_view(offers, top, None)
+}
+
+/// The offers table, with a first column of marks and the previous price of the offers that moved
+/// when `marks` is given (a watch's look), without them otherwise.
+fn offers_view(offers: &[Offer], top: usize, marks: Option<&OfferChanges>) -> String {
+    let mut header: Vec<&str> = Vec::new();
+    if marks.is_some() {
+        header.push("");
+    }
+    header.extend(OFFER_HEADER);
+    let rows: Vec<Vec<String>> = offers
+        .iter()
+        .take(top)
+        .map(|o| {
+            let was = marks
+                .and_then(|m| m.repriced.iter().find(|r| r.offer.id == o.id))
+                .map(|r| r.was);
+            let mut cells = offer_row(o, was);
+            if let Some(m) = marks {
+                let mark = if m.appeared.iter().any(|a| a.id == o.id) {
+                    "+"
+                } else {
+                    ""
+                };
+                cells.insert(0, String::from(mark));
+            }
+            cells
+        })
+        .collect();
+    let mut out = layout(&header, &rows);
     if offers.is_empty() {
         out.push_str("(no offers)\n");
     }
     out
 }
-
-/// The column of [`OFFER_HEADER`] that holds the price.
-const PRICE_COLUMN: usize = 3;
 
 /// The offers table of a watch: [`offers_table`] with a first column that marks `+` an offer that
 /// was not in the previous look, and a price that moved read `0.594 (was 0.575)`.
@@ -449,47 +484,26 @@ const PRICE_COLUMN: usize = 3;
 /// ```
 #[must_use]
 pub fn offers_table_marked(offers: &[Offer], top: usize, changes: &OfferChanges) -> String {
-    let mut header: Vec<&str> = vec![""];
-    header.extend(OFFER_HEADER);
-    let rows: Vec<Vec<String>> = offers
-        .iter()
-        .take(top)
-        .map(|o| {
-            let mut cells = offer_row(o);
-            let mark = if changes.appeared.iter().any(|a| a.id == o.id) {
-                "+"
-            } else {
-                ""
-            };
-            if let Some(r) = changes.repriced.iter().find(|r| r.offer.id == o.id)
-                && let Some(cell) = cells.get_mut(PRICE_COLUMN)
-            {
-                *cell = format!("{cell} (was {:.3})", r.was);
-            }
-            cells.insert(0, String::from(mark));
-            cells
-        })
-        .collect();
-    let mut out = layout(&header, &rows);
-    if offers.is_empty() {
-        out.push_str("(no offers)\n");
-    }
-    out
+    offers_view(offers, top, Some(changes))
 }
 
 /// In the table mode, at most this many gone offers are listed under the table; the rest are
 /// counted. `--changes` lists every change: a log that drops ids is of no use.
 const NOTE_LINES: usize = 10;
 
-/// An offer in one line: `46579456  1x RTX 5090  0.554 $/h  California, US`.
-fn offer_brief(o: &Offer) -> String {
+/// An offer in one line, with the `price` text given: `46579456  1x RTX 5090  0.554 $/h  California, US`.
+fn offer_brief(o: &Offer, price: &str) -> String {
     format!(
-        "{}  {}  {} $/h  {}",
+        "{}  {}  {price} $/h  {}",
         o.id,
         gpu_cell(o.num_gpus, o.gpu_name.as_deref()),
-        or_dash(o.dph_total.map(|d| format!("{d:.3}"))),
-        or_dash(o.geolocation.as_deref().map(capped)),
+        text_cell(o.geolocation.as_deref()),
     )
+}
+
+/// An offer in one line, at its current price.
+fn brief(o: &Offer) -> String {
+    offer_brief(o, &price_cell(o.dph_total))
 }
 
 /// `3 new`, or `3 new (2 below the table)`.
@@ -590,7 +604,7 @@ pub fn offers_changes_note(
         "since the last look"
     };
     let mut out = format!("{since}: {}\n", change_counts(changes, Some(shown)));
-    change_lines(&mut out, '-', &changes.gone, Some(NOTE_LINES), offer_brief);
+    change_lines(&mut out, '-', &changes.gone, Some(NOTE_LINES), brief);
     if cut && !(changes.appeared.is_empty() && changes.gone.is_empty()) {
         out.push_str(CUT_NOTE);
     }
@@ -647,18 +661,12 @@ pub fn offers_changes_only(
         "searched {at}: {offers} {noun}, {}{failed}\n",
         change_counts(changes, None)
     );
-    change_lines(&mut out, '+', &changes.appeared, None, offer_brief);
+    change_lines(&mut out, '+', &changes.appeared, None, brief);
     change_lines(&mut out, '~', &changes.repriced, None, |r| {
-        format!(
-            "{}  {}  {:.3} -> {} $/h  {}",
-            r.offer.id,
-            gpu_cell(r.offer.num_gpus, r.offer.gpu_name.as_deref()),
-            r.was,
-            or_dash(r.offer.dph_total.map(|d| format!("{d:.3}"))),
-            or_dash(r.offer.geolocation.as_deref().map(capped)),
-        )
+        let price = format!("{:.3} -> {}", r.was, price_cell(r.offer.dph_total));
+        offer_brief(&r.offer, &price)
     });
-    change_lines(&mut out, '-', &changes.gone, None, offer_brief);
+    change_lines(&mut out, '-', &changes.gone, None, brief);
     if cut && !(changes.appeared.is_empty() && changes.gone.is_empty()) {
         out.push_str(CUT_NOTE);
     }

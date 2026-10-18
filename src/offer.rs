@@ -122,8 +122,13 @@ impl Offer {
     #[must_use]
     pub fn country(&self) -> Option<&str> {
         let code = self.geolocation.as_deref()?.rsplit(',').next()?.trim();
-        (code.len() == 2 && code.bytes().all(|b| b.is_ascii_alphabetic())).then_some(code)
+        is_country_code(code).then_some(code)
     }
+}
+
+/// Whether `code` is a country code: two ASCII letters.
+fn is_country_code(code: &str) -> bool {
+    code.len() == 2 && code.bytes().all(|b| b.is_ascii_alphabetic())
 }
 
 /// The order of the rows: the server is asked for it (it decides which rows come back), and the
@@ -395,9 +400,12 @@ impl OfferQuery {
                 .verification
                 .as_deref()
                 .is_none_or(|v| v == "verified");
-        let country_ok = offer
-            .country()
-            .is_none_or(|c| !self.countries().iter().any(|x| x.eq_ignore_ascii_case(c)));
+        let country_ok = offer.country().is_none_or(|c| {
+            !self
+                .exclude_countries
+                .iter()
+                .any(|x| x.trim().eq_ignore_ascii_case(c))
+        });
         let host_ok = offer
             .host_id
             .is_none_or(|h| !self.exclude_hosts.contains(&h));
@@ -712,6 +720,5 @@ pub fn gpu_model(name: &str) -> Option<String> {
 #[must_use]
 pub fn country_code(code: &str) -> Option<String> {
     let code = code.trim();
-    (code.len() == 2 && code.bytes().all(|b| b.is_ascii_alphabetic()))
-        .then(|| code.to_ascii_uppercase())
+    is_country_code(code).then(|| code.to_ascii_uppercase())
 }

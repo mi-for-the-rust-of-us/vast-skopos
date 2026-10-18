@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::{Result, SkoposError};
 use crate::instance::is_hidden;
-use crate::key::{decode, home};
+use crate::key::{config_dirs, read_text};
 
 /// The default config files, in order (module docs).
 ///
@@ -30,14 +30,10 @@ use crate::key::{decode, home};
 /// ```
 #[must_use]
 pub fn offers_files() -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()) {
-        out.push(PathBuf::from(xdg).join("vast-skopos").join("offers"));
-    }
-    if let Some(home) = home() {
-        out.push(home.join(".config").join("vast-skopos").join("offers"));
-    }
-    out
+    config_dirs()
+        .into_iter()
+        .map(|dir| dir.join("vast-skopos").join("offers"))
+        .collect()
 }
 
 /// The default config file: the first of [`offers_files`] that exists.
@@ -101,20 +97,24 @@ fn flag_word(line: &str) -> std::result::Result<String, String> {
     {
         return Err(format!("`--{name}` is not a flag name"));
     }
-    if name == "config" || name == "no-config" {
-        return Err(format!(
-            "`--{name}` cannot be set from a config file (it chooses the file)"
-        ));
-    }
-    if name == "watch" || name == "changes" {
-        return Err(format!(
-            "`--{name}` cannot be set from a config file: a file of filters must not turn a run into a loop (give it on the command line)"
-        ));
-    }
-    if name == "help" || name == "version" {
-        return Err(format!(
-            "`--{name}` prints and stops: it has no place in a config file"
-        ));
+    match name {
+        "config" | "no-config" => {
+            return Err(format!(
+                "`--{name}` cannot be set from a config file (it chooses the file)"
+            ));
+        }
+        "watch" | "changes" => {
+            return Err(format!(
+                "`--{name}` cannot be set from a config file: a file of filters must not turn a run into a loop (give it on the command line)"
+            ));
+        }
+        "help" | "version" => {
+            return Err(format!(
+                "`--{name}` prints and stops: it has no place in a config file"
+            ));
+        }
+        // EXPLICIT: any other flag is the file's to hold; the checks below judge its value.
+        _ => {}
     }
     let Some(value) = value else {
         return Ok(format!("--{name}"));
@@ -182,16 +182,9 @@ pub fn parse_flag_file(text: &str, path: &Path) -> Result<Vec<String>> {
 /// Returns [`SkoposError::ConfigFile`] if the file is neither UTF-8 nor UTF-16 text.
 /// Returns [`SkoposError::ConfigLine`] on the first line that is not a flag.
 pub fn read_flag_file(path: &Path) -> Result<Vec<String>> {
-    let bytes = std::fs::read(path).map_err(|source| SkoposError::ConfigFile {
+    let text = read_text(path, "it").map_err(|source| SkoposError::ConfigFile {
         path: path.display().to_string(),
         source,
-    })?;
-    let text = decode(&bytes).ok_or_else(|| SkoposError::ConfigFile {
-        path: path.display().to_string(),
-        source: std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "not UTF-8 or UTF-16 text (save it as plain UTF-8)",
-        ),
     })?;
     // A byte-order mark is not part of the first line (Windows editors write one).
     parse_flag_file(text.trim_start_matches('\u{feff}'), path)

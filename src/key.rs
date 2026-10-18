@@ -45,16 +45,9 @@ impl ApiKey {
     /// Returns [`SkoposError::KeyFile`] if the file cannot be read.
     /// Returns [`SkoposError::NoApiKey`] if the file holds no key.
     pub fn from_file(file: &Path) -> Result<Self> {
-        let bytes = std::fs::read(file).map_err(|source| SkoposError::KeyFile {
+        let text = read_text(file, "the key").map_err(|source| SkoposError::KeyFile {
             path: file.display().to_string(),
             source,
-        })?;
-        let text = decode(&bytes).ok_or_else(|| SkoposError::KeyFile {
-            path: file.display().to_string(),
-            source: std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "not UTF-8 or UTF-16 text (save the key as plain UTF-8)",
-            ),
         })?;
         Self::new(&text).ok_or_else(|| SkoposError::NoApiKey {
             searched: file.display().to_string(),
@@ -98,6 +91,18 @@ impl ApiKey {
     }
 }
 
+/// The text of the file at `path` (UTF-8, or UTF-16 with a byte-order mark); the error says what to
+/// save as plain UTF-8 (`what`: "the key", "it").
+pub(crate) fn read_text(path: &Path, what: &str) -> std::io::Result<String> {
+    let bytes = std::fs::read(path)?;
+    decode(&bytes).ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("not UTF-8 or UTF-16 text (save {what} as plain UTF-8)"),
+        )
+    })
+}
+
 /// A key (or config) file's text: UTF-16 with a byte-order mark (what Windows `PowerShell` 5.1's
 /// `>` writes), else UTF-8; `None` when neither.
 pub(crate) fn decode(bytes: &[u8]) -> Option<String> {
@@ -124,15 +129,25 @@ pub(crate) fn decode(bytes: &[u8]) -> Option<String> {
     }
 }
 
+/// The directories config files live in, in order: `$XDG_CONFIG_HOME` when it is set and not
+/// empty, then `~/.config`.
+pub(crate) fn config_dirs() -> Vec<PathBuf> {
+    let xdg = std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from);
+    xdg.into_iter()
+        .chain(home().map(|h| h.join(".config")))
+        .collect()
+}
+
 /// The key files searched, in order (module docs, items 2-4).
 #[must_use]
 pub fn candidate_files() -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    if let Some(xdg) = std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()) {
-        out.push(PathBuf::from(xdg).join("vastai").join("vast_api_key"));
-    }
+    let mut out: Vec<PathBuf> = config_dirs()
+        .into_iter()
+        .map(|dir| dir.join("vastai").join("vast_api_key"))
+        .collect();
     if let Some(home) = home() {
-        out.push(home.join(".config").join("vastai").join("vast_api_key"));
         out.push(home.join(".vast_api_key"));
     }
     out

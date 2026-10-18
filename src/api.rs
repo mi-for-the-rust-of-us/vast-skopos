@@ -25,12 +25,6 @@ const PAGE: &str = "25";
 /// Pages fetched at most: a guard against a `next_token` that never ends, not a real limit.
 const MAX_PAGES: usize = 200;
 
-/// The endpoint path, owned, for an error (never the full URL: no query, no key).
-fn endpoint(path: &str) -> String {
-    // BORROW: explicit to_owned -- the error outlives the request that named the path
-    path.to_owned()
-}
-
 /// The HTTP agent: one connection pool, a 30 s timeout per request, non-success statuses returned
 /// rather than raised, and no redirect followed (a 3xx is reported, and a key is never re-sent
 /// elsewhere).
@@ -102,25 +96,17 @@ fn get_json(
     for &(k, v) in query {
         request = request.query(k, v);
     }
-    let mut response = request.call().map_err(|e| SkoposError::Http {
-        endpoint: endpoint(path),
-        message: format!("{e}"),
-    })?;
+    let mut response = request
+        .call()
+        .map_err(|e| SkoposError::http(path, e.to_string()))?;
     let status = response.status().as_u16();
     if !(200..300).contains(&status) {
-        return Err(SkoposError::Status {
-            endpoint: endpoint(path),
-            status,
-            hint: hint(status),
-        });
+        return Err(SkoposError::status(path, status, hint(status)));
     }
     response
         .body_mut()
         .read_json::<Value>()
-        .map_err(|e| SkoposError::Json {
-            endpoint: endpoint(path),
-            message: format!("{e}"),
-        })
+        .map_err(|e| SkoposError::json(path, e.to_string()))
 }
 
 /// A read-only vast.ai API client, with the account's key.
@@ -196,10 +182,7 @@ impl Client {
             let list = page
                 .get("instances")
                 .and_then(Value::as_array)
-                .ok_or_else(|| SkoposError::Json {
-                    endpoint: endpoint(path),
-                    message: String::from("no `instances` list"),
-                })?;
+                .ok_or_else(|| SkoposError::json(path, "no `instances` list"))?;
             if list.is_empty() {
                 return Ok(rows);
             }
@@ -211,17 +194,17 @@ impl Client {
                 Some(_) | None => return Ok(rows),
             };
             if !seen.insert(token.clone()) {
-                return Err(SkoposError::Json {
-                    endpoint: endpoint(path),
-                    message: format!("next_token {token} repeated"),
-                });
+                return Err(SkoposError::json(
+                    path,
+                    format!("next_token {token} repeated"),
+                ));
             }
             after = Some(token);
         }
-        Err(SkoposError::Json {
-            endpoint: endpoint(path),
-            message: format!("more than {MAX_PAGES} pages"),
-        })
+        Err(SkoposError::json(
+            path,
+            format!("more than {MAX_PAGES} pages"),
+        ))
     }
 
     /// The account's credit and balance.
@@ -302,9 +285,6 @@ impl SearchClient {
             None,
             search_hint,
         )?;
-        OfferPage::from_json(&answer).ok_or_else(|| SkoposError::Json {
-            endpoint: endpoint(path),
-            message: String::from("no `offers` list"),
-        })
+        OfferPage::from_json(&answer).ok_or_else(|| SkoposError::json(path, "no `offers` list"))
     }
 }

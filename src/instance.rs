@@ -63,6 +63,15 @@ pub(crate) fn is_hidden(c: char) -> bool {
         )
 }
 
+/// The first `max` characters of `text` and an ellipsis, when `text` has more; `None` when it fits.
+pub(crate) fn shortened(text: &str, max: usize) -> Option<String> {
+    (text.chars().count() > max).then(|| {
+        let mut cut: String = text.chars().take(max).collect();
+        cut.push('…');
+        cut
+    })
+}
+
 /// A string field, hidden characters dropped ([`is_hidden`]: the text comes from the API and from
 /// other people's hosts, and never reaches the terminal raw); `None` when absent, null, empty or
 /// not a string.

@@ -90,3 +90,34 @@ pub enum SkoposError {
 
 /// The crate's result type.
 pub type Result<T> = std::result::Result<T, SkoposError>;
+
+impl SkoposError {
+    /// A request to `path` that could not be made. Only the path, never the URL with its query:
+    /// an error is printed, and a printed key is a leaked key.
+    pub(crate) fn http(path: &str, message: impl Into<String>) -> Self {
+        Self::Http {
+            // BORROW: explicit to_owned -- the error outlives the request that named the path
+            endpoint: path.to_owned(),
+            message: message.into(),
+        }
+    }
+
+    /// An answer from `path` that is not the JSON expected.
+    pub(crate) fn json(path: &str, message: impl Into<String>) -> Self {
+        Self::Json {
+            // BORROW: explicit to_owned -- the error outlives the request that named the path
+            endpoint: path.to_owned(),
+            message: message.into(),
+        }
+    }
+
+    /// A non-success `status` from `path`, with a `hint` when the status is a common one.
+    pub(crate) fn status(path: &str, status: u16, hint: &'static str) -> Self {
+        Self::Status {
+            // BORROW: explicit to_owned -- the error outlives the request that named the path
+            endpoint: path.to_owned(),
+            status,
+            hint,
+        }
+    }
+}

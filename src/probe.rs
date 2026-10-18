@@ -8,11 +8,12 @@
 
 use std::io::Read;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use crate::error::{Result, SkoposError};
+use crate::instance::{Instance, shortened};
 
 /// One GPU's reading.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -206,13 +207,7 @@ pub fn strip(text: &str) -> String {
 #[must_use]
 pub fn clean(line: &str) -> String {
     let kept = strip(line);
-    if kept.chars().count() > LOG_WIDTH {
-        let mut cut: String = kept.chars().take(LOG_WIDTH).collect();
-        cut.push('…');
-        cut
-    } else {
-        kept
-    }
+    shortened(&kept, LOG_WIDTH).unwrap_or(kept)
 }
 
 /// Splits the remote output into the probe; `log` is `None` when the output has no separator
@@ -332,6 +327,93 @@ fn collect(rx: &mpsc::Receiver<Vec<u8>>, deadline: Instant) -> String {
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
+/// The `ssh` command for one probe, before its pipes are set: every option and every value is its
+/// own argument, never a shell string, so a path with a space stays one path and nothing the box or
+/// the user supplied can be read as an option.
+///
+/// ```
+/// use std::ffi::OsStr;
+/// use std::path::Path;
+/// let cmd = vast_skopos::probe::ssh_command("ssh6.vast.ai", 36000, Some(Path::new("/my keys/id")), None);
+/// let args: Vec<&OsStr> = cmd.get_args().collect();
+/// assert_eq!(cmd.get_program(), "ssh");
+/// assert_eq!(&args[..2], ["-p", "36000"]);
+/// let at = args.iter().position(|a| *a == "-i").unwrap();
+/// assert_eq!(args[at + 1], "/my keys/id", "one path, spaces and all");
+/// let end = args.iter().position(|a| *a == "--").unwrap();
+/// assert_eq!(args[end + 1], "root@ssh6.vast.ai", "the target comes after `--`");
+/// assert_eq!(args.len(), end + 3, "and the remote command is the last argument");
+/// ```
+#[doc(hidden)]
+#[must_use]
+pub fn ssh_command(host: &str, port: u16, identity: Option<&Path>, log: Option<&str>) -> Command {
+    let mut cmd = Command::new("ssh");
+    cmd.args(["-p", &port.to_string()]);
+    cmd.args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]);
+    cmd.args(["-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=3"]);
+    cmd.args([
+        "-o",
+        "StrictHostKeyChecking=accept-new",
+        "-o",
+        "LogLevel=ERROR",
+    ]);
+    if let Some(file) = identity {
+        cmd.arg("-i").arg(file);
+    }
+    // `--` ends ssh's options, so nothing after it can be read as one.
+    cmd.arg("--")
+        .arg(format!("root@{host}"))
+        .arg(remote_command(log));
+    cmd
+}
+
+/// Kills `child` and waits for it, so no process is left behind (the outcome is of no use: the
+/// probe has already failed).
+fn reap(child: &mut Child) {
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// Probes every running box that has an `ssh` endpoint, all at once (one thread each).
+///
+/// Returns one outcome per instance, in the instances' order: `None` for a box that is not running
+/// or has no endpoint. One attempt per box ([`ssh_probe`]).
+#[must_use]
+pub fn probe_all(
+    instances: &[Instance],
+    identity: Option<&Path>,
+    log: Option<&str>,
+) -> Vec<ProbeOutcome> {
+    std::thread::scope(|scope| {
+        // EXPLICIT: collected so every probe is SPAWNED before any is joined; a lazy chain would
+        // run them one after another.
+        #[allow(clippy::needless_collect)]
+        let handles: Vec<_> = instances
+            .iter()
+            .map(|i| {
+                scope.spawn(move || {
+                    let (host, port) = i.ssh_endpoint().filter(|_| i.is_running())?;
+                    Some(ssh_probe(host, port, identity, log))
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .zip(instances)
+            .map(|(handle, i)| {
+                handle.join().unwrap_or_else(|_| {
+                    Some(Err(SkoposError::Ssh {
+                        target: i
+                            .ssh_endpoint()
+                            .map_or_else(|| String::from("?"), |(h, p)| format!("{h}:{p}")),
+                        message: String::from("the probe thread panicked"),
+                    }))
+                })
+            })
+            .collect()
+    })
+}
+
 /// Probes `root@host:port` once.
 ///
 /// # Errors
@@ -353,24 +435,7 @@ pub fn ssh_probe(
             ),
         });
     }
-    let mut cmd = Command::new("ssh");
-    cmd.args(["-p", &port.to_string()]);
-    cmd.args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]);
-    cmd.args(["-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=3"]);
-    cmd.args([
-        "-o",
-        "StrictHostKeyChecking=accept-new",
-        "-o",
-        "LogLevel=ERROR",
-    ]);
-    if let Some(file) = identity {
-        // Passed as its own argument, never through a shell: a path with a space stays one path.
-        cmd.arg("-i").arg(file);
-    }
-    // `--` ends ssh's options, so nothing after it can be read as one.
-    cmd.arg("--")
-        .arg(format!("root@{host}"))
-        .arg(remote_command(log));
+    let mut cmd = ssh_command(host, port, identity, log);
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -383,8 +448,7 @@ pub fn ssh_probe(
     let (out, err) = match (drain(child.stdout.take()), drain(child.stderr.take())) {
         (Ok(out), Ok(err)) => (out, err),
         (Err(e), _) | (_, Err(e)) => {
-            let _ = child.kill();
-            let _ = child.wait();
+            reap(&mut child);
             return Err(SkoposError::Ssh {
                 target,
                 message: format!("failed to read ssh's output: {e}"),
@@ -397,13 +461,12 @@ pub fn ssh_probe(
         match child.try_wait() {
             Ok(Some(status)) => break Some(status),
             Ok(None) if started.elapsed() >= PROBE_TIMEOUT => {
-                let _ = child.kill();
-                let _ = child.wait();
+                reap(&mut child);
                 break None;
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(100)),
             Err(e) => {
-                let _ = child.kill();
+                reap(&mut child);
                 return Err(SkoposError::Ssh {
                     target,
                     message: format!("failed to wait for ssh: {e}"),
