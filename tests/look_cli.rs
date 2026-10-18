@@ -260,3 +260,90 @@ fn a_watch_shorter_than_the_floor_is_raised_and_says_so() {
     std::io::Read::read_to_string(&mut child.stderr.take().unwrap(), &mut stderr).unwrap();
     assert!(!stderr.contains("raised"), "{stderr}");
 }
+
+/// What a run of `vas` against the mock left: the exit code, the output, and the requests seen.
+struct Run {
+    code: Option<i32>,
+    stdout: String,
+    stderr: String,
+    seen: common::Seen,
+}
+
+/// `vas args` against the mock, with NO key in the environment but what `env` adds, and the
+/// variables in `unset` removed; no home of its own (the caller sets `HOME` and `USERPROFILE`).
+fn vas_with(args: &[&str], env: &[(&str, &std::ffi::OsStr)], unset: &[&str]) -> Run {
+    let (base, seen) = serve(account);
+    let mut command = Command::new(env!("CARGO_BIN_EXE_vas"));
+    command
+        .args(args)
+        .env("VAST_URL", &base)
+        .env_remove("VAST_API_KEY")
+        .env_remove("XDG_CONFIG_HOME");
+    for name in unset {
+        command.env_remove(name);
+    }
+    for (name, value) in env {
+        command.env(name, value);
+    }
+    let out = command.output().unwrap();
+    Run {
+        code: out.status.code(),
+        stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+        seen,
+    }
+}
+
+/// A fresh directory holding a `.vast_api_key` of `key`; the caller removes it.
+fn home_with_key(name: &str, key: &str) -> std::path::PathBuf {
+    let call = CALLS.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("vas-home-{name}-{call}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(".vast_api_key"), key).unwrap();
+    dir
+}
+
+#[test]
+fn the_home_is_found_the_way_the_official_cli_finds_it() {
+    let key = "filekey1234567890";
+    let real = home_with_key("real", key);
+    let bogus = std::env::temp_dir().join("vas-home-that-does-not-exist");
+    // The variable the platform looks at FIRST: USERPROFILE on Windows (where HOME is often an MSYS
+    // path no Windows call understands), HOME elsewhere.
+    let (first, second) = if cfg!(windows) {
+        ("USERPROFILE", "HOME")
+    } else {
+        ("HOME", "USERPROFILE")
+    };
+    let found = vas_with(
+        &[],
+        &[(first, real.as_os_str()), (second, bogus.as_os_str())],
+        &[],
+    );
+    assert_eq!(found.code, Some(0), "{}", found.stderr);
+    assert_eq!(
+        found.seen.lock().unwrap()[0].authorization.as_deref(),
+        Some("Bearer filekey1234567890"),
+        "the key of the home the platform prefers is the one sent"
+    );
+    // Swapped, the preferred variable names nowhere: the other is only a fallback.
+    let lost = vas_with(
+        &[],
+        &[(second, real.as_os_str()), (first, bogus.as_os_str())],
+        &[],
+    );
+    assert_eq!(lost.code, Some(1), "{}", lost.stdout);
+    assert!(
+        lost.stderr.contains("no vast.ai API key found"),
+        "{}",
+        lost.stderr
+    );
+    assert!(
+        lost.seen.lock().unwrap().is_empty(),
+        "no request without a key"
+    );
+    // Only the fallback set (the other variable unset): it serves.
+    let fallback = vas_with(&[], &[(second, real.as_os_str())], &[first]);
+    assert_eq!(fallback.code, Some(0), "{}", fallback.stderr);
+    std::fs::remove_dir_all(&real).unwrap();
+}

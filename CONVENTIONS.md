@@ -134,9 +134,11 @@ readers (`Instance::from_json`), and pure queries (`Instance::cost_so_far`,
 ### `#[non_exhaustive]` Policy
 
 - Public enums that may gain new variants: `#[non_exhaustive]` (`SkoposError`).
-- Public structs that may gain new fields: `#[non_exhaustive]` (`Instance`,
-  `Account`, `Probe`, `GpuReading`) — the API grows, and so will what `vas` shows.
-  Every such struct has a constructor (`from_json`, a parser) for callers.
+- Public structs that may gain new fields: `#[non_exhaustive]` (e.g. `Instance`, `Account`,
+  `Offer`, `OfferQuery`, `OfferPage`, `OfferChanges`, `Probe`, `TableOptions`, `Runway`) — the API
+  grows, and so will what `vas` shows. A caller builds one with its constructor (`from_json`,
+  `Default`, `new`, a parser) and, for a query or an options struct, by assigning fields after
+  `default()`; a type a downstream crate has no way to build (`GpuReading`, today) is a known gap.
 - Internal dispatch enums matched exhaustively by this crate:
   `#[allow(clippy::exhaustive_enums)] // EXHAUSTIVE: <reason>`.
 
@@ -274,7 +276,7 @@ the `Authorization: Bearer` header of a request to the vast.ai API host.
   through `pub(crate) fn bearer`, used in exactly one place: the request header.
 - **Never in an error, a log line, a table or a panic message.** Errors carry the
   endpoint PATH, never a full URL with a query, never a header.
-- **Never parsed from a response.** `/api/v0/users/current` returns the key: only
+- **Never parsed from a response.** `/api/v0/users/current/` returns the key: only
   `credit` and `balance` are read from it (`Account::from_json`).
 - **Never written to disk** by this crate, and never accepted on the command line
   (a `--key` flag would land in shell history): `VAST_API_KEY`, the `vastai` CLI's
@@ -332,7 +334,9 @@ the field missing keeps it.
 A config file holds deny-lists, so it never fails open: a missing default file is no
 file, but a missing `--config` file, an unreadable file or a malformed line stops the
 run before any request. Each line becomes ONE word, `--name=value`, so clap reads a
-value starting with `-` as a value; `--config` and `--no-config` are refused inside it.
+value starting with `-` as a value; `--config`, `--no-config`, `--watch`, `--changes`, `--help` and
+`--version` are refused inside it (a file of filters must not choose the file, turn a run into a
+loop, or print and stop).
 
 ## When Talking to a Box
 

@@ -731,3 +731,43 @@ fn the_pause_between_two_looks_is_at_least_thirty_seconds_unless_a_test_says_oth
         "the raise is said once, on stderr: {stderr}"
     );
 }
+
+#[test]
+fn a_search_of_this_machine_does_not_go_through_the_proxy_of_the_environment() {
+    let (base, seen) = serve(bundles);
+    let home = fresh_home("proxy");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_vas"));
+    command
+        .args(["offers", "--no-config"])
+        .env("VAST_URL", &base)
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .env_remove("VAST_API_KEY")
+        .env_remove("XDG_CONFIG_HOME")
+        .env_remove("NO_PROXY")
+        .env_remove("no_proxy");
+    // A proxy that refuses every connection: a request sent through it cannot succeed.
+    for name in [
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+    ] {
+        command.env(name, "http://127.0.0.1:1");
+    }
+    let out = command.output().unwrap();
+    std::fs::remove_dir_all(&home).unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("5 offers"),
+        "the table came back: {stderr}"
+    );
+    assert_eq!(
+        seen.lock().unwrap().len(),
+        1,
+        "the mock was reached directly"
+    );
+}

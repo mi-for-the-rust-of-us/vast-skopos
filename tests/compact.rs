@@ -213,3 +213,13 @@ fn money_that_rounds_to_zero_is_zero_not_minus_zero() {
     let lines = objects(&json_lines(&[tiny], &[], Some(&credit), 0.0));
     assert!(lines.last().unwrap()["hours_left"].is_null());
 }
+
+#[test]
+fn a_debt_has_no_hours_left_in_the_json_either() {
+    let owed = Account::from_json(&json!({"credit": -5.0}));
+    let running = instance(&json!({"id": 1, "actual_status": "running", "dph_total": 1.0}));
+    let lines = objects(&json_lines(&[running], &[], Some(&owed), 0.0));
+    let money = lines.last().unwrap();
+    assert_eq!(money["credit"], -5.0, "the debt is shown");
+    assert!(money["hours_left"].is_null(), "{money}");
+}

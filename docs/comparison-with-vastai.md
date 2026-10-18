@@ -18,7 +18,7 @@ complements, not alternatives: rent with `vastai` (or the dashboard), watch with
 | **Search offers** | yes (`vastai search offers`: a query language over every offer field, sent as a `POST` to `/api/v0/bundles/`, with the key) | yes, narrower and keyless: `vas offers` with the flags a rental is chosen by (GPU, CUDA, disk, reliability, bandwidth, price, duration, verified, countries and hosts left out), from a config file of flags and the command line. The legacy `GET` form, no `Authorization` header. Every constraint is re-checked on each row, and the footer says when vast.ai's 64-row cap was reached (it answers `truncated: false` all the same) |
 | **Create / stop / destroy instances** | yes | **no, by design**: `vas` only ever issues `GET` |
 | **Serverless endpoints** | yes (a serverless client) | no |
-| **SDK (library use)** | yes, Python | yes, a small Rust library (`api`, `instance`, `offer`, `config`, `probe`, `render`) |
+| **SDK (library use)** | yes, Python | yes, a small Rust library (`key`, `api`, `instance`, `offer`, `probe`, `render`, `runway`, `compact`) |
 | **List instances** | yes (`show instances`, paginated `/api/v1/instances/`) | yes, the same endpoint and pagination, read field by field so an API change costs one cell, not the table |
 | **Account credit** | yes (`show user`) | yes, plus the **burn rate** of the running boxes and the **hours of runway** it buys |
 | **Cost so far per box** | the dashboard and invoices | an estimate per row (today's `$/h` × age), labelled `COST~` |
@@ -31,7 +31,7 @@ complements, not alternatives: rent with `vastai` (or the dashboard), watch with
 | **Key hygiene** | the key is printed by nothing that we saw, but the CLI accepts it on the command line | redacted `Debug`, no `Display`, never in an error; the `users/current` answer, which contains the key, is never parsed beyond `credit` and `balance` |
 | **HTTP redirects** | followed (`requests`' default) | **never** followed, so the key is never re-sent elsewhere. This is why `vas` requests the canonical `/api/v0/users/current/`: the bare path answers 301 |
 | **Least-privilege key** | needs Write scopes for its write commands | works with **User Read + Instances Read** only |
-| **Maturity** | Vast.ai's own, actively released (1.8.3) | 0.1.0, unreleased, dogfooded on one rental (2026-10-16) |
+| **Maturity** | Vast.ai's own, actively released (1.8.3) | 0.1.0 released (2026-10-17), dogfooded on two rentals (Me35, Me36); 0.2.0 in preparation |
 
 ## When to use which
 

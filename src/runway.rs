@@ -85,11 +85,13 @@ impl Runway {
         }
     }
 
-    /// The hours the credit lasts at this burn; `None` without a credit, without a burn, or when
-    /// the burn is so small that the hours are not a number worth showing.
+    /// The hours the credit lasts at this burn; `None` without a credit (or with none left: a
+    /// debt has no runway), without a burn, or when the burn is so small that the hours are not a
+    /// number worth showing.
     #[must_use]
     pub fn hours_left(&self) -> Option<f64> {
         self.credit
+            .filter(|c| *c > 0.0)
             .filter(|_| self.burn > 0.0)
             .map(|c| c / self.burn)
             .filter(|h| h.is_finite())

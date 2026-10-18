@@ -28,13 +28,33 @@ const MAX_PAGES: usize = 200;
 /// The HTTP agent: one connection pool, a 30 s timeout per request, non-success statuses returned
 /// rather than raised, and no redirect followed (a 3xx is reported, and a key is never re-sent
 /// elsewhere).
-fn agent() -> ureq::Agent {
-    ureq::Agent::config_builder()
+///
+/// The proxy of the environment (`HTTPS_PROXY`, ...) is honoured, except for a loopback `base`
+/// (the tests' mock, a local tunnel): what runs on this machine is not sent to a proxy.
+fn agent(base: &str) -> ureq::Agent {
+    let mut config = ureq::Agent::config_builder();
+    config = config
         .timeout_global(Some(Duration::from_secs(30)))
         .http_status_as_error(false)
-        .max_redirects(0)
-        .build()
-        .into()
+        .max_redirects(0);
+    if is_loopback(base) {
+        config = config.proxy(None);
+    }
+    config.build().into()
+}
+
+/// Whether `base` (a URL) names this machine: `127.0.0.1`, `localhost` or `[::1]`.
+fn is_loopback(base: &str) -> bool {
+    let host = base.split_once("://").map_or(base, |(_, rest)| rest);
+    let host = host.split('/').next().unwrap_or_default();
+    let host = host.rsplit_once('@').map_or(host, |(_, h)| h);
+    let host = if host.starts_with('[') {
+        host.split_once(']')
+            .map_or(host, |(h, _)| h.trim_start_matches('['))
+    } else {
+        host.split(':').next().unwrap_or_default()
+    };
+    matches!(host, "127.0.0.1" | "localhost" | "::1")
 }
 
 /// `VAST_URL` when set and not blank, else [`DEFAULT_BASE`]; without a trailing slash.
@@ -124,19 +144,19 @@ impl Client {
     /// A client for `key`, against `VAST_URL` or [`DEFAULT_BASE`], with a 30 s timeout per request.
     #[must_use]
     pub fn new(key: ApiKey) -> Self {
-        Self {
-            agent: agent(),
-            key,
-            base: base_from_env(),
-        }
+        Self::with_base(key, &base_from_env())
     }
 
     /// A client for `key` against `base` (e.g. a test server), with the same timeout.
     #[must_use]
     pub fn with_base(key: ApiKey, base: &str) -> Self {
-        let mut client = Self::new(key);
-        base.trim_end_matches('/').clone_into(&mut client.base);
-        client
+        // BORROW: explicit to_owned -- the client owns its base URL
+        let base = base.trim_end_matches('/').to_owned();
+        Self {
+            agent: agent(&base),
+            key,
+            base,
+        }
     }
 
     /// The base URL the key is sent to.
@@ -240,10 +260,7 @@ impl SearchClient {
     /// A search client against `VAST_URL` or [`DEFAULT_BASE`], with a 30 s timeout per request.
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            agent: agent(),
-            base: base_from_env(),
-        }
+        Self::with_base(&base_from_env())
     }
 
     /// A search client against `base` (e.g. a test server), with the same timeout.
@@ -255,9 +272,12 @@ impl SearchClient {
     /// ```
     #[must_use]
     pub fn with_base(base: &str) -> Self {
-        let mut client = Self::new();
-        base.trim_end_matches('/').clone_into(&mut client.base);
-        client
+        // BORROW: explicit to_owned -- the client owns its base URL
+        let base = base.trim_end_matches('/').to_owned();
+        Self {
+            agent: agent(&base),
+            base,
+        }
     }
 
     /// The base URL searched.
@@ -286,5 +306,35 @@ impl SearchClient {
             search_hint,
         )?;
         OfferPage::from_json(&answer).ok_or_else(|| SkoposError::json(path, "no `offers` list"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_loopback;
+
+    #[test]
+    fn only_this_machine_is_loopback() {
+        for local in [
+            "http://127.0.0.1:8080",
+            "http://127.0.0.1",
+            "http://localhost/api",
+            "http://localhost:9",
+            "https://user:pw@127.0.0.1:1/x",
+            "http://[::1]:9",
+            "127.0.0.1:9",
+        ] {
+            assert!(is_loopback(local), "{local}");
+        }
+        for remote in [
+            "https://console.vast.ai",
+            "http://127.0.0.1.evil.example",
+            "http://localhost.evil.example/",
+            "http://evil.example/127.0.0.1",
+            "http://evil.example@console.vast.ai",
+            "",
+        ] {
+            assert!(!is_loopback(remote), "{remote}");
+        }
     }
 }

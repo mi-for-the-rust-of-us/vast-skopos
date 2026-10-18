@@ -678,8 +678,8 @@ pub fn offers_changes_only(
 ///
 /// `page` is the answer, `kept` the offers that passed the re-check ([`crate::offer::select`]) and
 /// `top` how many of them the table shows. The notes say when the answer may be cut (vast.ai's cap,
-/// or the server's own `truncated`), how many rows the re-check dropped, and how many were skipped
-/// for want of an id. `now` (Unix seconds) is the time of the search, named on the first line: the
+/// or the server's own `truncated`), how many rows repeated an id, how many offers the re-check
+/// dropped, and how many rows were skipped for want of an id. `now` (Unix seconds) is the time of the search, named on the first line: the
 /// list is a snapshot of a market that moves within minutes.
 ///
 /// ```
@@ -732,7 +732,21 @@ pub fn offers_footer(
             String::from("vast.ai says the list was cut (narrow the search)")
         });
     }
-    let dropped = page.offers.len().saturating_sub(kept);
+    // `select` keeps one row per id: the rows that repeat an id are not the constraints' doing.
+    let distinct = page
+        .offers
+        .iter()
+        .map(|o| o.id)
+        .collect::<std::collections::HashSet<_>>()
+        .len();
+    let repeated = page.offers.len().saturating_sub(distinct);
+    if repeated > 0 {
+        notes.push(format!(
+            "{repeated} repeated id{} skipped",
+            if repeated == 1 { "" } else { "s" }
+        ));
+    }
+    let dropped = distinct.saturating_sub(kept);
     if dropped > 0 {
         notes.push(format!(
             "{dropped} dropped here: a field contradicts a constraint"

@@ -29,7 +29,7 @@ All notable changes to this project are documented here. The format is based on
   under the footer the counts and the offers that are gone. `--changes` prints only what moved, a line
   each (`+` new, `~` repriced, `-` gone, or `no change`). Offers are compared as the FULL lists the
   searches kept (an offer sinking below the table's last row is not gone), and a note says when vast.ai's
-  64-row cap may explain an entry or an exit. `OfferChanges::between`, `render::offers_table_marked`,
+  64-row cap may explain an entry or an exit. `OfferChanges::between` (and its `Repriced`), `render::offers_table_marked`,
   `render::offers_changes_note`, `render::offers_changes_only`. `VAS_WATCH_FLOOR_MS` lowers the 30 s
   floor of both watches, for tests only.
 
@@ -37,9 +37,9 @@ All notable changes to this project are documented here. The format is based on
 
 - `vas --ssh` asks the account for its credit WHILE the probes run, instead of before them: the
   request needs nothing from them, and they take seconds (`probe::probe_all`, which the binary used to
-  hold, now takes the instances and returns one outcome per instance). `probe::ssh_command` builds the
-  `ssh` arguments apart from the spawning, so a test can check that a path with a space stays one
-  argument and that the target follows `--`.
+  hold, now takes the instances and returns one outcome per instance). `probe::ssh_command` (hidden
+  from the docs) builds the `ssh` arguments apart from the spawning, so a test can check that a path
+  with a space stays one argument and that the target follows `--`.
 - Documentation: the README's install section says what is true now (`cargo install vast-skopos`,
   `version = "0.2"`), its three Rust examples are compiled by `cargo test --doc` (they cannot rot),
   the crate docs describe `vas offers`, `--compact` and `--watch`, `render::table` has a doctest, and the
@@ -55,18 +55,19 @@ All notable changes to this project are documented here. The format is based on
   `Instance::is_meant_to_run`. A box being stopped (running, meant to stop) is still counted as
   running; a stopped one is not counted.
 - BREAKING for library users (0.x: a minor release), settled together while 0.1.0 is a day old:
-  - `render::table(instances, probes, account, options, now)`: the two booleans became
-    `TableOptions::new().ssh(..).wide(..)`, and the probes a `&[ProbeOutcome]` (new alias of
-    `Option<Result<Probe>>`). `render::table` has a doctest now.
+  - `render::table(instances, probes, account, options, now)`: 0.1.0's `with_ssh` boolean (the order was
+    `instances, probes, with_ssh, account, now`) became `TableOptions::new().ssh(..).wide(..)`, placed
+    after `account`, and the probes a `&[ProbeOutcome]` (new alias of `Option<Result<Probe>>`).
   - `render::offers_line(page, kept, shown, ..)` became `render::offers_footer(page, kept, top, query,
     sort, now)`: the kept offers and `top`, not two counts that could be swapped; it names the search
     time (`now`, Unix seconds).
   - `SkoposError::Config` became `SkoposError::ConfigLine`, no longer easy to take for `ConfigFile`.
   - `OfferQuery::to_q` became `OfferQuery::to_search_json`.
-  - Documented API narrowed: `render::{age, short_path, log_cell}`, `probe::{strip, clean, parse_log}`,
-    `offer::{gpu_model, country_code}`, `key::txt_hint` and the whole `config` module are
-    `#[doc(hidden)]`: they stay for `vas` and the tests, with no promise. `render::clock` is private.
-  - `vas`'s own output gains the `searched ...` clause on the `vas offers` footer.
+  - Documented API narrowed with `#[doc(hidden)]`, which keeps the paths and promises nothing:
+    `render::{age, short_path, log_cell}`, `probe::{strip, clean, parse_log}`,
+    `offer::{gpu_model, country_code}`, `key::txt_hint` and the `config` module. `vas` uses `gpu_model`,
+    `country_code` and `config`; the tests use `age`, `log_cell` and `txt_hint`; `short_path`, `strip`,
+    `clean` and `parse_log` only their own doctests and the crate itself.
 
 ### Fixed
 
@@ -86,6 +87,14 @@ All notable changes to this project are documented here. The format is based on
   counted twice.
 - A credit or burn that rounds to zero no longer prints as `$-0.00` or `-0.0`, and a burn too small to give a
   runway no longer prints `~inf h left`.
+- A debt has no runway: a credit of zero or less prints no `~-5.0 h left` (`hours_left` is `null`).
+- The footer of `vas offers` says `1 repeated id skipped` for an id the search answered twice, instead of
+  blaming a constraint (`1 dropped here: a field contradicts a constraint`) with no constraint at all.
+- The home is found the way the official CLI finds it: `USERPROFILE` first on Windows (`HOME` there is
+  often an MSYS path no Windows call understands, so a key saved by `vastai` was not found from Git
+  Bash), `HOME` elsewhere.
+- A `VAST_URL` that names this machine is never sent through the proxy of the environment: the tests'
+  mock server failed behind an HTTP proxy.
 
 ## [0.1.0] - 2026-10-17
 

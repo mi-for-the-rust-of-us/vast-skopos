@@ -188,7 +188,7 @@ does not show that cost yet.
 
 One object per box, then one for the money, each on one line, each with a `kind` (`box` or `money`) and
 `at` (Unix seconds, the same on every line of a look), so a line read alone says what it is and when.
-The keys of an object never change: what is not known is `null`, not a missing key. Keys come out in alphabetical order, as `serde_json` writes them by default (`kind` is not first: filter on it with
+The keys of each object never change: what is not known is `null`, not a missing key. Keys come out in alphabetical order, as `serde_json` writes them by default (`kind` is not first: filter on it with
 `jq` or `grep '"kind":"money"'`). Money is rounded to ten-thousandths of a dollar (`credit`, `burn`, `cost`):
 about two seconds of a $0.19/h box, and vast.ai sends the credit with float noise (`12.059765171599793`).
 
@@ -201,7 +201,8 @@ $ vas --compact --ssh --log '/root/runs/*/train.log'
 `probe` is `null` for a box not probed (no `--ssh`, or not running), `{"error": "..."}` when the probe failed,
 else `gpus` and `log`; `log` is `null` without `--log`, else an object whose `state` is `line`, `empty`,
 `not_a_file`, `no_match` or `unreadable`. `unsure` counts, by state, the boxes meant to run that read
-otherwise (the burn, above). With `--watch N`, a look is printed every N seconds with no separator line: the `at`
+otherwise (the burn, above). With `--watch N`, a look is printed every N seconds with no separator line (the table form of `--watch`
+stamps each look with `== vas, unix time N`; JSON lines would not parse with it): the `at`
 tells looks apart. `jq` does the rest, for example `vas --compact | jq -r 'select(.kind=="money").hours_left'`.
 
 ### `vas offers`
@@ -348,6 +349,7 @@ rental is a budget, and how long the credit lasts at the current burn is the num
 | [Dogfooding, 2026-10-16](https://github.com/mi-for-the-rust-of-us/vast-skopos/blob/main/docs/dogfooding/2026-10-16.md) | The first real rental (Me35, three RTX 5090s): what broke in the first minute, what helped, the next features, and `vas offers` probed and built for the next rental |
 | [Dogfooding, 2026-10-17](https://github.com/mi-for-the-rust-of-us/vast-skopos/blob/main/docs/dogfooding/2026-10-17.md) | `vas offers`' first rental (Me36, five 5090s for three slots): what worked, seven notes for the next versions (offers that vanish, a burn line that can mislead, machine ids, a compact mode, labels, a two-size uplink measure for `vas check`, a credit history) |
 | [Dogfooding, 2026-10-18](https://github.com/mi-for-the-rust-of-us/vast-skopos/blob/main/docs/dogfooding/2026-10-18.md) | `vas offers --watch` on the live market: boxes going away and arriving by the second, and the idea of a TUI for the watch |
+| [Review of the code since 0.1.0, 2026-10-18](https://github.com/mi-for-the-rust-of-us/vast-skopos/blob/main/docs/audits/2026-10-18-review.md) | Three fresh readers, finding by finding: what was fixed, what was accepted, what is deferred |
 | [CONVENTIONS](CONVENTIONS.md) | The rules every line follows, the API-key and box rules included |
 | [CHANGELOG](CHANGELOG.md) | Release history |
 

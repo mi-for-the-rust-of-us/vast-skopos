@@ -188,10 +188,15 @@ pub fn txt_hint(candidates: &[PathBuf], is_file: impl Fn(&Path) -> bool) -> Stri
         .unwrap_or_default()
 }
 
-/// The user's home: `HOME`, else `USERPROFILE` (Windows).
+/// The user's home, as the official CLI finds it (Python's `expanduser`): on Windows `USERPROFILE`
+/// first, since `HOME` there is often an MSYS or Cygwin path (`/c/Users/...`) that no Windows API
+/// understands; elsewhere `HOME`. The other is the fallback.
 pub(crate) fn home() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .filter(|v| !v.is_empty())
-        .or_else(|| std::env::var_os("USERPROFILE").filter(|v| !v.is_empty()))
-        .map(PathBuf::from)
+    let var = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty());
+    let (first, second) = if cfg!(windows) {
+        ("USERPROFILE", "HOME")
+    } else {
+        ("HOME", "USERPROFILE")
+    };
+    var(first).or_else(|| var(second)).map(PathBuf::from)
 }

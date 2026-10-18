@@ -455,3 +455,62 @@ fn a_credit_that_rounds_to_zero_has_no_sign_and_a_tiny_burn_no_infinite_runway()
         None
     );
 }
+
+#[test]
+fn a_repeated_id_is_said_to_be_one_not_blamed_on_a_constraint() {
+    use vast_skopos::offer::select;
+    // Four rows, one id twice; nothing constrains anything.
+    let page = OfferPage::from_json(&serde_json::json!({"offers": [
+        {"id": 1, "dph_total": 0.5}, {"id": 1, "dph_total": 0.6},
+        {"id": 2, "dph_total": 0.7}, {"id": 3, "dph_total": 0.8}]}))
+    .unwrap();
+    let q = OfferQuery::default();
+    let kept = select(page.offers.clone(), &q, OfferSort::Price);
+    assert_eq!(kept.len(), 3);
+    let footer = offers_footer(&page, &kept, 20, &q, OfferSort::Price, 0.0);
+    assert!(
+        footer.starts_with("3 offers, cheapest first | no constraint"),
+        "{footer}"
+    );
+    assert!(footer.contains("1 repeated id skipped"), "{footer}");
+    assert!(
+        !footer.contains("dropped here"),
+        "with no constraint nothing was dropped by one: {footer}"
+    );
+    // Two ids repeated, and one offer a constraint really drops: each is counted once, as itself.
+    let page = OfferPage::from_json(&serde_json::json!({"offers": [
+        {"id": 1, "geolocation": "Texas, US"}, {"id": 1, "geolocation": "Texas, US"},
+        {"id": 2, "geolocation": "Texas, US"}, {"id": 2, "geolocation": "Texas, US"},
+        {"id": 3, "geolocation": "Beijing, CN"}]}))
+    .unwrap();
+    let mut q = OfferQuery::default();
+    q.exclude_countries = vec!["CN".to_owned()];
+    let kept = select(page.offers.clone(), &q, OfferSort::Price);
+    let footer = offers_footer(&page, &kept, 20, &q, OfferSort::Price, 0.0);
+    assert!(
+        footer
+            .contains("2 repeated ids skipped | 1 dropped here: a field contradicts a constraint"),
+        "{footer}"
+    );
+}
+
+#[test]
+fn a_debt_has_no_runway() {
+    let owed = Account::from_json(&serde_json::json!({"credit": -5.0}));
+    let running = fleet_row(1, Some("running"), Some("running"), Some(1.0));
+    let line = money_line(&[running], Some(&owed));
+    assert_eq!(
+        line, "credit $-5.00 | burn $1.000/h over 1 running\n",
+        "no `~-5.0 h left`"
+    );
+    assert_eq!(
+        vast_skopos::runway::Runway::of(&[], Some(&owed)).hours_left(),
+        None
+    );
+    // No credit left at all is no runway either; a positive credit still has one.
+    let none = Account::from_json(&serde_json::json!({"credit": 0.0}));
+    let running = fleet_row(1, Some("running"), Some("running"), Some(1.0));
+    assert!(!money_line(std::slice::from_ref(&running), Some(&none)).contains("left"));
+    let some = Account::from_json(&serde_json::json!({"credit": 3.0}));
+    assert!(money_line(&[running], Some(&some)).ends_with("~3.0 h left at this rate\n"));
+}
