@@ -591,6 +591,93 @@ pub fn select(offers: Vec<Offer>, query: &OfferQuery, sort: OfferSort) -> Vec<Of
     kept
 }
 
+/// An offer whose price moved between two looks.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct Repriced {
+    /// The offer as it reads now.
+    pub offer: Offer,
+    /// Its price at the previous look, in dollars per hour.
+    pub was: f64,
+}
+
+/// What moved in the market between two looks at it ([`changes`]).
+#[derive(Debug, Clone, PartialEq, Default)]
+#[non_exhaustive]
+pub struct OfferChanges {
+    /// The offers that were not in the previous look, in the current look's order.
+    pub appeared: Vec<Offer>,
+    /// The offers in both looks whose price (to the thousandth of a dollar, as shown) moved.
+    pub repriced: Vec<Repriced>,
+    /// The offers of the previous look that are not in this one (rented, withdrawn, or no longer
+    /// matching), in the previous look's order.
+    pub gone: Vec<Offer>,
+}
+
+impl OfferChanges {
+    /// Whether nothing moved.
+    ///
+    /// ```
+    /// use vast_skopos::offer::OfferChanges;
+    /// assert!(OfferChanges::default().is_empty());
+    /// ```
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.appeared.is_empty() && self.repriced.is_empty() && self.gone.is_empty()
+    }
+}
+
+/// A price as the table shows it: to the thousandth of a dollar.
+fn shown(price: f64) -> String {
+    format!("{price:.3}")
+}
+
+/// What moved from the `previous` look to the `current` one.
+///
+/// The offers that appeared, whose price changed (as the table shows it, to the thousandth), and
+/// that are gone. Both are the FULL lists the searches kept ([`select`]), not just the rows shown:
+/// an offer that sank below the table's last row is not gone.
+///
+/// ```
+/// use vast_skopos::offer::{Offer, changes};
+/// let offer = |id: u64, p: f64| Offer::from_json(&serde_json::json!({"id": id, "dph_total": p})).unwrap();
+/// let before = [offer(1, 0.5), offer(2, 0.6), offer(3, 0.7)];
+/// let now = [offer(4, 0.4), offer(1, 0.55), offer(2, 0.6001), offer(3, 0.7)];
+/// let c = changes(&before, &now);
+/// assert_eq!(c.appeared.iter().map(|o| o.id).collect::<Vec<_>>(), [4]);
+/// assert_eq!(c.repriced.iter().map(|r| (r.offer.id, r.was)).collect::<Vec<_>>(), [(1, 0.5)]);
+/// assert!(c.gone.is_empty(), "0.6 -> 0.6001 is the same price to the thousandth");
+/// assert_eq!(changes(&now, &before).gone.iter().map(|o| o.id).collect::<Vec<_>>(), [4]);
+/// ```
+#[must_use]
+pub fn changes(previous: &[Offer], current: &[Offer]) -> OfferChanges {
+    let before: std::collections::HashMap<u64, &Offer> =
+        previous.iter().map(|o| (o.id, o)).collect();
+    let now: std::collections::HashSet<u64> = current.iter().map(|o| o.id).collect();
+    let mut out = OfferChanges::default();
+    for offer in current {
+        match before.get(&offer.id) {
+            None => out.appeared.push(offer.clone()),
+            Some(old) => {
+                if let (Some(was), Some(is)) = (old.dph_total, offer.dph_total)
+                    && shown(was) != shown(is)
+                {
+                    out.repriced.push(Repriced {
+                        offer: offer.clone(),
+                        was,
+                    });
+                }
+            }
+        }
+    }
+    out.gone = previous
+        .iter()
+        .filter(|o| !now.contains(&o.id))
+        .cloned()
+        .collect();
+    out
+}
+
 /// A GPU model as vast.ai names it: trimmed, `_` read as a space (the official CLI's rule, so
 /// `RTX_5090` needs no quotes); `None` when blank or quoted.
 ///

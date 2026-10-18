@@ -25,6 +25,15 @@ All notable changes to this project are documented here. The format is based on
   rounded to ten-thousandths of a dollar: vast.ai sends the credit with float noise.
   Not with `--wide`. `compact::compact`, `render::Money`.
 
+- `vas offers --watch SECONDS` (at least 30) searches again until Ctrl+C: each look is the whole table
+  with `+` on the offers that are new since the last look, `0.594 (was 0.575)` on a moved price, and
+  under the footer the counts and the offers that are gone. `--changes` prints only what moved, a line
+  each (`+` new, `~` repriced, `-` gone, or `no change`). Offers are compared as the FULL lists the
+  searches kept (an offer sinking below the table's last row is not gone), and a note says when vast.ai's
+  64-row cap may explain an entry or an exit. `offer::changes`, `render::offers_table_marked`,
+  `render::changes_note`, `render::changes_only`. `VAS_WATCH_FLOOR_MS` lowers the 30 s floor of both
+  watches, for tests only.
+
 ### Changed
 
 - The money line's burn counts the boxes the API reads as `running` AND those it was asked to run

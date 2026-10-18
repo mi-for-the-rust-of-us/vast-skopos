@@ -262,3 +262,64 @@ fn a_box_meant_to_run_with_no_status_or_no_price_is_named_not_hidden() {
         "credit ? | burn $0.500/h over 1 running + 1 unknown (meant to run, billing unknown)\n"
     );
 }
+
+/// One offer for the watch tests: id, price, in Spain.
+fn watched(id: u64, price: f64) -> vast_skopos::offer::Offer {
+    vast_skopos::offer::Offer::from_json(&serde_json::json!(
+        {"id": id, "dph_total": price, "gpu_name": "RTX 5090", "num_gpus": 1,
+         "geolocation": "Spain, ES"}))
+    .unwrap()
+}
+
+#[test]
+fn the_marked_table_keeps_its_columns_aligned_with_a_mark_and_a_was() {
+    use vast_skopos::offer::changes;
+    use vast_skopos::render::offers_table_marked;
+    let before = [watched(1, 0.5), watched(2, 0.6), watched(7, 0.9)];
+    let now = [watched(3, 0.4), watched(1, 0.55), watched(2, 0.6)];
+    let text = offers_table_marked(&now, 20, &changes(&before, &now));
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 4, "the header and three rows: {text}");
+    // The mark column is the first, one character wide; every id starts in the same column.
+    let id_col = lines[0].find("ID").unwrap();
+    assert!(lines[1].starts_with("+ "), "{text}");
+    for line in &lines[2..] {
+        assert!(line.starts_with("  "), "no mark: {text}");
+    }
+    for (line, id) in lines[1..].iter().zip(["3", "1", "2"]) {
+        assert_eq!(&line[id_col..=id_col], id, "{text}");
+    }
+    assert!(lines[2].contains("0.550 (was 0.500)"), "{text}");
+    assert!(!lines[3].contains("was"), "{text}");
+    assert!(
+        offers_table_marked(&[], 20, &changes(&[], &[])).ends_with("(no offers)\n"),
+        "an empty market"
+    );
+}
+
+#[test]
+fn the_notes_cap_their_lines_and_say_when_the_cap_of_vast_ai_may_explain_a_change() {
+    use vast_skopos::offer::changes;
+    use vast_skopos::render::{changes_note, changes_only};
+    let before: Vec<_> = (1..=13).map(|id| watched(id, 0.5)).collect();
+    let c = changes(&before, &[]);
+    let note = changes_note(&c, false);
+    assert!(note.starts_with("since the last look: 13 gone\n"), "{note}");
+    assert_eq!(
+        note.lines().filter(|l| l.starts_with("- ")).count(),
+        11,
+        "ten, then the rest counted"
+    );
+    assert!(note.contains("- ... and 3 more\n"), "{note}");
+    assert!(!note.contains("caps a search"), "{note}");
+    assert!(changes_note(&c, true).contains("vast.ai caps a search at 64 rows"));
+    // Nothing entered or left: the cap explains nothing, and is not said.
+    let steady = changes(&before, &before);
+    assert!(!changes_note(&steady, true).contains("caps a search"));
+    assert!(!changes_only(Some(&steady), 13, true, 0.0).contains("caps a search"));
+    assert!(changes_only(Some(&c), 0, true, 0.0).contains("caps a search"));
+    assert!(
+        changes_only(None, 1, false, 0.0).starts_with("searched 00:00:00 UTC: 1 offer (the first"),
+        "singular"
+    );
+}

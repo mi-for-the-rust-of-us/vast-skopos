@@ -12,9 +12,13 @@ use vast_skopos::api::{Client, DEFAULT_BASE, SearchClient};
 use vast_skopos::compact::compact;
 use vast_skopos::config::{default_offers_file, read_flag_file};
 use vast_skopos::key::ApiKey;
-use vast_skopos::offer::{OfferQuery, OfferSort, country_code, gpu_model, select};
+use vast_skopos::offer::{
+    Offer, OfferQuery, OfferSort, changes as offer_changes, country_code, gpu_model, select,
+};
 use vast_skopos::probe::ssh_probe;
-use vast_skopos::render::{offers_line, offers_table, table};
+use vast_skopos::render::{
+    changes_note, changes_only, offers_line, offers_table, offers_table_marked, table,
+};
 
 /// A lookout over your rented vast.ai boxes: status, $/h, cost so far, credit, and (with --ssh)
 /// what the GPUs are actually doing. Read-only. Not affiliated with vast.ai.
@@ -92,8 +96,10 @@ impl From<Sort> for OfferSort {
 
 /// `vas offers`'s flags. A config file of the same flags is read first (`--config`); a single value
 /// given twice is the last one, a list (`--exclude-*`) keeps every entry.
-// EXPLICIT: these doc comments ARE the `--help` text, where backticks would print literally.
-#[allow(clippy::doc_markdown)]
+// EXPLICIT: these doc comments ARE the `--help` text, where backticks would print literally; and
+// the switches of a command line are booleans, one per flag (`--verified`, `--no-verified`,
+// `--changes`, `--no-config`), not a state to model.
+#[allow(clippy::doc_markdown, clippy::struct_excessive_bools)]
 #[derive(Debug, clap::Args)]
 #[command(args_override_self = true)]
 struct OffersArgs {
@@ -140,6 +146,14 @@ struct OffersArgs {
     /// to the config file's.
     #[arg(long, value_name = "MACHINE_ID")]
     exclude_machine: Vec<u64>,
+    /// Search again every N seconds (at least 30) until Ctrl+C: each look is the whole table, with a
+    /// `+` on the offers that are new since the last one and the prices that moved, and what
+    /// vanished listed under it.
+    #[arg(long, value_name = "SECONDS")]
+    watch: Option<u64>,
+    /// With --watch: print only what moved since the last look (one line each), not the table.
+    #[arg(long, requires = "watch")]
+    changes: bool,
     /// Show at most N offers.
     #[arg(long, value_name = "N", default_value_t = 20, value_parser = clap::value_parser!(u64).range(1..))]
     top: u64,
@@ -245,6 +259,17 @@ fn emit(text: &str) -> bool {
     out.write_all(text.as_bytes())
         .and_then(|()| out.flush())
         .is_ok()
+}
+
+/// The pause between two looks of a `--watch`: the N asked, but at least 30 s, so no loop of looks
+/// hammers a public service. `VAS_WATCH_FLOOR_MS` replaces that floor (the tests' seam: a test of a
+/// second look cannot wait half a minute); unset or not a number, the floor is 30 s.
+fn watch_pause(every: u64) -> Duration {
+    let floor = std::env::var("VAS_WATCH_FLOOR_MS")
+        .ok()
+        .and_then(|ms| ms.trim().parse::<u64>().ok())
+        .map_or(Duration::from_secs(30), Duration::from_millis);
+    Duration::from_secs(every).max(floor)
 }
 
 /// Unix seconds now.
@@ -364,7 +389,7 @@ fn lookout(args: &LookArgs) -> ExitCode {
         let Some(every) = args.watch else {
             return ExitCode::SUCCESS;
         };
-        std::thread::sleep(Duration::from_secs(every.max(30)));
+        std::thread::sleep(watch_pause(every));
     }
 }
 
@@ -440,20 +465,54 @@ fn offers(args: OffersArgs) -> ExitCode {
     if client.base() != DEFAULT_BASE {
         eprintln!("vas offers: VAST_URL is set: searching {}", client.base());
     }
-    match client.offers(&query, sort) {
-        Ok(page) => {
-            // BORROW: explicit clone -- the footer reads the page again
-            let kept = select(page.offers.clone(), &query, sort);
-            let top = usize::try_from(args.top).unwrap_or(usize::MAX);
-            let footer = offers_line(&page, kept.len(), kept.len().min(top), &query, sort, now());
-            // A closed pipe (`vas offers | head -3`) is the reader's choice, not a failure.
-            let _ = emit(&format!("{}{footer}", offers_table(&kept, top)));
-            ExitCode::SUCCESS
+    let top = usize::try_from(args.top).unwrap_or(usize::MAX);
+    let mut previous: Option<Vec<Offer>> = None;
+    loop {
+        match client.offers(&query, sort) {
+            Ok(page) => {
+                // BORROW: explicit clone -- the footer reads the page again
+                let kept = select(page.offers.clone(), &query, sort);
+                let at = now();
+                let moved = previous.as_deref().map(|p| offer_changes(p, &kept));
+                let text = match (args.watch, args.changes) {
+                    (_, true) => changes_only(moved.as_ref(), kept.len(), page.maybe_cut(), at),
+                    (None, false) => format!(
+                        "{}{}",
+                        offers_table(&kept, top),
+                        offers_line(&page, kept.len(), kept.len().min(top), &query, sort, at)
+                    ),
+                    (Some(_), false) => {
+                        // The first look has nothing to mark; a blank line parts the looks.
+                        let gap = if previous.is_some() { "\n" } else { "" };
+                        let marks = moved.clone().unwrap_or_default();
+                        let note = moved
+                            .as_ref()
+                            .map(|m| changes_note(m, page.maybe_cut()))
+                            .unwrap_or_default();
+                        format!(
+                            "{gap}{}{}{note}",
+                            offers_table_marked(&kept, top, &marks),
+                            offers_line(&page, kept.len(), kept.len().min(top), &query, sort, at)
+                        )
+                    }
+                };
+                // A closed pipe (`vas offers | head -3`) is the reader's choice, not a failure.
+                if !emit(&text) {
+                    return ExitCode::SUCCESS;
+                }
+                previous = Some(kept);
+            }
+            Err(e) => {
+                eprintln!("vas offers: {e}");
+                if args.watch.is_none() {
+                    return ExitCode::FAILURE;
+                }
+            }
         }
-        Err(e) => {
-            eprintln!("vas offers: {e}");
-            ExitCode::FAILURE
-        }
+        let Some(every) = args.watch else {
+            return ExitCode::SUCCESS;
+        };
+        std::thread::sleep(watch_pause(every));
     }
 }
 

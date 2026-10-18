@@ -11,8 +11,12 @@
 
 mod common;
 
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
 
 use common::{Request, decode_q, fixture, serve};
 
@@ -440,4 +444,158 @@ fn a_bad_value_in_the_config_file_names_the_file() {
         "{stderr}"
     );
     assert!(seen.lock().unwrap().is_empty());
+}
+
+/// The fixture's answer; from the second search on, one offer is gone (the first of the file), one
+/// is repriced (+ $0.10/h) and one is new (id 999001, a copy of another).
+fn evolved(call: usize) -> String {
+    let mut answer: serde_json::Value = serde_json::from_str(&fixture("offers.json")).unwrap();
+    if call > 0 {
+        let offers = answer["offers"].as_array_mut().unwrap();
+        let mut newcomer = offers[1].clone();
+        newcomer["id"] = 999_001.into();
+        offers.remove(0);
+        let price = offers[1]["dph_total"].as_f64().unwrap();
+        offers[1]["dph_total"] = (price + 0.1).into();
+        offers.push(newcomer);
+    }
+    answer.to_string()
+}
+
+/// One counter per test that watches: the tests run in parallel, in one process.
+static TABLE_LOOKS: AtomicUsize = AtomicUsize::new(0);
+static CHANGES_LOOKS: AtomicUsize = AtomicUsize::new(0);
+
+fn evolving_table(_: &str) -> (u16, String) {
+    (200, evolved(TABLE_LOOKS.fetch_add(1, Ordering::SeqCst)))
+}
+
+fn evolving_changes(_: &str) -> (u16, String) {
+    (200, evolved(CHANGES_LOOKS.fetch_add(1, Ordering::SeqCst)))
+}
+
+/// `vas offers --no-config --watch 0 ARGS` against `base`, with the 30 s floor of `--watch` lowered
+/// to 50 ms; its stdout lines until one containing `marker` has been seen `times` times; then the
+/// process is killed.
+fn watch_lines(base: &str, name: &str, args: &[&str], marker: &str, times: usize) -> Vec<String> {
+    let home = fresh_home(name);
+    let mut child = Command::new(env!("CARGO_BIN_EXE_vas"))
+        .args(["offers", "--no-config", "--watch", "0"])
+        .args(args)
+        .env("VAST_URL", base)
+        .env("VAS_WATCH_FLOOR_MS", "50")
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .env_remove("VAST_API_KEY")
+        .env_remove("XDG_CONFIG_HOME")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            if tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    // One deadline for the whole read, not a timeout per line: a `vas` that never reaches the marker
+    // but keeps printing must fail the test, not feed it forever.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let (mut lines, mut seen) = (Vec::new(), 0);
+    while seen < times {
+        let Some(left) = deadline.checked_duration_since(Instant::now()) else {
+            break;
+        };
+        match rx.recv_timeout(left) {
+            Ok(line) => {
+                seen += usize::from(line.contains(marker));
+                lines.push(line);
+            }
+            Err(_) => break,
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    std::fs::remove_dir_all(&home).unwrap();
+    assert_eq!(seen, times, "{marker:?} seen {seen} times in {lines:#?}");
+    lines
+}
+
+#[test]
+fn a_watch_marks_what_moved_between_looks_and_lists_what_is_gone() {
+    let (base, seen) = serve(evolving_table);
+    // The notes closing the second and the third look.
+    let lines = watch_lines(&base, "watch-table", &[], "since the last look", 2);
+    let text = lines.join("\n");
+    assert!(
+        seen.lock().unwrap().len() >= 3,
+        "one search per look, never fewer"
+    );
+    // The first look has a mark column and nothing marked.
+    assert!(lines[0].trim_start().starts_with("ID"), "{text}");
+    assert!(
+        lines[1..6].iter().all(|l| !l.starts_with('+')),
+        "nothing to mark at the first look: {text}"
+    );
+    // The second: the newcomer marked, the repriced offer showing its old price, the gone one named.
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.starts_with("+ ") && l.contains("999001")),
+        "{text}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.contains("51054445") && l.contains("(was 0.672)")),
+        "{text}"
+    );
+    assert!(
+        text.contains("since the last look: 1 new, 1 repriced, 1 gone\n- 44614424  1x RTX 5090"),
+        "{text}"
+    );
+    // The third look agrees with the second.
+    assert!(
+        lines
+            .last()
+            .unwrap()
+            .starts_with("since the last look: no change"),
+        "{text}"
+    );
+}
+
+#[test]
+fn changes_prints_the_baseline_then_only_what_moved() {
+    let (base, _) = serve(evolving_changes);
+    let lines = watch_lines(&base, "watch-changes", &["--changes"], "searched ", 3);
+    let text = lines.join("\n");
+    assert!(!text.contains("VERIFICATION"), "no table at all: {text}");
+    assert!(
+        lines[0].contains("5 offers (the first look: what moves follows)"),
+        "{text}"
+    );
+    assert!(
+        lines[1].contains("5 offers, 1 new, 1 repriced, 1 gone"),
+        "{text}"
+    );
+    assert!(lines[2].starts_with("+ 999001  1x RTX 5090"), "{text}");
+    assert!(
+        lines[3].starts_with("~ 51054445  1x RTX 5090  0.672 -> 0.772 $/h"),
+        "{text}"
+    );
+    assert!(lines[4].starts_with("- 44614424  1x RTX 5090"), "{text}");
+    assert!(lines[5].contains("5 offers, no change"), "{text}");
+}
+
+#[test]
+fn changes_needs_a_watch() {
+    let (base, seen) = serve(bundles);
+    let home = fresh_home("changes-alone");
+    let (out, _, stderr) = vas(&base, &home, true, &["offers", "--changes"]);
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    assert!(stderr.contains("--watch"), "{stderr}");
+    assert!(seen.lock().unwrap().is_empty(), "refused before any search");
 }

@@ -192,6 +192,7 @@ tells looks apart. `jq` does the rest, for example `vas --compact | jq -r 'selec
 | `--verified`, `--no-verified` | only machines vast.ai has verified; `--no-verified` cancels a config file's `--verified` |
 | `--exclude-country CC`, `--exclude-host ID`, `--exclude-machine ID` | leave out a country (two letters), a host or a machine (a host may own several; `vas --wide` shows yours); repeatable |
 | `--top N` (20), `--sort price\|reliability\|up` | how many rows, in which order |
+| `--watch SECONDS`, `--changes` | search again every N seconds (at least 30) until Ctrl+C, each look the whole table marked with what moved; `--changes` prints only what moved ([below](#watching-the-offers)) |
 | `--config FILE`, `--no-config` | read the flags of `FILE` first, or of no file |
 
 **The config file** holds the same flags, one per line (`#` lines are comments, one pair of quotes
@@ -224,6 +225,24 @@ constraint is also **re-checked on each row**: a row whose field contradicts one
 counted in the footer); a row MISSING the field is kept, with a dash. The footer also names every
 constraint applied (a config file never acts unseen), the storage priced into `$/h` and the time of
 the search (UTC): the list is a snapshot of a market where offers vanish within minutes.
+
+#### Watching the offers
+
+Offers vanish within minutes, so `vas offers --watch 60` searches again every minute (at least 30 s) until
+Ctrl+C. Each look is the whole table and its footer, with the new offers marked `+` in a first column, a
+price that moved read `0.594 (was 0.575)`, and under the footer what the table cannot show:
+
+```text
+since the last look: 1 new, 1 repriced, 1 gone
+- 46579456  1x RTX 5090  0.554 $/h  California, US
+```
+
+`--changes` prints only what moved, one line each, for a log or a monitor: a first line for the baseline,
+then one line per look (`no change`, or the counts followed by a line per offer: `+` new, `~` repriced,
+`-` gone). Two details keep the notes honest. "Gone" is measured against the whole list the search kept,
+not the rows shown, so an offer that sank below the last row is not gone. And vast.ai answers at most 64
+rows per search: when it does, a change in who entered or left may only be an offer crossing that line, and
+the note says so.
 
 ### The API key
 
@@ -292,6 +311,7 @@ rental is a budget, and how long the credit lasts at the current burn is the num
 | [`vas` and `vastai`](docs/comparison-with-vastai.md) | Vast.ai's own CLI/SDK and `vas`, compared row by row: scope, read-only by design, the GPU read on the box, the runway, the offer search, key hygiene, redirects, the `ssh` port rule |
 | [Dogfooding, 2026-10-16](https://github.com/mi-for-the-rust-of-us/vast-skopos/blob/main/docs/dogfooding/2026-10-16.md) | The first real rental (Me35, three RTX 5090s): what broke in the first minute, what helped, the next features, and `vas offers` probed and built for the next rental |
 | [Dogfooding, 2026-10-17](https://github.com/mi-for-the-rust-of-us/vast-skopos/blob/main/docs/dogfooding/2026-10-17.md) | `vas offers`' first rental (Me36, five 5090s for three slots): what worked, seven notes for the next versions (offers that vanish, a burn line that can mislead, machine ids, a compact mode, labels, a two-size uplink measure for `vas check`, a credit history) |
+| [Dogfooding, 2026-10-18](https://github.com/mi-for-the-rust-of-us/vast-skopos/blob/main/docs/dogfooding/2026-10-18.md) | `vas offers --watch` on the live market: boxes going away and arriving by the second, and the idea of a TUI for the watch |
 | [CONVENTIONS](CONVENTIONS.md) | The rules every line follows, the API-key and box rules included |
 | [CHANGELOG](CHANGELOG.md) | Release history |
 

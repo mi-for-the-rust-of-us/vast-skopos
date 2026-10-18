@@ -178,3 +178,80 @@ fn a_host_and_a_machine_are_told_apart() {
         q.summary()
     );
 }
+
+/// `(id, $/h)` offers, in that order.
+fn priced(rows: &[(u64, Option<f64>)]) -> Vec<Offer> {
+    rows.iter()
+        .map(|&(id, price)| {
+            let mut row = json!({"id": id});
+            if let Some(p) = price {
+                row["dph_total"] = json!(p);
+            }
+            Offer::from_json(&row).unwrap()
+        })
+        .collect()
+}
+
+#[test]
+fn the_changes_name_what_appeared_what_was_repriced_and_what_is_gone() {
+    let before = priced(&[
+        (1, Some(0.50)),
+        (2, Some(0.60)),
+        (3, Some(0.70)),
+        (4, Some(0.80)),
+    ]);
+    let now = priced(&[
+        (9, Some(0.40)),
+        (1, Some(0.55)),
+        (3, Some(0.70)),
+        (8, Some(0.90)),
+    ]);
+    let c = vast_skopos::offer::changes(&before, &now);
+    let ids = |offers: &[Offer]| offers.iter().map(|o| o.id).collect::<Vec<_>>();
+    assert_eq!(ids(&c.appeared), [9, 8], "in the current look's order");
+    assert_eq!(ids(&c.gone), [2, 4], "in the previous look's order");
+    assert_eq!(c.repriced.len(), 1);
+    assert_eq!((c.repriced[0].offer.id, c.repriced[0].was), (1, 0.50));
+    assert_eq!(
+        c.repriced[0].offer.dph_total,
+        Some(0.55),
+        "the price as it reads now"
+    );
+    assert!(!c.is_empty());
+}
+
+#[test]
+fn nothing_moved_when_the_looks_agree_to_the_shown_price() {
+    let before = priced(&[
+        (1, Some(0.5000)),
+        (2, Some(0.6004)),
+        (3, None),
+        (4, Some(0.7)),
+    ]);
+    // 0.6004 -> 0.6001: the same 0.600; a price missing on either side cannot be said to move.
+    let now = priced(&[
+        (4, Some(0.7)),
+        (3, Some(0.9)),
+        (2, Some(0.6001)),
+        (1, Some(0.5)),
+    ]);
+    assert!(
+        vast_skopos::offer::changes(&before, &now).is_empty(),
+        "a different order is not a change"
+    );
+    assert!(vast_skopos::offer::changes(&[], &[]).is_empty());
+    // Rounding is of what the table prints: 0.5004 and 0.5006 print as 0.500 and 0.501.
+    let c =
+        vast_skopos::offer::changes(&priced(&[(1, Some(0.5004))]), &priced(&[(1, Some(0.5006))]));
+    assert_eq!(c.repriced.len(), 1);
+}
+
+#[test]
+fn an_offer_that_sank_in_the_ranking_is_not_gone_and_the_first_look_has_everything_new() {
+    // The comparison is of the full lists kept: `vas` passes those, not the rows shown.
+    let all = priced(&[(1, Some(0.5)), (2, Some(0.6)), (3, Some(0.7))]);
+    let reordered = priced(&[(3, Some(0.7)), (2, Some(0.6)), (1, Some(0.5))]);
+    assert!(vast_skopos::offer::changes(&all, &reordered).is_empty());
+    let first = vast_skopos::offer::changes(&[], &all);
+    assert_eq!((first.appeared.len(), first.gone.len()), (3, 0));
+}

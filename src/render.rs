@@ -6,7 +6,7 @@ use std::fmt::Write as _;
 
 use crate::error::SkoposError;
 use crate::instance::{Account, Instance};
-use crate::offer::{OFFER_CAP, Offer, OfferPage, OfferQuery, OfferSort};
+use crate::offer::{OFFER_CAP, Offer, OfferChanges, OfferPage, OfferQuery, OfferSort};
 use crate::probe::{LogReading, Probe};
 
 /// `secs` in whole seconds, truncated: a negative or `NaN` count reads 0, an enormous one saturates.
@@ -477,6 +477,177 @@ pub fn offers_table(offers: &[Offer], top: usize) -> String {
     let mut out = layout(&OFFER_HEADER, &rows);
     if offers.is_empty() {
         out.push_str("(no offers)\n");
+    }
+    out
+}
+
+/// The column of [`OFFER_HEADER`] that holds the price.
+const PRICE_COLUMN: usize = 3;
+
+/// The offers table of a watch: [`offers_table`] with a first column that marks `+` an offer that
+/// was not in the previous look, and a price that moved read `0.594 (was 0.575)`.
+///
+/// ```
+/// use vast_skopos::{offer::{Offer, changes}, render::offers_table_marked};
+/// let offer = |id: u64, p: f64| Offer::from_json(&serde_json::json!({"id": id, "dph_total": p})).unwrap();
+/// let before = [offer(1, 0.5), offer(2, 0.6)];
+/// let now = [offer(3, 0.4), offer(1, 0.55), offer(2, 0.6)];
+/// let text = offers_table_marked(&now, 20, &changes(&before, &now));
+/// let rows: Vec<Vec<&str>> = text.lines().skip(1).map(|l| l.split_whitespace().collect()).collect();
+/// assert_eq!((rows[0][0], rows[0][1], rows[0][4]), ("+", "3", "0.400"));
+/// assert_eq!(&rows[1][..5], ["1", "-", "-", "0.550", "(was"]);
+/// assert_eq!(&rows[2][..2], ["2", "-"], "an unchanged offer has no mark");
+/// ```
+#[must_use]
+pub fn offers_table_marked(offers: &[Offer], top: usize, changes: &OfferChanges) -> String {
+    let mut header: Vec<&str> = vec![""];
+    header.extend(OFFER_HEADER);
+    let rows: Vec<Vec<String>> = offers
+        .iter()
+        .take(top)
+        .map(|o| {
+            let mut cells = offer_row(o);
+            let mark = if changes.appeared.iter().any(|a| a.id == o.id) {
+                "+"
+            } else {
+                ""
+            };
+            if let Some(r) = changes.repriced.iter().find(|r| r.offer.id == o.id)
+                && let Some(cell) = cells.get_mut(PRICE_COLUMN)
+            {
+                *cell = format!("{cell} (was {:.3})", r.was);
+            }
+            cells.insert(0, String::from(mark));
+            cells
+        })
+        .collect();
+    let mut out = layout(&header, &rows);
+    if offers.is_empty() {
+        out.push_str("(no offers)\n");
+    }
+    out
+}
+
+/// At most this many offers are listed per kind of change; the rest are counted.
+const CHANGE_LINES: usize = 10;
+
+/// An offer in one line: `46579456  1x RTX 5090  0.554 $/h  California, US`.
+fn offer_brief(o: &Offer) -> String {
+    format!(
+        "{}  {}  {} $/h  {}",
+        o.id,
+        gpu_cell(o.num_gpus, o.gpu_name.as_deref()),
+        or_dash(o.dph_total.map(|d| format!("{d:.3}"))),
+        or_dash(o.geolocation.as_deref().map(capped)),
+    )
+}
+
+/// `2 new, 1 repriced, 3 gone`, or `no change`.
+fn change_counts(changes: &OfferChanges) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if !changes.appeared.is_empty() {
+        parts.push(format!("{} new", changes.appeared.len()));
+    }
+    if !changes.repriced.is_empty() {
+        parts.push(format!("{} repriced", changes.repriced.len()));
+    }
+    if !changes.gone.is_empty() {
+        parts.push(format!("{} gone", changes.gone.len()));
+    }
+    if parts.is_empty() {
+        String::from("no change")
+    } else {
+        parts.join(", ")
+    }
+}
+
+/// The lines of one kind of change: `mark` and `describe(item)` for the first [`CHANGE_LINES`],
+/// then how many more.
+fn change_lines<T>(out: &mut String, mark: char, items: &[T], describe: impl Fn(&T) -> String) {
+    for item in items.iter().take(CHANGE_LINES) {
+        let _ = writeln!(out, "{mark} {}", describe(item));
+    }
+    if items.len() > CHANGE_LINES {
+        let _ = writeln!(out, "{mark} ... and {} more", items.len() - CHANGE_LINES);
+    }
+}
+
+/// vast.ai answers at most 64 rows per search: an offer may only have entered or left them.
+const CUT_NOTE: &str = "(vast.ai caps a search at 64 rows: an offer may only have entered or left them; narrow the search)\n";
+
+/// What moved since the previous look, to print under the table of a watch.
+///
+/// The table already marks the new offers and shows the changed prices, so this is the counts,
+/// then the offers that are gone (a table cannot show them). `cut` is whether the search may have
+/// been cut ([`crate::offer::OfferPage::maybe_cut`]).
+///
+/// ```
+/// use vast_skopos::{offer::{Offer, changes}, render::changes_note};
+/// let offer = |id: u64, p: f64| Offer::from_json(&serde_json::json!(
+///   {"id": id, "dph_total": p, "gpu_name": "RTX 5090", "num_gpus": 1, "geolocation": "Spain, ES"})).unwrap();
+/// let before = [offer(1, 0.5), offer(2, 0.6)];
+/// let now = [offer(1, 0.5), offer(3, 0.7)];
+/// assert_eq!(changes_note(&changes(&before, &now), false),
+///   "since the last look: 1 new, 1 gone\n- 2  1x RTX 5090  0.600 $/h  Spain, ES\n");
+/// assert_eq!(changes_note(&changes(&now, &now), false), "since the last look: no change\n");
+/// ```
+#[must_use]
+pub fn changes_note(changes: &OfferChanges, cut: bool) -> String {
+    let mut out = format!("since the last look: {}\n", change_counts(changes));
+    change_lines(&mut out, '-', &changes.gone, offer_brief);
+    if cut && !(changes.appeared.is_empty() && changes.gone.is_empty()) {
+        out.push_str(CUT_NOTE);
+    }
+    out
+}
+
+/// The look of `vas offers --watch --changes`: no table, only what moved.
+///
+/// The first look (no `changes`) is the baseline; later ones name every change, a line each (`+`
+/// new, `~` repriced, `-` gone), or say `no change` in the one line. `offers` is how many offers
+/// the look kept, `now` the time of the search (Unix seconds).
+///
+/// ```
+/// use vast_skopos::{offer::{Offer, changes}, render::changes_only};
+/// let offer = |id: u64, p: f64| Offer::from_json(&serde_json::json!(
+///   {"id": id, "dph_total": p, "gpu_name": "RTX 5090", "num_gpus": 1, "geolocation": "Spain, ES"})).unwrap();
+/// assert_eq!(changes_only(None, 2, false, 0.0),
+///   "searched 00:00:00 UTC: 2 offers (the first look: what moves follows)\n");
+/// let before = [offer(1, 0.5), offer(2, 0.6)];
+/// let now = [offer(1, 0.55), offer(3, 0.7)];
+/// assert_eq!(changes_only(Some(&changes(&before, &now)), 2, false, 3661.0),
+///   "searched 01:01:01 UTC: 2 offers, 1 new, 1 repriced, 1 gone\n\
+///    + 3  1x RTX 5090  0.700 $/h  Spain, ES\n\
+///    ~ 1  1x RTX 5090  0.500 -> 0.550 $/h  Spain, ES\n\
+///    - 2  1x RTX 5090  0.600 $/h  Spain, ES\n");
+/// assert_eq!(changes_only(Some(&changes(&now, &now)), 2, false, 3661.0),
+///   "searched 01:01:01 UTC: 2 offers, no change\n");
+/// ```
+#[must_use]
+pub fn changes_only(changes: Option<&OfferChanges>, offers: usize, cut: bool, now: f64) -> String {
+    let at = clock(now);
+    let noun = if offers == 1 { "offer" } else { "offers" };
+    let Some(changes) = changes else {
+        return format!("searched {at}: {offers} {noun} (the first look: what moves follows)\n");
+    };
+    let mut out = format!(
+        "searched {at}: {offers} {noun}, {}\n",
+        change_counts(changes)
+    );
+    change_lines(&mut out, '+', &changes.appeared, offer_brief);
+    change_lines(&mut out, '~', &changes.repriced, |r| {
+        format!(
+            "{}  {}  {:.3} -> {} $/h  {}",
+            r.offer.id,
+            gpu_cell(r.offer.num_gpus, r.offer.gpu_name.as_deref()),
+            r.was,
+            or_dash(r.offer.dph_total.map(|d| format!("{d:.3}"))),
+            or_dash(r.offer.geolocation.as_deref().map(capped)),
+        )
+    });
+    change_lines(&mut out, '-', &changes.gone, offer_brief);
+    if cut && !(changes.appeared.is_empty() && changes.gone.is_empty()) {
+        out.push_str(CUT_NOTE);
     }
     out
 }
