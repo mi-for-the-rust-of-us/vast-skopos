@@ -197,6 +197,11 @@ application clocks and sync boost are not restraints and are not shown. `--compa
 of those words: empty when nothing holds the card, `null` when the box did not say). The power is asked in a
 second `nvidia-smi` query, so a driver that lacks a field costs the power cells (`-`) and nothing else.
 
+The clock itself is the `CLOCK` column (`1702/3090`: the SM clock now over the highest the card reaches, in
+MHz), and under `--watch` a `CLOCK TREND` column after `TREND` keeps its last six samples, the mean of the box's
+GPUs: a card that fell from 3000 to 1700 MHz reads `3000 2900 1700 1700 1700 1700`, while its utilisation
+still reads `100`. `--compact` carries them as `probe.clock_trend` (`null` in a one-shot).
+
 A cap can also arrive mid-run. Under `vas --ssh --watch N`, a line under the money says when a GPU's limit or
 its throttle reasons change from one look to the next: `! 56533728 gpu 0: power limit 575 -> 400 W, power_cap
 began` (and `... ended`). The first look of a box is the baseline, a reading the box did not give changes

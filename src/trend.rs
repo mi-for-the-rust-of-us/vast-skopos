@@ -74,7 +74,9 @@ struct PowerState {
 /// The last utilisation samples of each box, by instance id.
 ///
 /// A sample is the mean utilisation of the box's GPUs, in percent, rounded to the nearest whole
-/// number.
+/// number; the clock history keeps, the same way, the mean SM clock in MHz (a card whose clock
+/// falls from 3000 to 1700 while it reads 100 % busy is being held back: see
+/// [`PowerChange`] for why).
 ///
 /// ```
 /// use vast_skopos::{instance::Instance, probe::parse_output, trend::Trend};
@@ -90,8 +92,11 @@ struct PowerState {
 /// ```
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Trend {
-    /// The samples of each box, oldest first, at most [`TREND_LEN`].
+    /// The utilisation samples of each box, oldest first, at most [`TREND_LEN`].
     by_box: HashMap<u64, VecDeque<u32>>,
+    /// The SM clock samples of each box (MHz, the mean of its GPUs), oldest first, at most
+    /// [`TREND_LEN`].
+    clocks: HashMap<u64, VecDeque<u32>>,
     /// The power of each GPU of each box, as last read.
     power: HashMap<u64, HashMap<u32, PowerState>>,
     /// What changed at the last [`record`](Trend::record).
@@ -151,8 +156,30 @@ fn note_power(
     })
 }
 
+/// Adds `sample` to a history, dropping the oldest once it holds [`TREND_LEN`].
+fn keep(history: &mut VecDeque<u32>, sample: u32) {
+    if history.len() == TREND_LEN {
+        history.pop_front();
+    }
+    history.push_back(sample);
+}
+
+/// Samples as the table shows them, separated by spaces, or `-` without any.
+fn text_of(samples: &[u32]) -> String {
+    if samples.is_empty() {
+        String::from("-")
+    } else {
+        samples
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
 impl Trend {
-    /// Records one look: the mean GPU utilisation of every box that was probed and answered.
+    /// Records one look: the mean GPU utilisation and SM clock of every box that was probed and
+    /// answered.
     ///
     /// A probe that failed adds nothing and keeps what the box had (one dropped `ssh` is not the
     /// run stopping). A box that is no longer in `instances`, or no longer running, loses its
@@ -163,6 +190,7 @@ impl Trend {
     pub fn record(&mut self, instances: &[Instance], probes: &[ProbeOutcome]) {
         let running = |id: &u64| instances.iter().any(|i| i.id == *id && i.is_running());
         self.by_box.retain(|id, _| running(id));
+        self.clocks.retain(|id, _| running(id));
         self.power.retain(|id, _| running(id));
         self.changes.clear();
         for (n, instance) in instances.iter().enumerate() {
@@ -175,15 +203,14 @@ impl Trend {
                     self.changes.push(change);
                 }
             }
-            let utils: Vec<u32> = probe.gpus.iter().map(|g| g.util_pct).collect();
-            let Some(sample) = mean_util(&utils) else {
-                continue;
-            };
-            let history = self.by_box.entry(instance.id).or_default();
-            if history.len() == TREND_LEN {
-                history.pop_front();
+            let clocks: Vec<u32> = probe.gpus.iter().filter_map(|g| g.sm_mhz).collect();
+            if let Some(sample) = mean_util(&clocks) {
+                keep(self.clocks.entry(instance.id).or_default(), sample);
             }
-            history.push_back(sample);
+            let utils: Vec<u32> = probe.gpus.iter().map(|g| g.util_pct).collect();
+            if let Some(sample) = mean_util(&utils) {
+                keep(self.by_box.entry(instance.id).or_default(), sample);
+            }
         }
     }
 
@@ -206,15 +233,21 @@ impl Trend {
     /// The samples of box `id` as the table shows them (`97 99 0 98`), or `-` without any.
     #[must_use]
     pub fn text(&self, id: u64) -> String {
-        let samples = self.samples(id);
-        if samples.is_empty() {
-            String::from("-")
-        } else {
-            samples
-                .iter()
-                .map(u32::to_string)
-                .collect::<Vec<_>>()
-                .join(" ")
-        }
+        text_of(&self.samples(id))
+    }
+
+    /// The SM clock samples of box `id` in MHz, oldest first; empty when it has none.
+    #[must_use]
+    pub fn clock_samples(&self, id: u64) -> Vec<u32> {
+        self.clocks
+            .get(&id)
+            .map(|history| history.iter().copied().collect())
+            .unwrap_or_default()
+    }
+
+    /// The clock samples of box `id` as the table shows them (`3000 2900 1700`), or `-`.
+    #[must_use]
+    pub fn clock_text(&self, id: u64) -> String {
+        text_of(&self.clock_samples(id))
     }
 }

@@ -220,3 +220,60 @@ fn the_reasons_a_silent_probe_did_not_give_are_still_remembered_when_they_end() 
     trend.record(&boxes, &[powered("575", "0x0")]);
     assert_eq!(lines(&trend), ["! 7 gpu 0: power_cap ended"]);
 }
+
+/// A probe of one GPU at this SM clock (MHz, or `[N/A]`).
+fn clocked(mhz: &str) -> ProbeOutcome {
+    Some(Ok(parse_output(&format!(
+        "0, 100, 1, 2\n---vas-power---\n0, 399, 400, 575, {mhz}, 3090, 0x0\n"
+    ))))
+}
+
+#[test]
+fn the_sm_clock_is_kept_like_the_utilisation_oldest_first_and_trimmed() {
+    let boxes = [running(7)];
+    let mut trend = Trend::default();
+    assert_eq!(trend.clock_text(7), "-");
+    for mhz in [3000, 2900, 1700, 1700, 1700, 1700, 1700, 1650] {
+        trend.record(&boxes, &[clocked(&mhz.to_string())]);
+    }
+    assert_eq!(trend.clock_samples(7).len(), TREND_LEN);
+    assert_eq!(trend.clock_text(7), "1700 1700 1700 1700 1700 1650");
+    // The utilisation went on beside it.
+    assert_eq!(trend.samples(7), [100; 6]);
+}
+
+#[test]
+fn a_clock_sample_is_the_mean_of_the_gpus_that_gave_one_and_a_silent_probe_adds_none() {
+    let boxes = [running(7)];
+    let mut trend = Trend::default();
+    let two = |a: &str, b: &str| -> ProbeOutcome {
+        Some(Ok(parse_output(&format!(
+            "0, 1, 1, 2\n1, 1, 1, 2\n---vas-power---\n0, 1, 400, 575, {a}, 3090, 0x0\n1, 1, 400, 575, {b}, 3090, 0x0\n"
+        ))))
+    };
+    trend.record(&boxes, &[two("3000", "1701")]);
+    assert_eq!(trend.clock_samples(7), [2351], "2350.5 rounds up");
+    trend.record(&boxes, &[two("1600", "[N/A]")]);
+    assert_eq!(
+        trend.clock_samples(7),
+        [2351, 1600],
+        "the GPU that gave none is left out, not counted as 0 MHz"
+    );
+    // No clock from any GPU, a probe with no power section, a failed probe: no sample.
+    trend.record(&boxes, &[clocked("[N/A]")]);
+    trend.record(&boxes, &[Some(Ok(parse_output("0, 100, 1, 2\n")))]);
+    trend.record(&boxes, &[failed()]);
+    assert_eq!(trend.clock_samples(7), [2351, 1600]);
+}
+
+#[test]
+fn a_stopped_box_loses_its_clock_history() {
+    let mut trend = Trend::default();
+    trend.record(&[running(7)], &[clocked("3000")]);
+    let stopped =
+        Instance::from_json(&serde_json::json!({"id": 7, "actual_status": "exited"})).unwrap();
+    trend.record(&[stopped], &[None]);
+    assert_eq!(trend.clock_samples(7), Vec::<u32>::new());
+    trend.record(&[running(7)], &[clocked("1700")]);
+    assert_eq!(trend.clock_text(7), "1700", "fresh, not 3000 1700");
+}

@@ -52,6 +52,10 @@ All notable changes to this project are documented here. The format is based on
   at ~1,700 of 3,090 MHz by the software power cap, with 100 % utilisation. A second `nvidia-smi` query, so
   an old driver costs only these cells. `probe::GpuReading` gains the six fields (it is `#[non_exhaustive]`),
   `GpuReading::throttle_words`.
+- The clock, under `vas --ssh`: a `CLOCK` column after `POWER` (`1702/3090` MHz: now over the highest the card
+  reaches) and, under `--watch`, a `CLOCK TREND` column after `TREND` with the last six samples of each box
+  (the mean SM clock of its GPUs, oldest first, `3000 2900 1700 1700 1700 1700`), and `probe.clock_trend` in
+  `--compact` (`null` in a one-shot). `Trend::clock_samples`, `Trend::clock_text`.
 - A watch tells when a cap arrives or leaves: under `vas --ssh --watch N`, a line under the money when a GPU's
   power limit or throttle reasons change between two looks (`! 56533728 gpu 0: power limit 575 -> 400 W,
   power_cap began`), and in `--compact` an `event` object before the money one (`id`, `gpu`, `limit_was`,

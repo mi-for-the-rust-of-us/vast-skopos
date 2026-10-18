@@ -685,8 +685,10 @@ fn the_trend_is_a_column_after_the_vram_and_only_when_a_watch_has_one() {
     let header: Vec<&str> = with.lines().next().unwrap().split_whitespace().collect();
     let at = header.iter().position(|h| *h == "VRAM").unwrap();
     assert_eq!(
-        &header[at..at + 5],
-        ["VRAM", "POWER", "TREND", "LAST", "LOG"],
+        &header[at..at + 8],
+        [
+            "VRAM", "POWER", "CLOCK", "TREND", "CLOCK", "TREND", "LAST", "LOG"
+        ],
         "{with}"
     );
     let running = words(&with, "1");

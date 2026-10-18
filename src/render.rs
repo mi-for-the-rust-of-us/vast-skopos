@@ -148,6 +148,25 @@ fn power_cell(probe: &Probe) -> String {
     }
 }
 
+/// The clock cell from a probe: each GPU's SM clock now over the highest it can reach, in MHz
+/// (`1702/3090`); `-` for a GPU whose clock the box did not give.
+fn clock_cell(probe: &Probe) -> String {
+    let cells: Vec<String> = probe
+        .gpus
+        .iter()
+        .map(|g| match (g.sm_mhz, g.sm_max_mhz) {
+            (Some(now), Some(max)) => format!("{now}/{max}"),
+            (Some(now), None) => now.to_string(),
+            (None, _) => String::from("-"),
+        })
+        .collect();
+    if cells.is_empty() {
+        String::from("-")
+    } else {
+        cells.join(" ")
+    }
+}
+
 /// The GPU-utilisation and memory cells from a probe.
 fn gpu_cells(probe: &Probe) -> (String, String) {
     let util = probe
@@ -342,9 +361,9 @@ pub fn table(
         header.extend(["MACHINE", "HOST"]);
     }
     if with_ssh {
-        header.extend(["GPU% (ssh)", "VRAM", "POWER"]);
+        header.extend(["GPU% (ssh)", "VRAM", "POWER", "CLOCK"]);
         if trend.is_some() {
-            header.push("TREND");
+            header.extend(["TREND", "CLOCK TREND"]);
         }
         header.push("LAST LOG / SSH ERROR");
     }
@@ -368,12 +387,19 @@ pub fn table(
             ]);
         }
         if with_ssh {
-            let (util, mem, power, last) = match outcome_at(probes, n) {
+            let (util, mem, power, clock, last) = match outcome_at(probes, n) {
                 Some(Ok(p)) => {
                     let (util, mem) = gpu_cells(p);
-                    (util, mem, power_cell(p), log_cell(p.log.as_ref()))
+                    (
+                        util,
+                        mem,
+                        power_cell(p),
+                        clock_cell(p),
+                        log_cell(p.log.as_ref()),
+                    )
                 }
                 Some(Err(e)) => (
+                    String::from("?"),
                     String::from("?"),
                     String::from("?"),
                     String::from("?"),
@@ -384,11 +410,13 @@ pub fn table(
                     String::from("-"),
                     String::from("-"),
                     String::from("-"),
+                    String::from("-"),
                 ),
             };
-            row.extend([util, mem, power]);
+            row.extend([util, mem, power, clock]);
             if let Some(history) = trend {
                 row.push(history.text(i.id));
+                row.push(history.clock_text(i.id));
             }
             row.push(last);
         }

@@ -42,7 +42,11 @@ fn log_json(log: Option<&LogReading>) -> Value {
 
 /// One probe: its GPUs and its log, or the reason it failed; `null` when the box was not probed
 /// (`--ssh` not given, or the box not running).
-fn probe_json(probe: Option<&Result<Probe>>, trend: Option<&[u32]>) -> Value {
+fn probe_json(
+    probe: Option<&Result<Probe>>,
+    trend: Option<&[u32]>,
+    clock_trend: Option<&[u32]>,
+) -> Value {
     match probe {
         None => Value::Null,
         Some(Err(e)) => json!({"error": e.to_string()}),
@@ -61,6 +65,7 @@ fn probe_json(probe: Option<&Result<Probe>>, trend: Option<&[u32]>) -> Value {
             })).collect::<Vec<_>>(),
             "log": log_json(p.log.as_ref()),
             "util_trend": trend,
+            "clock_trend": clock_trend,
         }),
     }
 }
@@ -69,6 +74,7 @@ fn probe_json(probe: Option<&Result<Probe>>, trend: Option<&[u32]>) -> Value {
 fn box_json(i: &Instance, probe: Option<&Result<Probe>>, trend: Option<&Trend>, now: f64) -> Value {
     let endpoint = i.ssh_endpoint();
     let samples = trend.map(|t| t.samples(i.id));
+    let clock_samples = trend.map(|t| t.clock_samples(i.id));
     json!({
         "kind": "box",
         "at": whole_secs(now),
@@ -86,7 +92,7 @@ fn box_json(i: &Instance, probe: Option<&Result<Probe>>, trend: Option<&Trend>, 
         "ssh_port": endpoint.map(|(_, port)| port),
         "machine_id": i.machine_id,
         "host_id": i.host_id,
-        "probe": probe_json(probe, samples.as_deref()),
+        "probe": probe_json(probe, samples.as_deref(), clock_samples.as_deref()),
     })
 }
 

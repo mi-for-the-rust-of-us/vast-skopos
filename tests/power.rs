@@ -37,8 +37,34 @@ fn power_cell(output: &str) -> String {
     );
     let header = text.lines().next().unwrap();
     let from = header.find("POWER").unwrap();
+    let to = header.find("CLOCK").unwrap();
+    text.lines().nth(1).unwrap()[from..to].trim().to_owned()
+}
+
+/// The CLOCK cell of the box's row.
+fn clock_cell(output: &str) -> String {
+    let text = table(
+        &[running()],
+        &[outcome(output)],
+        None,
+        TableOptions::new().ssh(true),
+        0.0,
+    );
+    let header = text.lines().next().unwrap();
+    let from = header.find("CLOCK").unwrap();
     let to = header.find("LAST LOG").unwrap();
     text.lines().nth(1).unwrap()[from..to].trim().to_owned()
+}
+
+#[test]
+fn the_clock_cell_says_the_clock_over_the_highest_it_can_reach() {
+    assert_eq!(clock_cell(CAPPED), "1695/3090");
+    let two = "0, 1, 1, 2\n1, 1, 1, 2\n---vas-power---\n0, 1, 400, 575, 3000, 3090, 0x0\n1, 1, 400, 575, 1700, 3090, 0x0\n";
+    assert_eq!(clock_cell(two), "3000/3090 1700/3090");
+    // No maximum given: the clock alone. No clock at all: a dash.
+    let no_max = "0, 1, 1, 2\n---vas-power---\n0, 1, 400, 575, 1700, [N/A], 0x0\n";
+    assert_eq!(clock_cell(no_max), "1700");
+    assert_eq!(clock_cell("0, 1, 1, 2\n"), "-");
 }
 
 #[test]
@@ -257,4 +283,53 @@ fn compact_prints_the_change_as_an_event_before_the_money_that_closes_the_look()
     // Without a trend there is no event at all.
     let once = json_lines(&[running()], &[outcome(CAPPED)], None, None, 0.0);
     assert_eq!(once.lines().count(), 2);
+}
+
+#[test]
+fn compact_carries_the_clock_history_of_a_watch_and_null_for_a_one_shot() {
+    let mut trend = vast_skopos::trend::Trend::default();
+    let at = |mhz: u32| {
+        outcome(&format!(
+            "0, 100, 1, 2\n---vas-power---\n0, 399, 400, 575, {mhz}, 3090, 0x4\n"
+        ))
+    };
+    for mhz in [3000, 1700] {
+        trend.record(&[running()], &[at(mhz)]);
+    }
+    let probe = |trend: Option<&vast_skopos::trend::Trend>| -> serde_json::Value {
+        let text = json_lines(&[running()], &[at(1700)], trend, None, 0.0);
+        serde_json::from_str::<serde_json::Value>(text.lines().next().unwrap()).unwrap()["probe"]
+            .clone()
+    };
+    assert_eq!(
+        probe(Some(&trend))["clock_trend"],
+        serde_json::json!([3000, 1700])
+    );
+    assert!(probe(None)["clock_trend"].is_null());
+}
+
+#[test]
+fn a_watch_table_shows_the_clock_history_beside_the_utilisation_history() {
+    let mut trend = vast_skopos::trend::Trend::default();
+    let at = |mhz: u32| {
+        outcome(&format!(
+            "0, 100, 1, 2\n---vas-power---\n0, 399, 400, 575, {mhz}, 3090, 0x4\n"
+        ))
+    };
+    for mhz in [3000, 1700] {
+        trend.record(&[running()], &[at(mhz)]);
+    }
+    let text = table(
+        &[running()],
+        &[at(1700)],
+        None,
+        TableOptions::new().ssh(true).trend(&trend),
+        0.0,
+    );
+    let row: Vec<&str> = text.lines().nth(1).unwrap().split_whitespace().collect();
+    assert!(
+        row.windows(4).any(|w| w == ["100", "100", "3000", "1700"]),
+        "the utilisation samples, then the clock samples: {text}"
+    );
+    assert!(row.contains(&"1700/3090"), "{text}");
 }
