@@ -4,6 +4,7 @@
 use std::fmt::Write as _;
 
 use crate::instance::{Account, Instance, shortened, whole_secs};
+use crate::market::{LEARNING_LOOKS, MarketWatch, OfferKey};
 use crate::offer::{OFFER_CAP, Offer, OfferChanges, OfferPage, OfferQuery, OfferSort};
 use crate::probe::{LogReading, Probe, ProbeOutcome, outcome_at};
 use crate::runway::Runway;
@@ -446,28 +447,44 @@ pub fn offers_table(offers: &[Offer], top: usize) -> String {
     offers_view(offers, top, None)
 }
 
-/// The offers table, with a first column of marks and the previous price of the offers that moved
-/// when `marks` is given (a watch's look), without them otherwise.
-fn offers_view(offers: &[Offer], top: usize, marks: Option<&OfferChanges>) -> String {
+/// The offers table, with a first column of marks, the previous price of the offers that moved, and
+/// a SEEN column (before WHERE) when `marks` is given (a watch's look), without them otherwise.
+fn offers_view(
+    offers: &[Offer],
+    top: usize,
+    marks: Option<(&OfferChanges, &MarketWatch)>,
+) -> String {
     let mut header: Vec<&str> = Vec::new();
     if marks.is_some() {
         header.push("");
     }
     header.extend(OFFER_HEADER);
+    if marks.is_some() {
+        let place = header.pop();
+        header.push("SEEN");
+        header.extend(place);
+    }
     let rows: Vec<Vec<String>> = offers
         .iter()
         .take(top)
         .map(|o| {
+            let key = OfferKey::of(o);
             let was = marks
-                .and_then(|m| m.repriced.iter().find(|r| r.offer.id == o.id))
+                .and_then(|(m, _)| m.repriced.iter().find(|r| r.offer.id == o.id))
                 .map(|r| r.was);
             let mut cells = offer_row(o, was);
-            if let Some(m) = marks {
-                let mark = if m.appeared.iter().any(|a| a.id == o.id) {
+            if let Some((m, market)) = marks {
+                let mark = if m.appeared.iter().any(|a| OfferKey::of(a) == key) {
                     "+"
                 } else {
                     ""
                 };
+                let seen = market
+                    .seen(o)
+                    .map_or_else(|| String::from("-"), |(n, of)| format!("{n}/{of}"));
+                let place = cells.pop();
+                cells.push(seen);
+                cells.extend(place);
                 cells.insert(0, String::from(mark));
             }
             cells
@@ -480,23 +497,39 @@ fn offers_view(offers: &[Offer], top: usize, marks: Option<&OfferChanges>) -> St
     out
 }
 
-/// The offers table of a watch: [`offers_table`] with a first column that marks `+` an offer that
-/// was not in the previous look, and a price that moved read `0.594 (was 0.575)`.
+/// The offers table of a watch: [`offers_table`] with marks, a was and a SEEN column.
+///
+/// A first column marks `+` an offer whose machine is new (see [`MarketWatch`]), a price that moved
+/// reads `0.594 (was 0.575)`, and a SEEN column, before WHERE, says in how many looks the machine
+/// appeared (`3/9`).
 ///
 /// ```
-/// use vast_skopos::{offer::{Offer, OfferChanges}, render::offers_table_marked};
+/// use vast_skopos::{market::MarketWatch, offer::Offer, render::offers_table_marked};
 /// let offer = |id: u64, p: f64| Offer::from_json(&serde_json::json!({"id": id, "dph_total": p})).unwrap();
 /// let before = [offer(1, 0.5), offer(2, 0.6)];
 /// let now = [offer(3, 0.4), offer(1, 0.55), offer(2, 0.6)];
-/// let text = offers_table_marked(&now, 20, &OfferChanges::between(&before, &now));
+/// let mut watch = MarketWatch::default();
+/// for _ in 0..3 {
+///     watch.record(&before);
+/// }
+/// let moved = watch.record(&now).unwrap();
+/// let text = offers_table_marked(&now, 20, &moved, &watch);
 /// let rows: Vec<Vec<&str>> = text.lines().skip(1).map(|l| l.split_whitespace().collect()).collect();
 /// assert_eq!((rows[0][0], rows[0][1], rows[0][4]), ("+", "3", "0.400"));
 /// assert_eq!(&rows[1][..5], ["1", "-", "-", "0.550", "(was"]);
 /// assert_eq!(&rows[2][..2], ["2", "-"], "an unchanged offer has no mark");
+/// // SEEN comes before WHERE, which is a dash here: the new machine was seen once, the others always.
+/// assert_eq!(rows[0][rows[0].len() - 2], "1/1");
+/// assert_eq!(rows[2][rows[2].len() - 2], "4/4");
 /// ```
 #[must_use]
-pub fn offers_table_marked(offers: &[Offer], top: usize, changes: &OfferChanges) -> String {
-    offers_view(offers, top, Some(changes))
+pub fn offers_table_marked(
+    offers: &[Offer],
+    top: usize,
+    changes: &OfferChanges,
+    market: &MarketWatch,
+) -> String {
+    offers_view(offers, top, Some((changes, market)))
 }
 
 /// In the table mode, at most this many gone offers are listed under the table; the rest are
@@ -535,18 +568,17 @@ fn change_counts(changes: &OfferChanges, shown: Option<&[Offer]>) -> String {
     if changes.is_empty() {
         return String::from("no change");
     }
-    let below = |id: u64| shown.is_some_and(|rows| !rows.iter().any(|o| o.id == id));
+    let below = |offer: &Offer| {
+        let key = OfferKey::of(offer);
+        shown.is_some_and(|rows| !rows.iter().any(|o| OfferKey::of(o) == key))
+    };
     let mut parts: Vec<String> = Vec::new();
     if !changes.appeared.is_empty() {
-        let hidden = changes.appeared.iter().filter(|o| below(o.id)).count();
+        let hidden = changes.appeared.iter().filter(|o| below(o)).count();
         parts.push(counted(changes.appeared.len(), "new", hidden));
     }
     if !changes.repriced.is_empty() {
-        let hidden = changes
-            .repriced
-            .iter()
-            .filter(|r| below(r.offer.id))
-            .count();
+        let hidden = changes.repriced.iter().filter(|r| below(&r.offer)).count();
         parts.push(counted(changes.repriced.len(), "repriced", hidden));
     }
     if !changes.gone.is_empty() {
@@ -595,20 +627,25 @@ fn cut_note(changes: &OfferChanges, page: &OfferPage) -> &'static str {
 /// failed since the previous look, which then reads `since the last successful look`.
 ///
 /// ```
-/// use vast_skopos::{offer::{Offer, OfferChanges, OfferPage}, render::offers_changes_note};
+/// use vast_skopos::{market::MarketWatch, offer::{Offer, OfferChanges, OfferPage}, render::offers_changes_note};
 /// let offer = |id: u64, p: f64| Offer::from_json(&serde_json::json!(
 ///   {"id": id, "dph_total": p, "gpu_name": "RTX 5090", "num_gpus": 1, "geolocation": "Spain, ES"})).unwrap();
 /// let page = OfferPage::from_json(&serde_json::json!({"offers": []})).unwrap();
 /// let before = [offer(1, 0.5), offer(2, 0.6)];
 /// let now = [offer(1, 0.5), offer(3, 0.7)];
-/// let moved = OfferChanges::between(&before, &now);
+/// let mut watch = MarketWatch::default();
+/// for _ in 0..3 {
+///     watch.record(&before);
+/// }
+/// let mut moved = watch.record(&now).unwrap();
+/// moved.gone.push(offer(2, 0.6)); // (a machine is gone after five looks; here, as if it were)
 /// assert_eq!(offers_changes_note(&page, &moved, &now, false),
 ///   "since the last look: 1 new, 1 gone\n- 2  1x RTX 5090  0.600 $/h  Spain, ES\n");
 /// // Only the first row is on screen: the new offer is below the table.
 /// assert_eq!(offers_changes_note(&page, &moved, &now[..1], true),
 ///   "since the last successful look: 1 new (1 below the table), 1 gone\n\
 ///    - 2  1x RTX 5090  0.600 $/h  Spain, ES\n");
-/// let steady = OfferChanges::between(&now, &now);
+/// let steady = OfferChanges::default();
 /// assert_eq!(offers_changes_note(&page, &steady, &now, false), "since the last look: no change\n");
 /// ```
 #[must_use]
@@ -631,28 +668,33 @@ pub fn offers_changes_note(
 
 /// The look of `vas offers --watch --changes`: no table, only what moved.
 ///
-/// The first look (no `changes`) is the baseline; later ones name every change, a line each (`+`
+/// The first looks (no `changes`) learn the market ([`MarketWatch`]); later ones name every change, a line each (`+`
 /// new, `~` repriced, `-` gone, none left out), or say `no change` in the one line. `kept` is the
 /// offers the look kept, `page` the search's answer (whose cap may explain an entry or an exit),
 /// `missed` whether a search failed since the previous look (the line then says so), `now` the time
 /// of the search (Unix seconds).
 ///
 /// ```
-/// use vast_skopos::{offer::{Offer, OfferChanges, OfferPage}, render::offers_changes_only};
+/// use vast_skopos::{market::MarketWatch, offer::{Offer, OfferChanges, OfferPage}, render::offers_changes_only};
 /// let offer = |id: u64, p: f64| Offer::from_json(&serde_json::json!(
 ///   {"id": id, "dph_total": p, "gpu_name": "RTX 5090", "num_gpus": 1, "geolocation": "Spain, ES"})).unwrap();
 /// let page = OfferPage::from_json(&serde_json::json!({"offers": []})).unwrap();
 /// let before = [offer(1, 0.5), offer(2, 0.6)];
 /// let now = [offer(1, 0.55), offer(3, 0.7)];
 /// assert_eq!(offers_changes_only(&page, None, &before, false, 0.0),
-///   "searched 00:00:00 UTC: 2 offers (the first look: what moves follows)\n");
-/// let moved = OfferChanges::between(&before, &now);
+///   "searched 00:00:00 UTC: 2 offers (learning the market: changes are reported from look 4)\n");
+/// let mut watch = MarketWatch::default();
+/// for _ in 0..3 {
+///     watch.record(&before);
+/// }
+/// let mut moved = watch.record(&now).unwrap();
+/// moved.gone.push(offer(2, 0.6)); // (a machine is gone after five looks; here, as if it were)
 /// assert_eq!(offers_changes_only(&page, Some(&moved), &now, false, 3661.0),
 ///   "searched 01:01:01 UTC: 2 offers, 1 new, 1 repriced, 1 gone\n\
 ///    + 3  1x RTX 5090  0.700 $/h  Spain, ES\n\
 ///    ~ 1  1x RTX 5090  0.500 -> 0.550 $/h  Spain, ES\n\
 ///    - 2  1x RTX 5090  0.600 $/h  Spain, ES\n");
-/// let steady = OfferChanges::between(&now, &now);
+/// let steady = OfferChanges::default();
 /// assert_eq!(offers_changes_only(&page, Some(&steady), &now, true, 3661.0),
 ///   "searched 01:01:01 UTC: 2 offers, no change (a search failed in between)\n");
 /// ```
@@ -668,7 +710,10 @@ pub fn offers_changes_only(
     let at = clock(now);
     let noun = if offers == 1 { "offer" } else { "offers" };
     let Some(changes) = changes else {
-        return format!("searched {at}: {offers} {noun} (the first look: what moves follows)\n");
+        return format!(
+            "searched {at}: {offers} {noun} (learning the market: changes are reported from look {})\n",
+            LEARNING_LOOKS + 1
+        );
     };
     let failed = if missed {
         " (a search failed in between)"
@@ -687,6 +732,26 @@ pub fn offers_changes_only(
     change_lines(&mut out, '-', &changes.gone, None, brief);
     out.push_str(cut_note(changes, page));
     out
+}
+
+/// The note under a search: vast.ai's answers differ from one search to the next.
+///
+/// Measured on 2026-10-18: fifteen identical searches 2.5 s apart saw 129 machines, 64 per answer,
+/// and only 30 of them in every answer. A single search is a sample of the market, not the market;
+/// `watching` is whether the search is a look of a `--watch`, which already repeats it.
+///
+/// ```
+/// use vast_skopos::render::offers_variance_note;
+/// assert!(offers_variance_note(false).contains("repeat the search, or use --watch"));
+/// assert!(offers_variance_note(true).contains("SEEN"));
+/// ```
+#[must_use]
+pub const fn offers_variance_note(watching: bool) -> &'static str {
+    if watching {
+        "vast.ai's answers vary from one search to the next; SEEN says in how many looks each machine appeared; changes are marked from look 4.\n"
+    } else {
+        "vast.ai's answers vary from one search to the next; repeat the search, or use --watch, to see more.\n"
+    }
 }
 
 /// The footer of the offers table: counts, order, constraints and the storage priced in; then any

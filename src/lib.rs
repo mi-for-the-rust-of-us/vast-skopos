@@ -21,6 +21,7 @@
 //!   `/api/v0/users/current/`, with the key; the offer search, without);
 //! - [`instance`]: the lenient readers of their JSON;
 //! - [`offer`]: the offers for rent, and the search `vas offers` sends;
+//! - [`market`]: what a watch makes of searches that do not agree with each other;
 //! - [`probe`]: the `ssh` probe and its `nvidia-smi` parser;
 //! - [`render`]: the tables;
 //! - [`runway`]: the credit, the burn and the hours they last, as the money line and `--compact` read them;
@@ -34,6 +35,7 @@ pub mod config;
 pub mod error;
 pub mod instance;
 pub mod key;
+pub mod market;
 pub mod offer;
 pub mod probe;
 pub mod render;

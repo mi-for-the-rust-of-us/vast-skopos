@@ -126,8 +126,9 @@ fn main() -> vast_skopos::Result<()> {
 }
 ```
 
-`OfferChanges::between(previous, current)` says what moved between two looks, and
-`render::offers_table_marked` prints the table of a watch.
+`market::MarketWatch` remembers the machines over the looks of a watch and says what moved
+(`record`) and in how many looks each appeared (`seen`), and `render::offers_table_marked` prints the
+table of a watch.
 
 ## Try it
 
@@ -272,16 +273,32 @@ the search (UTC): the list is a snapshot of a market where offers vanish within 
 
 #### Watching the offers
 
-Offers vanish within minutes, so `vas offers --watch 60` searches again every minute (at least 30 s) until
-Ctrl+C. Each look is the whole table and its footer, with the new offers marked `+` in a first column, a
-price that moved read `0.594 (was 0.575)`, and under the footer what the table cannot show:
+**vast.ai's answers vary.** Measured on 2026-10-18: fifteen identical searches, 2.5 s apart, saw 129
+machines (64 per answer), and only 30 of them in every answer; the others came and went, and one machine
+could answer under two or three offer ids. A single search is a sample of the market, not the market:
+`vas offers` ends with a line saying so (`repeat the search, or use --watch, to see more`). Comparing one
+answer with the next, offer by offer, would report that sampling as a market in turmoil, so a watch
+reads the machines over several looks instead.
+
+`vas offers --watch 60` searches again every minute (at least 30 s) until Ctrl+C. Each look is the whole
+table and its footer. A machine is its machine id and its GPU count, not its offer id, and the table gains
+a `SEEN` column, before `WHERE`: in how many looks each machine appeared, out of the looks since it was
+first seen (`15/15` is a dependable listing, `3/9` one that flickers; why it flickers is not known).
+
+- The first three looks only **learn** the market; nothing is marked or reported before the fourth.
+- After that, `+` marks a machine that was absent from the previous three looks (or never seen), a price
+  that moved reads `0.594 (was 0.575)`, and a machine is **gone** only after it has been missing for five
+  looks in a row, said once.
+
+Under the footer, what the table cannot show:
 
 ```text
-since the last look: 1 new, 1 repriced, 1 gone
+since the last look: 1 new, 1 repriced
+since the last look: 1 gone
 - 46579456  1x RTX 5090  0.554 $/h  California, US
 ```
 
-`--changes` prints only what moved, one line each, for a log or a monitor: a first line for the baseline,
+`--changes` prints only what moved, one line each, for a log or a monitor: a line per look while it learns,
 then one line per look (`no change`, or the counts followed by a line per offer: `+` new, `~` repriced,
 `-` gone), none left out. Under the table, at most ten gone offers are listed, the rest counted.
 

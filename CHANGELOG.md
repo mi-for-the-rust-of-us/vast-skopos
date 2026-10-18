@@ -26,14 +26,22 @@ All notable changes to this project are documented here. The format is based on
   Not with `--wide`. `compact::json_lines`, `runway::Runway` (the credit, the burn and the hours they
   last: the money line and the `money` object are both read from one).
 - `vas offers --watch SECONDS` (at least 30) searches again until Ctrl+C: each look is the whole table
-  with `+` on the offers that are new since the last look, `0.594 (was 0.575)` on a moved price, and
-  under the footer the counts and the offers that are gone. `--changes` prints only what moved, a line
-  each (`+` new, `~` repriced, `-` gone, or `no change`). Offers are compared as the FULL lists the
-  searches kept (an offer sinking below the table's last row is not gone), and a note says when vast.ai's
-  64-row cap may explain an entry or an exit. `OfferChanges::between` (and its `Repriced`),
-  `render::offers_table_marked`, `render::offers_changes_note`, `render::offers_changes_only` (the
-  page first, like `render::offers_footer`). `VAS_WATCH_FLOOR_MS` lowers the 30 s floor of both
-  watches, for tests only.
+  with `+` on the new machines, `0.594 (was 0.575)` on a moved price, a `SEEN` column (before `WHERE`: in
+  how many looks the machine appeared, `15/15` or `3/9`), and under the footer the counts and the
+  machines that are gone. vast.ai's search answers a flickering SAMPLE of the offers (measured
+  2026-10-18: fifteen identical searches saw 129 machines, 30 of them in every answer, and one machine
+  under several offer ids), so the watch does not compare two answers: a machine is its machine id and GPU
+  count (`market::OfferKey`), the first three looks only learn, `+` needs a machine absent from the
+  previous three looks, and a machine is gone after five looks missing in a row
+  (`market::MarketWatch`, with `LEARNING_LOOKS`, `ABSENT_FOR_NEW`, `ABSENT_FOR_GONE`). `--changes` prints
+  only what moved, a line each (`+` new, `~` repriced, `-` gone, or `no change`; the learning looks say
+  so). Offers are compared as the FULL lists the searches kept (an offer sinking below the table's last
+  row is not gone), and a note says when vast.ai's 64-row cap may explain an entry or an exit.
+  `OfferChanges` (and its `Repriced`), `render::offers_table_marked` (it takes the `MarketWatch`),
+  `render::offers_changes_note`, `render::offers_changes_only` (the page first, like
+  `render::offers_footer`). `VAS_WATCH_FLOOR_MS` lowers the 30 s floor of both watches, for tests only.
+- Every `vas offers` search ends with a line saying that vast.ai's answers vary from one search to the
+  next (a watch says it under its first look): `render::offers_variance_note`.
 
 - The GPU trend: under `vas --ssh --watch N` the table gains a `TREND` column after `VRAM`, the last six
   samples of each box oldest first (`97 99 0 98 99 99`: the mean utilisation of its GPUs), and `--compact`

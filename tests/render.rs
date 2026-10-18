@@ -308,13 +308,39 @@ fn watched(id: u64, price: f64) -> vast_skopos::offer::Offer {
     .unwrap()
 }
 
+/// A watch that learned the market as `before` and then looked at `now`: it and what it reports.
+fn moved(
+    before: &[vast_skopos::offer::Offer],
+    now: &[vast_skopos::offer::Offer],
+) -> (
+    vast_skopos::market::MarketWatch,
+    vast_skopos::offer::OfferChanges,
+) {
+    let mut watch = vast_skopos::market::MarketWatch::default();
+    for _ in 0..vast_skopos::market::LEARNING_LOOKS {
+        assert!(watch.record(before).is_none());
+    }
+    let changes = watch.record(now).unwrap();
+    (watch, changes)
+}
+
+/// `watched`, on the machine `machine`: its offer id changes, it does not.
+fn on_machine(id: u64, machine: u64, price: f64) -> vast_skopos::offer::Offer {
+    vast_skopos::offer::Offer::from_json(&serde_json::json!(
+        {"id": id, "machine_id": machine, "num_gpus": 1, "dph_total": price,
+         "gpu_name": "RTX 5090", "geolocation": "Spain, ES"}))
+    .unwrap()
+}
+
 #[test]
 fn the_marked_table_keeps_its_columns_aligned_with_a_mark_and_a_was() {
+    use vast_skopos::market::MarketWatch;
     use vast_skopos::offer::OfferChanges;
     use vast_skopos::render::offers_table_marked;
     let before = [watched(1, 0.5), watched(2, 0.6), watched(7, 0.9)];
     let now = [watched(3, 0.4), watched(1, 0.55), watched(2, 0.6)];
-    let text = offers_table_marked(&now, 20, &OfferChanges::between(&before, &now));
+    let (watch, changes) = moved(&before, &now);
+    let text = offers_table_marked(&now, 20, &changes, &watch);
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(lines.len(), 4, "the header and three rows: {text}");
     // The mark column is the first, one character wide; every id starts in the same column.
@@ -328,9 +354,64 @@ fn the_marked_table_keeps_its_columns_aligned_with_a_mark_and_a_was() {
     }
     assert!(lines[2].contains("0.550 (was 0.500)"), "{text}");
     assert!(!lines[3].contains("was"), "{text}");
+    // SEEN sits just before WHERE and says in how many looks each machine appeared.
     assert!(
-        offers_table_marked(&[], 20, &OfferChanges::between(&[], &[])).ends_with("(no offers)\n"),
+        lines[0].find("SEEN").unwrap() < lines[0].find("WHERE").unwrap(),
+        "{text}"
+    );
+    let seen = |line: &str| line.split_whitespace().rev().nth(2).unwrap().to_owned();
+    assert_eq!(
+        seen(lines[1]),
+        "1/1",
+        "the new machine was seen once: {text}"
+    );
+    assert_eq!(seen(lines[2]), "4/4", "{text}");
+    assert!(
+        offers_table_marked(&[], 20, &OfferChanges::default(), &MarketWatch::default())
+            .ends_with("(no offers)\n"),
         "an empty market"
+    );
+}
+
+#[test]
+fn the_marks_follow_the_machine_not_the_offer_id() {
+    use vast_skopos::render::offers_table_marked;
+    // Machine 1 comes back under another offer id and a new price; machine 2 is new.
+    let before = [on_machine(10, 1, 0.5)];
+    let now = [on_machine(11, 1, 0.55), on_machine(20, 2, 0.6)];
+    let (watch, changes) = moved(&before, &now);
+    let text = offers_table_marked(&now, 20, &changes, &watch);
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(
+        lines[1].starts_with("   11") && lines[1].contains("0.550 (was 0.500)"),
+        "no + for a machine already known, and its old price: {text}"
+    );
+    assert!(lines[2].starts_with("+  20"), "{text}");
+}
+
+#[test]
+fn every_row_of_a_new_machine_is_marked_but_only_the_row_that_moved_has_a_was() {
+    use vast_skopos::render::offers_table_marked;
+    // Machine 2 is new and answers twice in one look; machine 1 is repriced and answers twice, at
+    // two prices: the watch follows its first row.
+    let before = [on_machine(10, 1, 0.5)];
+    let now = [
+        on_machine(21, 2, 0.6),
+        on_machine(22, 2, 0.7),
+        on_machine(11, 1, 0.55),
+        on_machine(12, 1, 0.9),
+    ];
+    let (watch, changes) = moved(&before, &now);
+    let text = offers_table_marked(&now, 20, &changes, &watch);
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(
+        lines[1].starts_with("+  21") && lines[2].starts_with("+  22"),
+        "{text}"
+    );
+    assert!(lines[3].contains("(was 0.500)"), "{text}");
+    assert!(
+        !lines[4].contains("was"),
+        "no was for a row that did not move: {text}"
     );
 }
 
@@ -339,7 +420,8 @@ fn the_table_note_caps_its_gone_lines_but_changes_lists_every_change() {
     use vast_skopos::offer::OfferChanges;
     use vast_skopos::render::{offers_changes_note, offers_changes_only};
     let before: Vec<_> = (1..=13).map(|id| watched(id, 0.5)).collect();
-    let c = OfferChanges::between(&before, &[]);
+    let mut c = OfferChanges::default();
+    c.gone.extend(before);
     let note = offers_changes_note(&page(false), &c, &[], false);
     assert!(note.starts_with("since the last look: 13 gone\n"), "{note}");
     assert_eq!(
@@ -363,14 +445,15 @@ fn the_cap_of_vast_ai_is_said_only_when_something_entered_or_left() {
     use vast_skopos::offer::OfferChanges;
     use vast_skopos::render::{offers_changes_note, offers_changes_only};
     let before: Vec<_> = (1..=3).map(|id| watched(id, 0.5)).collect();
-    let gone = OfferChanges::between(&before, &[]);
+    let mut gone = OfferChanges::default();
+    gone.gone.extend(before.iter().cloned());
     assert!(!offers_changes_note(&page(false), &gone, &[], false).contains("caps a search"));
     assert!(
         offers_changes_note(&page(true), &gone, &[], false)
             .contains("vast.ai caps a search at 64 rows")
     );
     // Nothing entered or left: the cap explains nothing, and is not said.
-    let steady = OfferChanges::between(&before, &before);
+    let steady = OfferChanges::default();
     assert!(!offers_changes_note(&page(true), &steady, &before, false).contains("caps a search"));
     assert!(
         !offers_changes_only(&page(true), Some(&steady), &before, false, 0.0)
@@ -380,15 +463,15 @@ fn the_cap_of_vast_ai_is_said_only_when_something_entered_or_left() {
         offers_changes_only(&page(true), Some(&gone), &[], false, 0.0).contains("caps a search")
     );
     assert!(
-        offers_changes_only(&page(false), None, &before[..1], false, 0.0)
-            .starts_with("searched 00:00:00 UTC: 1 offer (the first"),
-        "singular"
+        offers_changes_only(&page(false), None, &before[..1], false, 0.0).starts_with(
+            "searched 00:00:00 UTC: 1 offer (learning the market: changes are reported from look 4)"
+        ),
+        "singular, and the look from which changes are reported"
     );
 }
 
 #[test]
 fn the_note_counts_the_new_and_repriced_offers_the_table_does_not_show() {
-    use vast_skopos::offer::OfferChanges;
     use vast_skopos::render::offers_changes_note;
     let before = [watched(1, 0.5), watched(2, 0.6), watched(3, 0.7)];
     // Sorted by price, as the table shows them: 1, 2, 3, 4.
@@ -398,7 +481,7 @@ fn the_note_counts_the_new_and_repriced_offers_the_table_does_not_show() {
         watched(3, 0.7),
         watched(4, 0.9),
     ];
-    let c = OfferChanges::between(&before, &now);
+    let (_, c) = moved(&before, &now);
     let note =
         |shown: &[vast_skopos::offer::Offer]| offers_changes_note(&page(false), &c, shown, false);
     assert_eq!(note(&now), "since the last look: 1 new, 1 repriced\n");
@@ -419,11 +502,40 @@ fn the_note_counts_the_new_and_repriced_offers_the_table_does_not_show() {
 }
 
 #[test]
+fn the_offers_below_the_table_are_counted_by_machine_not_by_offer_id() {
+    use vast_skopos::render::offers_changes_note;
+    let before = [on_machine(10, 1, 0.5)];
+    let now = [on_machine(11, 1, 0.55)];
+    let (_, c) = moved(&before, &now);
+    // The table shows the same machine under yet another id: its row is on screen.
+    let on_screen = [on_machine(12, 1, 0.55)];
+    assert_eq!(
+        offers_changes_note(&page(false), &c, &on_screen, false),
+        "since the last look: 1 repriced\n"
+    );
+    assert_eq!(
+        offers_changes_note(&page(false), &c, &[on_machine(20, 2, 0.9)], false),
+        "since the last look: 1 repriced (1 below the table)\n"
+    );
+}
+
+#[test]
+fn a_search_says_that_its_answers_vary_and_a_watch_says_it_once_differently() {
+    use vast_skopos::render::offers_variance_note;
+    assert_eq!(
+        offers_variance_note(false),
+        "vast.ai's answers vary from one search to the next; repeat the search, or use --watch, to see more.\n"
+    );
+    let watching = offers_variance_note(true);
+    assert!(watching.starts_with("vast.ai's answers vary from one search to the next; "));
+    assert!(watching.contains("SEEN") && !watching.contains("repeat the search"));
+}
+
+#[test]
 fn a_look_after_a_failed_search_says_so_in_both_modes() {
-    use vast_skopos::offer::OfferChanges;
     use vast_skopos::render::{offers_changes_note, offers_changes_only};
     let before = [watched(1, 0.5)];
-    let c = OfferChanges::between(&before, &before);
+    let c = vast_skopos::offer::OfferChanges::default();
     assert_eq!(
         offers_changes_note(&page(false), &c, &before, true),
         "since the last successful look: no change\n"

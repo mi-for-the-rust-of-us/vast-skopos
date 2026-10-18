@@ -17,6 +17,7 @@ use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use common::{RemoveOnDrop, Request, decode_q, fixture, read_lines_until, serve};
+use vast_skopos::market::{ABSENT_FOR_GONE, LEARNING_LOOKS};
 
 /// Every target answered with the fixture's real rows.
 fn bundles(_: &str) -> (u16, String) {
@@ -102,8 +103,18 @@ fn with_no_constraint_the_search_is_the_identity_and_says_so() {
     assert!(!stderr.contains("API key"), "{stderr}");
     assert_eq!(
         stdout.lines().count(),
-        1 + 5 + 1,
-        "header, rows, footer: {stdout}"
+        1 + 5 + 1 + 1,
+        "header, rows, footer, variance note: {stdout}"
+    );
+    assert!(
+        stdout.ends_with(
+            "vast.ai's answers vary from one search to the next; repeat the search, or use --watch, to see more.\n"
+        ),
+        "{stdout}"
+    );
+    assert!(
+        !stdout.contains("SEEN"),
+        "a one-shot has no SEEN column: {stdout}"
     );
     assert!(
         stdout.contains("5 offers, cheapest first | no constraint | $/h includes 5 GB of storage"),
@@ -444,14 +455,16 @@ fn a_bad_value_in_the_config_file_names_the_file() {
     assert!(seen.lock().unwrap().is_empty());
 }
 
-/// The fixture's answer; from the second search on, one offer is gone (the first of the file), one
-/// is repriced (+ $0.10/h) and one is new (id 999001, a copy of another).
+/// The fixture's answer; from the search after the learning looks on, one offer is missing (the first
+/// of the file: it is reported gone five looks later), one is repriced (+ $0.10/h) and one is new
+/// (id 999001 of machine 999, a copy of another).
 fn evolved(call: usize) -> String {
     let mut answer: serde_json::Value = serde_json::from_str(&fixture("offers.json")).unwrap();
-    if call > 0 {
+    if call >= LEARNING_LOOKS {
         let offers = answer["offers"].as_array_mut().unwrap();
         let mut newcomer = offers[1].clone();
         newcomer["id"] = 999_001.into();
+        newcomer["machine_id"] = 999.into();
         offers.remove(0);
         let price = offers[1]["dph_total"].as_f64().unwrap();
         offers[1]["dph_total"] = (price + 0.1).into();
@@ -495,13 +508,15 @@ fn watch_lines(base: &str, name: &str, args: &[&str], marker: &str, times: usize
 }
 
 #[test]
-fn a_watch_marks_what_moved_between_looks_and_lists_what_is_gone() {
+fn a_watch_learns_then_marks_what_moved_and_lists_what_is_gone() {
     let (base, seen) = serve(evolving_table);
-    // The notes closing the second and the third look.
-    let lines = watch_lines(&base, "watch-table", &[], "since the last look", 2);
+    // The notes closing the looks from the fourth on: what moved, the quiet ones, the gone, one more.
+    // The offer last seen at the third look is missing from the fourth to the eighth: gone at the eighth.
+    let notes = ABSENT_FOR_GONE + 1;
+    let lines = watch_lines(&base, "watch-table", &[], "since the last look", notes);
     let text = lines.join("\n");
     assert!(
-        seen.lock().unwrap().len() >= 3,
+        seen.lock().unwrap().len() >= LEARNING_LOOKS + notes,
         "one search per look, never fewer"
     );
     // A blank line parts the looks: the second header is preceded by one, the first by nothing.
@@ -511,24 +526,46 @@ fn a_watch_marks_what_moved_between_looks_and_lists_what_is_gone() {
         .filter(|(_, l)| l.trim_start().starts_with("ID"))
         .map(|(i, _)| i)
         .collect();
-    assert!(headers.len() >= 2, "two looks: {text}");
+    assert!(headers.len() > LEARNING_LOOKS, "the looks: {text}");
     assert_eq!(headers[0], 0, "{text}");
     assert_eq!(
         lines[headers[1] - 1],
         "",
         "a blank line before the second look: {text}"
     );
-    // The first look has a mark column and nothing marked.
+    // The first look has a mark column, a SEEN column, and nothing marked.
     assert!(lines[0].trim_start().starts_with("ID"), "{text}");
+    assert!(lines[0].contains("SEEN"), "{text}");
     assert!(
-        lines[1..6].iter().all(|l| !l.starts_with('+')),
-        "nothing to mark at the first look: {text}"
+        lines[1..6]
+            .iter()
+            .all(|l| !l.starts_with('+') && l.contains(" 1/1 ")),
+        "nothing to mark at the first look, every machine seen once: {text}"
     );
-    // The second: the newcomer marked, the repriced offer showing its old price, the gone one named.
+    // The honest line about the answers, once, under the first look.
+    assert_eq!(
+        lines
+            .iter()
+            .filter(|l| l.starts_with("vast.ai's answers vary"))
+            .count(),
+        1,
+        "{text}"
+    );
+    assert!(lines[7].starts_with("vast.ai's answers vary"), "{text}");
+    // No note before the fourth look: the watch is learning.
+    let first_note = lines
+        .iter()
+        .position(|l| l.starts_with("since the last"))
+        .unwrap();
+    assert!(
+        first_note > headers[LEARNING_LOOKS],
+        "the learning looks have no note: {text}"
+    );
+    // The fourth: the newcomer marked, the repriced offer showing its old price, no one gone yet.
     assert!(
         lines
             .iter()
-            .any(|l| l.starts_with("+ ") && l.contains("999001")),
+            .any(|l| l.starts_with("+ ") && l.contains("999001") && l.contains(" 1/1 ")),
         "{text}"
     );
     assert!(
@@ -537,41 +574,68 @@ fn a_watch_marks_what_moved_between_looks_and_lists_what_is_gone() {
             .any(|l| l.contains("51054445") && l.contains("(was 0.672)")),
         "{text}"
     );
-    assert!(
-        text.contains("since the last look: 1 new, 1 repriced, 1 gone\n- 44614424  1x RTX 5090"),
+    let notes: Vec<&String> = lines
+        .iter()
+        .filter(|l| l.starts_with("since the last"))
+        .collect();
+    assert_eq!(notes[0], "since the last look: 1 new, 1 repriced", "{text}");
+    for quiet in &notes[1..ABSENT_FOR_GONE - 1] {
+        assert_eq!(*quiet, "since the last look: no change", "{text}");
+    }
+    // Five looks without it: the first offer of the file is gone, said once.
+    assert_eq!(
+        notes[ABSENT_FOR_GONE - 1],
+        "since the last look: 1 gone",
         "{text}"
     );
-    // The third look agrees with the second.
     assert!(
-        lines
-            .last()
-            .unwrap()
-            .starts_with("since the last look: no change"),
+        text.contains("since the last look: 1 gone\n- 44614424  1x RTX 5090"),
+        "{text}"
+    );
+    assert_eq!(
+        notes[ABSENT_FOR_GONE], "since the last look: no change",
         "{text}"
     );
 }
 
 #[test]
-fn changes_prints_the_baseline_then_only_what_moved() {
+fn changes_learns_then_prints_only_what_moved() {
     let (base, _) = serve(evolving_changes);
-    let lines = watch_lines(&base, "watch-changes", &["--changes"], "searched ", 3);
+    let looks = LEARNING_LOOKS + ABSENT_FOR_GONE + 1;
+    let lines = watch_lines(&base, "watch-changes", &["--changes"], "searched ", looks);
     let text = lines.join("\n");
     assert!(!text.contains("VERIFICATION"), "no table at all: {text}");
+    for look in &lines[..LEARNING_LOOKS] {
+        assert!(
+            look.contains("5 offers (learning the market: changes are reported from look 4)"),
+            "{text}"
+        );
+    }
     assert!(
-        lines[0].contains("5 offers (the first look: what moves follows)"),
+        lines[LEARNING_LOOKS].contains("5 offers, 1 new, 1 repriced"),
         "{text}"
     );
     assert!(
-        lines[1].contains("5 offers, 1 new, 1 repriced, 1 gone"),
+        lines[LEARNING_LOOKS + 1].starts_with("+ 999001  1x RTX 5090"),
         "{text}"
     );
-    assert!(lines[2].starts_with("+ 999001  1x RTX 5090"), "{text}");
     assert!(
-        lines[3].starts_with("~ 51054445  1x RTX 5090  0.672 -> 0.772 $/h"),
+        lines[LEARNING_LOOKS + 2].starts_with("~ 51054445  1x RTX 5090  0.672 -> 0.772 $/h"),
         "{text}"
     );
-    assert!(lines[4].starts_with("- 44614424  1x RTX 5090"), "{text}");
-    assert!(lines[5].contains("5 offers, no change"), "{text}");
+    let quiet = lines
+        .iter()
+        .filter(|l| l.contains("5 offers, no change"))
+        .count();
+    assert_eq!(quiet, ABSENT_FOR_GONE - 1, "{text}");
+    let gone = lines
+        .iter()
+        .position(|l| l.contains("5 offers, 1 gone"))
+        .unwrap();
+    assert!(
+        lines[gone + 1].starts_with("- 44614424  1x RTX 5090"),
+        "{text}"
+    );
 }
 
 #[test]
@@ -589,14 +653,15 @@ fn refusing(_: &str) -> (u16, String) {
     (500, "{}".to_owned())
 }
 
-/// The first search answers, the second is refused, the next ones answer with the evolved market.
+/// The learning searches answer, the next one is refused, the ones after answer with the evolved
+/// market (a refused search is no look: the watch has seen the learning looks only).
 static HICCUP_CALLS: AtomicUsize = AtomicUsize::new(0);
 
 fn hiccup(_: &str) -> (u16, String) {
     match HICCUP_CALLS.fetch_add(1, Ordering::SeqCst) {
-        0 => (200, evolved(0)),
-        1 => (500, "{}".to_owned()),
-        _ => (200, evolved(1)),
+        call if call < LEARNING_LOOKS => (200, evolved(0)),
+        LEARNING_LOOKS => (500, "{}".to_owned()),
+        _ => (200, evolved(LEARNING_LOOKS)),
     }
 }
 
@@ -650,8 +715,8 @@ fn a_watch_goes_on_after_a_failure_once_a_look_has_succeeded_and_says_so() {
         .filter(|l| l.starts_with("since the last"))
         .collect();
     assert_eq!(
-        notes[0], "since the last successful look: 1 new, 1 repriced, 1 gone",
-        "the look before the refused search is the one compared with: {lines:#?}"
+        notes[0], "since the last successful look: 1 new, 1 repriced",
+        "the looks before the refused search are the ones compared with: {lines:#?}"
     );
     assert_eq!(notes[1], "since the last look: no change");
 }
@@ -670,11 +735,9 @@ fn a_watch_compares_the_whole_list_not_the_rows_it_shows() {
         .iter()
         .find(|l| l.starts_with("since the last look"))
         .unwrap();
-    // One row is on screen; the newcomer and the repriced offer are among the 4 below it, and the
-    // gone offer is gone from the whole list, not just from the screen.
+    // One row is on screen; the newcomer and the repriced offer are among the 4 below it.
     assert_eq!(
-        note,
-        "since the last look: 1 new (1 below the table), 1 repriced (1 below the table), 1 gone",
+        note, "since the last look: 1 new (1 below the table), 1 repriced (1 below the table)",
         "{lines:#?}"
     );
 }

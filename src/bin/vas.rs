@@ -12,13 +12,12 @@ use vast_skopos::api::{Client, DEFAULT_BASE, SearchClient};
 use vast_skopos::compact::json_lines;
 use vast_skopos::config::{default_offers_file, read_flag_file};
 use vast_skopos::key::ApiKey;
-use vast_skopos::offer::{
-    Offer, OfferChanges, OfferQuery, OfferSort, country_code, gpu_model, select,
-};
+use vast_skopos::market::MarketWatch;
+use vast_skopos::offer::{OfferChanges, OfferQuery, OfferSort, country_code, gpu_model, select};
 use vast_skopos::probe::probe_all;
 use vast_skopos::render::{
     TableOptions, offers_changes_note, offers_changes_only, offers_footer, offers_table,
-    offers_table_marked, table,
+    offers_table_marked, offers_variance_note, table,
 };
 use vast_skopos::trend::Trend;
 
@@ -558,7 +557,7 @@ fn offers(args: OffersArgs) -> ExitCode {
     }
     let top = usize::try_from(args.top).unwrap_or(usize::MAX);
     let nothing = OfferChanges::default();
-    let mut previous: Option<Vec<Offer>> = None;
+    let mut market = MarketWatch::default();
     run_looks(
         "vas offers",
         args.watch,
@@ -568,27 +567,31 @@ fn offers(args: OffersArgs) -> ExitCode {
             // BORROW: explicit clone -- the footer reads the page again
             let kept = select(page.offers.clone(), &query, sort);
             let at = now();
-            let moved = previous.as_deref().map(|p| OfferChanges::between(p, &kept));
+            let moved = market.record(&kept);
             let text = if args.changes {
                 offers_changes_only(&page, moved.as_ref(), &kept, missed, at)
             } else {
-                // The first look has nothing to mark (and a one-shot never has a second); a blank line
-                // parts the looks of a watch.
-                let gap = if previous.is_some() { "\n" } else { "" };
+                // A blank line parts the looks of a watch.
+                let gap = if market.looks() > 1 { "\n" } else { "" };
                 let table = if args.watch.is_some() {
-                    offers_table_marked(&kept, top, moved.as_ref().unwrap_or(&nothing))
+                    offers_table_marked(&kept, top, moved.as_ref().unwrap_or(&nothing), &market)
                 } else {
                     offers_table(&kept, top)
                 };
                 let footer = offers_footer(&page, &kept, top, &query, sort, at);
+                // One search is a sample: a one-shot says so every time, a watch on its first look.
+                let variance = if args.watch.is_none() || market.looks() == 1 {
+                    offers_variance_note(args.watch.is_some())
+                } else {
+                    ""
+                };
                 let shown = kept.get(..top).unwrap_or(&kept);
                 let note = moved
                     .as_ref()
                     .map(|m| offers_changes_note(&page, m, shown, missed))
                     .unwrap_or_default();
-                format!("{gap}{table}{footer}{note}")
+                format!("{gap}{table}{footer}{variance}{note}")
             };
-            previous = Some(kept);
             Ok(text)
         },
     )
