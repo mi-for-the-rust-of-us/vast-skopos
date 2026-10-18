@@ -12,6 +12,7 @@
 
 mod common;
 
+use std::ffi::OsStr;
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -796,4 +797,99 @@ fn a_watch_that_probes_has_a_trend_column_and_a_one_shot_does_not() {
     let mut quiet = spawn_watch(box_on_loopback, &["--watch", "0"], Some("50"));
     let lines = read_lines_until(&mut quiet, "== vas, unix time", 1);
     assert!(!lines.join("\n").contains("TREND"), "{lines:#?}");
+}
+
+/// `vas args` against the mock, whatever the exit code: the whole output.
+fn vas_output(args: &[&OsStr]) -> std::process::Output {
+    let (base, _) = serve(account);
+    let call = CALLS.fetch_add(1, Ordering::Relaxed);
+    let home = std::env::temp_dir().join(format!("vas-look-{call}-{}", std::process::id()));
+    std::fs::create_dir_all(&home).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_vas"))
+        .args(args)
+        .env("VAST_URL", &base)
+        .env("VAST_API_KEY", "k3y")
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .env_remove("XDG_CONFIG_HOME")
+        .output()
+        .unwrap();
+    std::fs::remove_dir_all(&home).unwrap();
+    out
+}
+
+/// A fresh directory for a credit log.
+fn log_dir(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("vas-creditlog-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+#[test]
+fn a_credit_log_gets_a_header_once_and_a_row_per_run() {
+    let dir = log_dir("rows");
+    let file = dir.join("credit.csv");
+    for _ in 0..2 {
+        let out = vas_output(&[OsStr::new("--credit-log"), file.as_os_str()]);
+        assert!(out.status.success());
+        assert!(
+            String::from_utf8_lossy(&out.stdout).contains("credit $12.93"),
+            "the table is printed as ever"
+        );
+    }
+    let text = std::fs::read_to_string(&file).unwrap();
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 3, "one header, two rows: {text}");
+    assert_eq!(lines[0], "unix_time,credit,burn_per_hour,running,unsure");
+    for row in &lines[1..] {
+        let cells: Vec<&str> = row.split(',').collect();
+        assert_eq!(cells.len(), 5, "{row}");
+        assert!(cells[0].parse::<u64>().unwrap() > 1_700_000_000, "{row}");
+        assert_eq!(cells[1..], ["12.9300", "0.9000", "1", "0"], "{row}");
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn the_credit_log_works_with_compact_and_never_holds_the_key() {
+    let dir = log_dir("compact");
+    let file = dir.join("credit.csv");
+    let out = vas_output(&[
+        OsStr::new("--compact"),
+        OsStr::new("--credit-log"),
+        file.as_os_str(),
+    ]);
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout
+            .lines()
+            .all(|l| serde_json::from_str::<serde_json::Value>(l).is_ok()),
+        "stdout is still only JSON Lines: {stdout}"
+    );
+    let text = std::fs::read_to_string(&file).unwrap();
+    assert_eq!(text.lines().count(), 2, "{text}");
+    assert!(!text.contains("k3y"), "{text}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_credit_log_that_cannot_be_written_is_said_once_and_the_look_goes_on() {
+    let dir = log_dir("refused");
+    // A directory is not a file one can append to.
+    let out = vas_output(&[OsStr::new("--credit-log"), dir.as_os_str()]);
+    assert!(out.status.success(), "the look is not a failure");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        stderr.matches("failed to write the credit log").count(),
+        1,
+        "{stderr}"
+    );
+    assert!(stderr.contains("not written any more"), "{stderr}");
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("credit $12.93"),
+        "the table is printed as ever"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
 }

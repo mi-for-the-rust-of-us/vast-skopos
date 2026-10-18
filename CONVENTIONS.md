@@ -24,6 +24,7 @@ last two sections are this crate's own: [the API key](#when-handling-the-api-key
 | Write error strings | [Error message wording](#error-message-wording) |
 | Add `#[allow(clippy::...)]` for a lint newer than the MSRV | [MSRV lint guard](#msrv-lint-guard) |
 | Push, or open a pull request | [The local gates](#the-local-gates) |
+| Write to a file | [Writing a file](#when-writing-a-file) |
 | Touch the API key, a header, an error or any output | [The API key](#when-handling-the-api-key) |
 | Call the vast.ai API | [Read-only](#read-only), [lenient reading](#lenient-reading) |
 | Run `ssh` or anything on a box | [Talking to a box](#when-talking-to-a-box) |
@@ -266,6 +267,22 @@ nothing elsewhere, so no Windows or macOS gate lints or runs it: lint it with th
 copy, restored and checked by its checksum), and let Linux CI run it.
 
 ---
+
+## When Writing a File
+
+The crate reads files (the key, the config file) and writes exactly one kind: the credit log
+(`vas --credit-log FILE`, `creditlog::CreditLog`). A second kind of file is a change of rule, with
+its own review, not a convenience.
+
+- **Only when asked, and only where asked.** Nothing is written unless the user names the file; no
+  default path, no cache, no state kept between runs.
+- **Append-only.** The file is opened to append and never truncated, rewritten or deleted; a header
+  is written only when the file is new or empty, so a log survives restarts and a user's own edits.
+- **No secret.** A row holds the time, the credit and the burn: never the key, an endpoint or a
+  header ([The API key](#when-handling-the-api-key)).
+- **A failure is said once.** A file that cannot be written is named on stderr one time
+  (`failed to write the credit log FILE: ...`); the look goes on and the log stops trying. A
+  lookout does not die because a disk is full.
 
 ## When Handling the API Key
 

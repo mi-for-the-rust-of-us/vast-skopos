@@ -11,6 +11,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use vast_skopos::api::{Client, DEFAULT_BASE, SearchClient};
 use vast_skopos::compact::json_lines;
 use vast_skopos::config::{default_offers_file, read_flag_file};
+use vast_skopos::creditlog::CreditLog;
 use vast_skopos::key::ApiKey;
 use vast_skopos::market::MarketWatch;
 use vast_skopos::offer::{OfferChanges, OfferQuery, OfferSort, country_code, gpu_model, select};
@@ -19,6 +20,7 @@ use vast_skopos::render::{
     TableOptions, offers_changes_note, offers_changes_only, offers_footer, offers_table,
     offers_table_marked, offers_variance_note, table,
 };
+use vast_skopos::runway::Runway;
 use vast_skopos::trend::Trend;
 
 /// The command line: the lookout's flags, or the `offers` subcommand. (`--help` opens with `about`,
@@ -68,6 +70,10 @@ struct LookArgs {
     /// the money, each with a kind and an at (Unix seconds); the machine and host ids always.
     #[arg(long, conflicts_with = "wide")]
     compact: bool,
+    /// Append one row per look to this CSV file: unix_time,credit,burn_per_hour,running,unsure (a
+    /// header when the file is new or empty). The credit as a curve; never the API key.
+    #[arg(long, value_name = "FILE")]
+    credit_log: Option<PathBuf>,
     /// Refresh every N seconds (at least 30) until Ctrl+C.
     #[arg(long, value_name = "SECONDS")]
     watch: Option<u64>,
@@ -388,11 +394,12 @@ fn run_looks(
 ///
 /// The account request needs nothing from the probes, which take seconds: the two overlap. With a
 /// `trend` (a watch that probes), this look's GPU samples join the history, and the table and the
-/// JSON show it.
+/// JSON show it. With a `credit_log`, this look's credit and burn are appended to it.
 fn look(
     client: &Client,
     args: &LookArgs,
     trend: Option<&mut Trend>,
+    credit_log: Option<&mut CreditLog>,
 ) -> Result<String, vast_skopos::SkoposError> {
     let instances = client.instances()?;
     let (account, probes) = std::thread::scope(|scope| {
@@ -415,6 +422,11 @@ fn look(
             None
         }
     };
+    if let Some(log) = credit_log
+        && let Some(failure) = log.record(&Runway::of(&instances, account.as_ref()), now())
+    {
+        eprintln!("vas: {failure}; the credit log is not written any more");
+    }
     let trend: Option<&Trend> = trend.map(|history| {
         history.record(&instances, &probes);
         &*history
@@ -458,12 +470,18 @@ fn lookout(args: &LookArgs) -> ExitCode {
     // The GPU samples of the watch, in memory: one look says little, the last few say more.
     let mut trend = Trend::default();
     let tracking = args.ssh && args.watch.is_some();
+    let mut credit_log = args.credit_log.as_deref().map(CreditLog::new);
     run_looks(
         "vas",
         args.watch,
         || client.budget_wait_secs(),
         |_| {
-            let text = look(&client, args, tracking.then_some(&mut trend))?;
+            let text = look(
+                &client,
+                args,
+                tracking.then_some(&mut trend),
+                credit_log.as_mut(),
+            )?;
             // JSON Lines carry their own `at`: a stamp line would not parse.
             Ok(if args.watch.is_some() && !args.compact {
                 let secs = SystemTime::now()

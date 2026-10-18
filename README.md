@@ -166,6 +166,7 @@ ID        GPU          VRAM  $/H    CUDA  DISK   UP/DOWN Mb/s  REL %  MAX DAYS  
 | `vas --wide` | also show each box's machine id and host id (what a rentals log, `--exclude-machine` and `--exclude-host` need) |
 | `vas --compact` | JSON Lines instead of the table, for scripts and monitors ([below](#vas---compact-json-lines)); not with `--wide` |
 | `vas --watch 60` | refresh every 60 s (at least 30) until Ctrl+C |
+| `vas --credit-log FILE` | append one CSV row per look to `FILE`: the credit as a curve ([below](#the-credit-history)) |
 | `vas --key-file FILE` | read the key from `FILE` |
 | `vas offers [FLAGS]` | the offers for rent that pass the flags, cheapest first; no key needed ([below](#vas-offers)) |
 
@@ -200,6 +201,21 @@ the boxes it was asked to run (`intended_status`) that read otherwise (`offline`
 is not known from here, and a burn that leaves it out overstates the runway; the `~H h left` figure
 uses the larger burn. A stopped box is not counted, though vast.ai still bills its storage: `vas`
 does not show that cost yet.
+
+**The credit history.** `vas --credit-log credit.csv` appends one row per look to the file, so a watch (or a
+cron job running `vas` every hour) leaves a curve of the account's money behind:
+
+```text
+unix_time,credit,burn_per_hour,running,unsure
+1792328430,10.5100,0.4910,1,0
+1792328460,10.5000,0.4910,1,0
+```
+
+The header is written only when the file is new or empty; the file is only ever appended to, so a log
+survives restarts, and `credit` is empty when the account did not answer. `unsure` counts the boxes meant to
+run that read otherwise: a credit that falls faster than `burn_per_hour` says one of them bills. Nothing is
+written unless you name the file, the API key is never in it, and a file that cannot be written is said
+once on stderr (`failed to write the credit log ...`) while the look goes on.
 
 ### `vas --compact`: JSON Lines
 

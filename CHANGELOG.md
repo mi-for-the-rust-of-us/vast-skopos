@@ -40,6 +40,11 @@ All notable changes to this project are documented here. The format is based on
   `OfferChanges` (and its `Repriced`), `render::offers_table_marked` (it takes the `MarketWatch`),
   `render::offers_changes_note`, `render::offers_changes_only` (the page first, like
   `render::offers_footer`). `VAS_WATCH_FLOOR_MS` lowers the 30 s floor of both watches, for tests only.
+- `vas --credit-log FILE`: appends one CSV row per look (`unix_time,credit,burn_per_hour,running,unsure`,
+  a header when the file is new or empty) so the credit becomes a curve and a box that bills while it reads
+  `offline` shows as a credit that falls faster than the burn. Append-only, only when asked, never the key;
+  a file that cannot be written is said once and the look goes on. The first file this crate writes:
+  `creditlog::CreditLog` and a new rule in CONVENTIONS.md ("When Writing a File").
 - Every `vas offers` search ends with a line saying that vast.ai's answers vary from one search to the
   next (a watch says it under its first look): `render::offers_variance_note`.
 

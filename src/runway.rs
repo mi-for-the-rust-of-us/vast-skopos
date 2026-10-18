@@ -9,7 +9,7 @@ use std::fmt::Write as _;
 use crate::instance::{Account, Instance};
 
 /// `x` with `decimals` decimals; a value that rounds to zero loses its sign (`$-0.00` is nonsense).
-fn dollars(x: f64, decimals: usize) -> String {
+pub(crate) fn dollars(x: f64, decimals: usize) -> String {
     let text = format!("{x:.decimals$}");
     match text.strip_prefix('-') {
         Some(rest) if rest.bytes().all(|b| b == b'0' || b == b'.') => {

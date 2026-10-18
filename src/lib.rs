@@ -26,12 +26,14 @@
 //! - [`render`]: the tables;
 //! - [`runway`]: the credit, the burn and the hours they last, as the money line and `--compact` read them;
 //! - [`compact`]: the same readings as JSON Lines, for scripts and monitors;
-//! - [`trend`]: the last GPU utilisation samples of each box, kept by a watch.
+//! - [`trend`]: the last GPU utilisation samples of each box, kept by a watch;
+//! - [`creditlog`]: the credit history, one CSV row per look, in the file `--credit-log` names.
 
 pub mod api;
 pub mod compact;
 #[doc(hidden)]
 pub mod config;
+pub mod creditlog;
 pub mod error;
 pub mod instance;
 pub mod key;
