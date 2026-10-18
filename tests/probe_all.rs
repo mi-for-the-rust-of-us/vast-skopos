@@ -59,6 +59,25 @@ fn the_ssh_command_keeps_every_value_a_separate_argument_and_the_target_after_th
             "{option} is an option's value, not a word of its own"
         );
     }
+    // Every `-o` option, each value its own argument, none missing: a probe must never ask, never
+    // wait for ever, drop a dead connection, accept a first host key, and keep ssh's chatter out of
+    // the reason it reports.
+    let options: Vec<&OsStr> = args
+        .windows(2)
+        .filter(|w| w[0] == "-o")
+        .map(|w| w[1])
+        .collect();
+    assert_eq!(
+        options,
+        [
+            "BatchMode=yes",
+            "ConnectTimeout=10",
+            "ServerAliveInterval=5",
+            "ServerAliveCountMax=3",
+            "StrictHostKeyChecking=accept-new",
+            "LogLevel=ERROR",
+        ]
+    );
     let at = args.iter().position(|a| *a == "-i").unwrap();
     assert_eq!(
         args[at + 1],

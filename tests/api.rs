@@ -320,3 +320,28 @@ fn the_search_statuses_carry_their_own_hints_and_never_the_query() {
         assert_eq!(seen.lock().unwrap().len(), 1, "one request, no retry");
     }
 }
+
+/// Pages whose `next_token` is a NUMBER, as one API version sent it: the second page is asked for
+/// with `after_token=7`.
+fn numeric_tokens(target: &str) -> (u16, String) {
+    if target.contains("after_token=7") {
+        (
+            200,
+            r#"{"instances": [{"id": 2}], "next_token": null}"#.to_owned(),
+        )
+    } else {
+        (
+            200,
+            r#"{"instances": [{"id": 1}], "next_token": 7}"#.to_owned(),
+        )
+    }
+}
+
+#[test]
+fn a_numeric_next_token_is_followed_like_a_string_one() {
+    let (base, seen) = serve(numeric_tokens);
+    let client = Client::with_base(ApiKey::new("k3y").unwrap(), &base);
+    let rows = client.instances().unwrap();
+    assert_eq!(rows.iter().map(|i| i.id).collect::<Vec<_>>(), [1, 2]);
+    assert!(seen.lock().unwrap()[1].target.contains("after_token=7"));
+}

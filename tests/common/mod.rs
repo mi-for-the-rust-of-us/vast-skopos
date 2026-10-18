@@ -175,3 +175,13 @@ pub fn exit_within_deadline(child: &mut std::process::Child) -> std::process::Ex
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
 }
+
+/// Removes the directory when dropped: a home a test made does not outlive it, even when an
+/// assertion panics first.
+pub struct RemoveOnDrop(pub std::path::PathBuf);
+
+impl Drop for RemoveOnDrop {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}

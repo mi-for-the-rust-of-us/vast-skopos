@@ -22,9 +22,18 @@ fn a_config_file_reads_the_same_in_utf8_with_a_bom_and_in_utf16() {
     let mut bytes = vec![0xFF, 0xFE];
     bytes.extend(text.encode_utf16().flat_map(u16::to_le_bytes));
     std::fs::write(&utf16, bytes).unwrap();
+    // Big-endian UTF-16 (a byte-order mark FE FF): the same words, not mojibake.
+    let utf16_be = dir.join("utf16-be");
+    let mut bytes = vec![0xFE, 0xFF];
+    bytes.extend(text.encode_utf16().flat_map(u16::to_be_bytes));
+    std::fs::write(&utf16_be, bytes).unwrap();
     let binary = dir.join("binary");
     std::fs::write(&binary, [0xC3, 0x28, 0x0A]).unwrap();
-    let words = [read_flag_file(&bom), read_flag_file(&utf16)];
+    let words = [
+        read_flag_file(&bom),
+        read_flag_file(&utf16),
+        read_flag_file(&utf16_be),
+    ];
     let not_text = read_flag_file(&binary);
     let missing = read_flag_file(&dir.join("missing"));
     std::fs::remove_dir_all(&dir).unwrap();

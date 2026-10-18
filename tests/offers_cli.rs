@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use common::{Request, decode_q, fixture, read_lines_until, serve};
+use common::{RemoveOnDrop, Request, decode_q, fixture, read_lines_until, serve};
 
 /// Every target answered with the fixture's real rows.
 fn bundles(_: &str) -> (u16, String) {
@@ -489,9 +489,8 @@ fn watch_lines(base: &str, name: &str, args: &[&str], marker: &str, times: usize
         .stderr(Stdio::null())
         .spawn()
         .unwrap();
-    let lines = read_lines_until(&mut child, marker, times);
-    std::fs::remove_dir_all(&home).unwrap();
-    lines
+    let _cleanup = RemoveOnDrop(home);
+    read_lines_until(&mut child, marker, times)
 }
 
 #[test]
@@ -503,6 +502,20 @@ fn a_watch_marks_what_moved_between_looks_and_lists_what_is_gone() {
     assert!(
         seen.lock().unwrap().len() >= 3,
         "one search per look, never fewer"
+    );
+    // A blank line parts the looks: the second header is preceded by one, the first by nothing.
+    let headers: Vec<usize> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| l.trim_start().starts_with("ID"))
+        .map(|(i, _)| i)
+        .collect();
+    assert!(headers.len() >= 2, "two looks: {text}");
+    assert_eq!(headers[0], 0, "{text}");
+    assert_eq!(
+        lines[headers[1] - 1],
+        "",
+        "a blank line before the second look: {text}"
     );
     // The first look has a mark column and nothing marked.
     assert!(lines[0].trim_start().starts_with("ID"), "{text}");
@@ -714,11 +727,20 @@ fn the_pause_between_two_looks_is_at_least_thirty_seconds_unless_a_test_says_oth
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    // 2.5 s: well past the 1 s asked, far short of the 30 s floor.
-    std::thread::sleep(std::time::Duration::from_millis(2500));
+    // Wait for the first search however long the process takes to start (a scanned fresh exe, a
+    // loaded runner), THEN 1.5 s: past the 1 s asked, far short of the 30 s floor.
+    let started = std::time::Instant::now();
+    while FLOOR_CALLS.load(Ordering::SeqCst) == 0 {
+        assert!(
+            started.elapsed() < common::PROCESS_DEADLINE,
+            "the first search never came"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    std::thread::sleep(std::time::Duration::from_millis(1500));
     let _ = child.kill();
     let out = child.wait_with_output().unwrap();
-    std::fs::remove_dir_all(&home).unwrap();
+    let _ = std::fs::remove_dir_all(&home);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(
         FLOOR_CALLS.load(Ordering::SeqCst),
@@ -770,4 +792,32 @@ fn a_search_of_this_machine_does_not_go_through_the_proxy_of_the_environment() {
         1,
         "the mock was reached directly"
     );
+}
+
+#[test]
+fn a_closed_stdout_ends_an_offers_watch_quietly_instead_of_looping_on() {
+    // `vas offers --watch 60 | head -1`: once the reader is gone the next write fails, and that is
+    // the end, not a failure. A watch that treated the error as a write would loop for ever.
+    let (base, _) = serve(bundles);
+    let home = fresh_home("closed-pipe");
+    let _cleanup = RemoveOnDrop(home.clone());
+    let mut child = Command::new(env!("CARGO_BIN_EXE_vas"))
+        .args(["offers", "--no-config", "--watch", "0"])
+        .env("VAST_URL", &base)
+        .env("VAS_WATCH_FLOOR_MS", "50")
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .env_remove("VAST_API_KEY")
+        .env_remove("XDG_CONFIG_HOME")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let mut first = String::new();
+    std::io::BufRead::read_line(&mut std::io::BufReader::new(stdout), &mut first).unwrap();
+    assert!(first.trim_start().starts_with("ID"), "{first}");
+    // The reader is dropped at the end of the statement above: the pipe is closed.
+    let status = common::exit_within_deadline(&mut child);
+    assert_eq!(status.code(), Some(0), "a closed pipe is not a failure");
 }
