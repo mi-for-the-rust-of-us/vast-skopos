@@ -316,7 +316,7 @@ constraint lives in SIX places, kept in step:
 
 1. an `OfferQuery` field (documented with its unit);
 2. `OfferQuery::is_identity`;
-3. `OfferQuery::to_q`: sent to the server, in the server's unit (days become seconds);
+3. `OfferQuery::to_search_json`: sent to the server, in the server's unit (days become seconds);
 4. `OfferQuery::admits`: re-checked on each row with the SAME semantics and unit; a
    field the row has that contradicts it drops the row, a missing field keeps it;
 5. `OfferQuery::summary`: the footer names it, so a config file never acts unseen;

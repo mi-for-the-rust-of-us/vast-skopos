@@ -292,7 +292,7 @@ impl OfferQuery {
     ///
     /// ```
     /// use vast_skopos::offer::{OfferQuery, OfferSort};
-    /// let identity = OfferQuery::default().to_q(OfferSort::Price);
+    /// let identity = OfferQuery::default().to_search_json(OfferSort::Price);
     /// assert_eq!(identity, serde_json::json!({"rentable": {"eq": true}, "rented": {"eq": false},
     ///   "type": "on-demand", "limit": 200, "allocated_storage": 5,
     ///   "order": [["dph_total", "asc"]]}));
@@ -302,7 +302,7 @@ impl OfferQuery {
     /// q.min_days = Some(2.0);
     /// q.exclude_countries = vec!["US".to_owned(), "CN".to_owned(), "CN".to_owned()];
     /// q.exclude_machines = vec![142875, 100682, 142875];
-    /// let v = q.to_q(OfferSort::Up);
+    /// let v = q.to_search_json(OfferSort::Up);
     /// assert_eq!(v["gpu_name"], serde_json::json!({"eq": "RTX 5090"}));
     /// assert_eq!((v["allocated_storage"].as_u64(), v["disk_space"]["gte"].as_u64()), (Some(50), Some(50)));
     /// assert_eq!(v["duration"]["gte"].as_f64(), Some(172_800.0));
@@ -311,7 +311,7 @@ impl OfferQuery {
     /// assert_eq!(v["order"], serde_json::json!([["inet_up", "desc"]]));
     /// ```
     #[must_use]
-    pub fn to_q(&self, sort: OfferSort) -> Value {
+    pub fn to_search_json(&self, sort: OfferSort) -> Value {
         let mut q = Map::new();
         q.insert("rentable".into(), json!({"eq": true}));
         q.insert("rented".into(), json!({"eq": false}));
@@ -608,7 +608,7 @@ pub struct Repriced {
     pub was: f64,
 }
 
-/// What moved in the market between two looks at it ([`changes`]).
+/// What moved in the market between two looks at it ([`OfferChanges::between`]).
 #[derive(Debug, Clone, PartialEq, Default)]
 #[non_exhaustive]
 pub struct OfferChanges {
@@ -619,6 +619,11 @@ pub struct OfferChanges {
     /// The offers of the previous look that are not in this one (rented, withdrawn, or no longer
     /// matching), in the previous look's order.
     pub gone: Vec<Offer>,
+}
+
+/// A price as the table shows it: to the thousandth of a dollar.
+fn shown(price: f64) -> String {
+    format!("{price:.3}")
 }
 
 impl OfferChanges {
@@ -632,57 +637,52 @@ impl OfferChanges {
     pub const fn is_empty(&self) -> bool {
         self.appeared.is_empty() && self.repriced.is_empty() && self.gone.is_empty()
     }
-}
 
-/// A price as the table shows it: to the thousandth of a dollar.
-fn shown(price: f64) -> String {
-    format!("{price:.3}")
-}
-
-/// What moved from the `previous` look to the `current` one.
-///
-/// The offers that appeared, whose price changed (as the table shows it, to the thousandth), and
-/// that are gone. Both are the FULL lists the searches kept ([`select`]), not just the rows shown:
-/// an offer that sank below the table's last row is not gone.
-///
-/// ```
-/// use vast_skopos::offer::{Offer, changes};
-/// let offer = |id: u64, p: f64| Offer::from_json(&serde_json::json!({"id": id, "dph_total": p})).unwrap();
-/// let before = [offer(1, 0.5), offer(2, 0.6), offer(3, 0.7)];
-/// let now = [offer(4, 0.4), offer(1, 0.55), offer(2, 0.6001), offer(3, 0.7)];
-/// let c = changes(&before, &now);
-/// assert_eq!(c.appeared.iter().map(|o| o.id).collect::<Vec<_>>(), [4]);
-/// assert_eq!(c.repriced.iter().map(|r| (r.offer.id, r.was)).collect::<Vec<_>>(), [(1, 0.5)]);
-/// assert!(c.gone.is_empty(), "0.6 -> 0.6001 is the same price to the thousandth");
-/// assert_eq!(changes(&now, &before).gone.iter().map(|o| o.id).collect::<Vec<_>>(), [4]);
-/// ```
-#[must_use]
-pub fn changes(previous: &[Offer], current: &[Offer]) -> OfferChanges {
-    let before: std::collections::HashMap<u64, &Offer> =
-        previous.iter().map(|o| (o.id, o)).collect();
-    let now: std::collections::HashSet<u64> = current.iter().map(|o| o.id).collect();
-    let mut out = OfferChanges::default();
-    for offer in current {
-        match before.get(&offer.id) {
-            None => out.appeared.push(offer.clone()),
-            Some(old) => {
-                if let (Some(was), Some(is)) = (old.dph_total, offer.dph_total)
-                    && shown(was) != shown(is)
-                {
-                    out.repriced.push(Repriced {
-                        offer: offer.clone(),
-                        was,
-                    });
+    /// What moved from the `previous` look to the `current` one.
+    ///
+    /// The offers that appeared, whose price changed (as the table shows it, to the thousandth), and
+    /// that are gone. Both are the FULL lists the searches kept ([`select`]), not just the rows shown:
+    /// an offer that sank below the table's last row is not gone.
+    ///
+    /// ```
+    /// use vast_skopos::offer::{Offer, OfferChanges};
+    /// let offer = |id: u64, p: f64| Offer::from_json(&serde_json::json!({"id": id, "dph_total": p})).unwrap();
+    /// let before = [offer(1, 0.5), offer(2, 0.6), offer(3, 0.7)];
+    /// let now = [offer(4, 0.4), offer(1, 0.55), offer(2, 0.6001), offer(3, 0.7)];
+    /// let c = OfferChanges::between(&before, &now);
+    /// assert_eq!(c.appeared.iter().map(|o| o.id).collect::<Vec<_>>(), [4]);
+    /// assert_eq!(c.repriced.iter().map(|r| (r.offer.id, r.was)).collect::<Vec<_>>(), [(1, 0.5)]);
+    /// assert!(c.gone.is_empty(), "0.6 -> 0.6001 is the same price to the thousandth");
+    /// assert_eq!(OfferChanges::between(&now, &before).gone.iter().map(|o| o.id).collect::<Vec<_>>(), [4]);
+    /// ```
+    #[must_use]
+    pub fn between(previous: &[Offer], current: &[Offer]) -> Self {
+        let before: std::collections::HashMap<u64, &Offer> =
+            previous.iter().map(|o| (o.id, o)).collect();
+        let now: std::collections::HashSet<u64> = current.iter().map(|o| o.id).collect();
+        let mut out = Self::default();
+        for offer in current {
+            match before.get(&offer.id) {
+                None => out.appeared.push(offer.clone()),
+                Some(old) => {
+                    if let (Some(was), Some(is)) = (old.dph_total, offer.dph_total)
+                        && shown(was) != shown(is)
+                    {
+                        out.repriced.push(Repriced {
+                            offer: offer.clone(),
+                            was,
+                        });
+                    }
                 }
             }
         }
+        out.gone = previous
+            .iter()
+            .filter(|o| !now.contains(&o.id))
+            .cloned()
+            .collect();
+        out
     }
-    out.gone = previous
-        .iter()
-        .filter(|o| !now.contains(&o.id))
-        .cloned()
-        .collect();
-    out
 }
 
 /// A GPU model as vast.ai names it: trimmed, `_` read as a space (the official CLI's rule, so
@@ -694,6 +694,7 @@ pub fn changes(previous: &[Offer], current: &[Offer]) -> OfferChanges {
 /// assert_eq!(gpu_model("H100 SXM").as_deref(), Some("H100 SXM"));
 /// assert_eq!((gpu_model(""), gpu_model("\"RTX 5090\"")), (None, None));
 /// ```
+#[doc(hidden)]
 #[must_use]
 pub fn gpu_model(name: &str) -> Option<String> {
     let model = name.trim().replace('_', " ");
@@ -707,6 +708,7 @@ pub fn gpu_model(name: &str) -> Option<String> {
 /// assert_eq!(country_code(" cn ").as_deref(), Some("CN"));
 /// assert_eq!((country_code("China"), country_code("C1")), (None, None));
 /// ```
+#[doc(hidden)]
 #[must_use]
 pub fn country_code(code: &str) -> Option<String> {
     let code = code.trim();

@@ -293,7 +293,7 @@ impl SearchClient {
     /// Returns [`SkoposError::Json`] if the answer is not JSON or has no `offers` list.
     pub fn offers(&self, query: &OfferQuery, sort: OfferSort) -> Result<OfferPage> {
         let path = "/api/v0/bundles/";
-        let q = query.to_q(sort).to_string();
+        let q = query.to_search_json(sort).to_string();
         let answer = get_json(
             &self.agent,
             &self.base,

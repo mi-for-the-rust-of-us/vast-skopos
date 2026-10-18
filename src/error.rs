@@ -38,7 +38,7 @@ pub enum SkoposError {
 
     /// A line of the `vas offers` config file is refused.
     #[error("line {line} of the config file {path} is refused: {text:?} ({problem})")]
-    Config {
+    ConfigLine {
         /// The file.
         path: String,
         /// The line's number, from 1.

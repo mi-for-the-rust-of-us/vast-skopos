@@ -15,24 +15,23 @@ All notable changes to this project are documented here. The format is based on
   and still answers 64 rows), re-checked on each row, named in the footer (`not machines ...`).
   `OfferQuery::exclude_machines`.
 - The footer of `vas offers` names the time of the search (`searched 15:42:07 UTC`): offers vanish
-  within minutes, so a list read later says how old it is. `render::clock`.
-
+  within minutes, so a list read later says how old it is.
 - `vas --compact`: the same readings as JSON Lines, for scripts and monitors: one object per box
   (`kind: "box"`: status, `$/h`, age, cost, `ssh` endpoint, machine and host ids, and with `--ssh` the
   probe: GPUs, the log's state and last line, or the error), then one for the money (`kind: "money"`:
   credit, burn, running, the unsure boxes by state, hours left). The keys never change (`null` for
   what is not known), every object carries `at`, and `--watch` prints no separator line. Money is
   rounded to ten-thousandths of a dollar: vast.ai sends the credit with float noise.
-  Not with `--wide`. `compact::compact`, `render::Money`.
-
+  Not with `--wide`. `compact::json_lines`, `runway::Runway` (the credit, the burn and the hours they
+  last: the money line and the `money` object are both read from one).
 - `vas offers --watch SECONDS` (at least 30) searches again until Ctrl+C: each look is the whole table
   with `+` on the offers that are new since the last look, `0.594 (was 0.575)` on a moved price, and
   under the footer the counts and the offers that are gone. `--changes` prints only what moved, a line
   each (`+` new, `~` repriced, `-` gone, or `no change`). Offers are compared as the FULL lists the
   searches kept (an offer sinking below the table's last row is not gone), and a note says when vast.ai's
-  64-row cap may explain an entry or an exit. `offer::changes`, `render::offers_table_marked`,
-  `render::changes_note`, `render::changes_only`. `VAS_WATCH_FLOOR_MS` lowers the 30 s floor of both
-  watches, for tests only.
+  64-row cap may explain an entry or an exit. `OfferChanges::between`, `render::offers_table_marked`,
+  `render::offers_changes_note`, `render::offers_changes_only`. `VAS_WATCH_FLOOR_MS` lowers the 30 s
+  floor of both watches, for tests only.
 
 ### Changed
 
@@ -42,9 +41,19 @@ All notable changes to this project are documented here. The format is based on
   during Me36, was left out of the burn although it may still bill, which overstated the runway.
   `Instance::is_meant_to_run`. A box being stopped (running, meant to stop) is still counted as
   running; a stopped one is not counted.
-- BREAKING for library users (0.x: a minor release): `render::table` takes a `wide` flag (after
-  `with_ssh`), and `render::offers_line` the time of the search (`now`, Unix seconds, last).
-  `vas`'s own output gains the `searched ...` clause on the `vas offers` footer.
+- BREAKING for library users (0.x: a minor release), settled together while 0.1.0 is a day old:
+  - `render::table(instances, probes, account, options, now)`: the two booleans became
+    `TableOptions::new().ssh(..).wide(..)`, and the probes a `&[ProbeOutcome]` (new alias of
+    `Option<Result<Probe>>`). `render::table` has a doctest now.
+  - `render::offers_line(page, kept, shown, ..)` became `render::offers_footer(page, kept, top, query,
+    sort, now)`: the kept offers and `top`, not two counts that could be swapped; it names the search
+    time (`now`, Unix seconds).
+  - `SkoposError::Config` became `SkoposError::ConfigLine`, no longer easy to take for `ConfigFile`.
+  - `OfferQuery::to_q` became `OfferQuery::to_search_json`.
+  - Documented API narrowed: `render::{age, short_path, log_cell}`, `probe::{strip, clean, parse_log}`,
+    `offer::{gpu_model, country_code}`, `key::txt_hint` and the whole `config` module are
+    `#[doc(hidden)]`: they stay for `vas` and the tests, with no promise. `render::clock` is private.
+  - `vas`'s own output gains the `searched ...` clause on the `vas offers` footer.
 
 ### Fixed
 

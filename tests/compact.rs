@@ -11,7 +11,7 @@
 
 use serde_json::{Value, json};
 use vast_skopos::SkoposError;
-use vast_skopos::compact::compact;
+use vast_skopos::compact::json_lines;
 use vast_skopos::instance::{Account, Instance};
 use vast_skopos::probe::parse_output;
 
@@ -49,7 +49,7 @@ fn a_box_with_everything_and_a_box_with_nothing_have_the_same_keys() {
         ))),
         None,
     ];
-    let lines = objects(&compact(&[full, bare], &probes, None, 1_000.0 + 8_100.0));
+    let lines = objects(&json_lines(&[full, bare], &probes, None, 1_000.0 + 8_100.0));
     assert_eq!(lines.len(), 3, "two boxes and the money");
     assert_eq!(
         keys(&lines[0]),
@@ -134,7 +134,7 @@ fn a_failed_probe_and_every_log_state_are_objects() {
         log("vas-file:/root/runs/s1/train.log\nlast\n"),
         log("garbage\n"),
     ];
-    let text = compact(&rows, &probes, None, 0.0);
+    let text = json_lines(&rows, &probes, None, 0.0);
     assert_eq!(
         text.lines().count(),
         7,
@@ -176,7 +176,7 @@ fn the_money_carries_the_unsure_boxes_by_state_and_rounds_the_float_noise() {
         row(4, "exited", "stopped", 5.0),
     ];
     let credit = Account::from_json(&json!({"credit": 12.0}));
-    let lines = objects(&compact(&fleet, &[], Some(&credit), 3_600.0));
+    let lines = objects(&json_lines(&fleet, &[], Some(&credit), 3_600.0));
     let money = lines.last().unwrap();
     assert_eq!(money["kind"], "money");
     assert_eq!(money["at"], 3_600);
@@ -190,10 +190,10 @@ fn the_money_carries_the_unsure_boxes_by_state_and_rounds_the_float_noise() {
     assert_eq!(money["hours_left"], 20.0);
     // vast.ai's own credit carries float noise (seen live: 12.059765171599793); ten-thousandths are kept.
     let noisy = Account::from_json(&json!({"credit": 12.059_765_171_599_793}));
-    let lines = objects(&compact(&fleet, &[], Some(&noisy), 3_600.0));
+    let lines = objects(&json_lines(&fleet, &[], Some(&noisy), 3_600.0));
     assert_eq!(lines.last().unwrap()["credit"], 12.0598);
     // The same keys with nothing known: a monitor reads one schema.
-    let empty = objects(&compact(&[], &[], None, 0.0));
+    let empty = objects(&json_lines(&[], &[], None, 0.0));
     assert_eq!(empty.len(), 1, "no boxes: the money alone");
     assert_eq!(keys(&empty[0]), keys(money));
     assert!(empty[0]["credit"].is_null() && empty[0]["hours_left"].is_null());
@@ -204,12 +204,12 @@ fn the_money_carries_the_unsure_boxes_by_state_and_rounds_the_float_noise() {
 fn money_that_rounds_to_zero_is_zero_not_minus_zero() {
     // A sliver of owed money: -0.00001 rounds to `0.0`, and `-0.0` would be printed otherwise.
     let owed = Account::from_json(&json!({"credit": -0.000_01}));
-    let text = compact(&[], &[], Some(&owed), 0.0);
+    let text = json_lines(&[], &[], Some(&owed), 0.0);
     assert!(text.contains("\"credit\":0.0"), "{text}");
     assert!(!text.contains("-0.0"), "{text}");
     // A burn too small to give a runway: `hours_left` is null, as the text line leaves it out.
     let tiny = instance(&json!({"id": 1, "actual_status": "running", "dph_total": 1e-320}));
     let credit = Account::from_json(&json!({"credit": 5.0}));
-    let lines = objects(&compact(&[tiny], &[], Some(&credit), 0.0));
+    let lines = objects(&json_lines(&[tiny], &[], Some(&credit), 0.0));
     assert!(lines.last().unwrap()["hours_left"].is_null());
 }

@@ -156,7 +156,7 @@ fn flag_word(line: &str) -> std::result::Result<String, String> {
 /// ```
 ///
 /// # Errors
-/// Returns [`SkoposError::Config`] on the first line that is not a flag (named, and quoted escaped).
+/// Returns [`SkoposError::ConfigLine`] on the first line that is not a flag (named, and quoted escaped).
 pub fn parse_flag_file(text: &str, path: &Path) -> Result<Vec<String>> {
     let mut words = Vec::new();
     for (n, line) in text.lines().enumerate() {
@@ -164,7 +164,7 @@ pub fn parse_flag_file(text: &str, path: &Path) -> Result<Vec<String>> {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        words.push(flag_word(line).map_err(|problem| SkoposError::Config {
+        words.push(flag_word(line).map_err(|problem| SkoposError::ConfigLine {
             path: path.display().to_string(),
             line: n + 1,
             // BORROW: explicit to_owned -- the error outlives the file's text
@@ -180,7 +180,7 @@ pub fn parse_flag_file(text: &str, path: &Path) -> Result<Vec<String>> {
 /// # Errors
 /// Returns [`SkoposError::ConfigFile`] if the file cannot be read.
 /// Returns [`SkoposError::ConfigFile`] if the file is neither UTF-8 nor UTF-16 text.
-/// Returns [`SkoposError::Config`] on the first line that is not a flag.
+/// Returns [`SkoposError::ConfigLine`] on the first line that is not a flag.
 pub fn read_flag_file(path: &Path) -> Result<Vec<String>> {
     let bytes = std::fs::read(path).map_err(|source| SkoposError::ConfigFile {
         path: path.display().to_string(),

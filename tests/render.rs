@@ -14,7 +14,7 @@ use vast_skopos::SkoposError;
 use vast_skopos::instance::{Account, Instance};
 use vast_skopos::offer::{OfferPage, OfferQuery, OfferSort, select};
 use vast_skopos::probe::parse_output;
-use vast_skopos::render::{money_line, offers_line, offers_table, table};
+use vast_skopos::render::{TableOptions, money_line, offers_footer, offers_table, table};
 
 fn instance(json: &serde_json::Value) -> Instance {
     Instance::from_json(json).unwrap()
@@ -44,7 +44,13 @@ fn the_table_shows_cost_status_probe_and_money() {
         })),
     ];
     let account = Account::from_json(&serde_json::json!({"credit": 5.94}));
-    let text = table(&rows, &probes, true, false, Some(&account), now);
+    let text = table(
+        &rows,
+        &probes,
+        Some(&account),
+        TableOptions::new().ssh(true),
+        now,
+    );
     assert!(text.contains("1x RTX 5090"), "{text}");
     assert!(
         text.contains("2h 0m") && text.contains("1.29"),
@@ -67,7 +73,7 @@ fn the_table_shows_cost_status_probe_and_money() {
 
 #[test]
 fn no_instances_still_prints_the_money_line() {
-    let text = table(&[], &[], false, false, None, 0.0);
+    let text = table(&[], &[], None, TableOptions::new(), 0.0);
     assert!(
         text.contains("(no instances)") && text.contains("credit ? | burn $0.000/h over 0 running")
     );
@@ -78,7 +84,7 @@ fn ssh_columns_show_when_asked_even_with_nothing_probed() {
     let rows = vec![instance(
         &serde_json::json!({"id": 1, "actual_status": "exited"}),
     )];
-    let text = table(&rows, &[None], true, false, None, 0.0);
+    let text = table(&rows, &[None], None, TableOptions::new().ssh(true), 0.0);
     assert!(text.contains("GPU% (ssh)"), "{text}");
 }
 
@@ -91,12 +97,24 @@ fn wide_adds_the_machine_and_the_host_after_ssh_and_before_the_probe_columns() {
         ),
         instance(&serde_json::json!({"id": 2, "actual_status": "exited"})),
     ];
-    let narrow = table(&rows, &[None, None], true, false, None, 0.0);
+    let narrow = table(
+        &rows,
+        &[None, None],
+        None,
+        TableOptions::new().ssh(true),
+        0.0,
+    );
     assert!(
         !narrow.contains("MACHINE") && !narrow.contains("100682"),
         "{narrow}"
     );
-    let text = table(&rows, &[None, None], true, true, None, 0.0);
+    let text = table(
+        &rows,
+        &[None, None],
+        None,
+        TableOptions::new().ssh(true).wide(true),
+        0.0,
+    );
     let lines: Vec<&str> = text.lines().collect();
     let header: Vec<&str> = lines[0].split_whitespace().collect();
     assert_eq!(&header[8..12], ["SSH", "MACHINE", "HOST", "GPU%"], "{text}");
@@ -128,7 +146,7 @@ fn the_log_cell_tells_no_file_from_an_empty_file() {
             "0, 0, 0, 32607\n---vas-log---\nvas-file:/root/runs/s1/train.log\n",
         ))),
     ];
-    let text = table(&rows, &probes, true, false, None, 0.0);
+    let text = table(&rows, &probes, None, TableOptions::new().ssh(true), 0.0);
     assert!(text.contains("(no file matches)"), "{text}");
     assert!(text.contains("s1/train.log: (empty)"), "{text}");
 }
@@ -157,7 +175,7 @@ fn the_offers_table_of_real_rows_is_aligned_and_footed() {
         "{text}"
     );
     assert_eq!(
-        offers_line(&page, kept.len(), 2, &q, OfferSort::Price, 56_527.0),
+        offers_footer(&page, &kept, 2, &q, OfferSort::Price, 56_527.0),
         "2 of 3 offers shown, cheapest first | verified | $/h includes 5 GB of storage \
          | searched 15:42:07 UTC\n2 dropped here: a field contradicts a constraint\n"
     );
@@ -168,7 +186,14 @@ fn an_answer_at_the_cap_says_the_list_may_be_cut() {
     let rows: Vec<serde_json::Value> = (0..64).map(|id| serde_json::json!({"id": id})).collect();
     let page =
         OfferPage::from_json(&serde_json::json!({"offers": rows, "truncated": false})).unwrap();
-    let footer = offers_line(&page, 64, 20, &OfferQuery::default(), OfferSort::Price, 0.0);
+    let footer = offers_footer(
+        &page,
+        &page.offers,
+        20,
+        &OfferQuery::default(),
+        OfferSort::Price,
+        0.0,
+    );
     assert!(
         footer.contains("64 returned, vast.ai's cap: the list may be cut"),
         "{footer}"
@@ -180,7 +205,14 @@ fn the_server_saying_truncated_and_rows_without_an_id_are_noted() {
     let page = OfferPage::from_json(&serde_json::json!(
         {"offers": [{"id": 1}, {"gpu_name": "no id"}], "truncated": true}))
     .unwrap();
-    let footer = offers_line(&page, 1, 1, &OfferQuery::default(), OfferSort::Price, 0.0);
+    let footer = offers_footer(
+        &page,
+        &page.offers,
+        1,
+        &OfferQuery::default(),
+        OfferSort::Price,
+        0.0,
+    );
     assert!(
         footer.ends_with(
             "vast.ai says the list was cut (narrow the search) | 1 without an id skipped\n"
@@ -263,6 +295,11 @@ fn a_box_meant_to_run_with_no_status_or_no_price_is_named_not_hidden() {
     );
 }
 
+/// An answer with no rows, that the server said was cut (or not): all the notes read of a page.
+fn page(cut: bool) -> OfferPage {
+    OfferPage::from_json(&serde_json::json!({"offers": [], "truncated": cut})).unwrap()
+}
+
 /// One offer for the watch tests: id, price, in Spain.
 fn watched(id: u64, price: f64) -> vast_skopos::offer::Offer {
     vast_skopos::offer::Offer::from_json(&serde_json::json!(
@@ -273,11 +310,11 @@ fn watched(id: u64, price: f64) -> vast_skopos::offer::Offer {
 
 #[test]
 fn the_marked_table_keeps_its_columns_aligned_with_a_mark_and_a_was() {
-    use vast_skopos::offer::changes;
+    use vast_skopos::offer::OfferChanges;
     use vast_skopos::render::offers_table_marked;
     let before = [watched(1, 0.5), watched(2, 0.6), watched(7, 0.9)];
     let now = [watched(3, 0.4), watched(1, 0.55), watched(2, 0.6)];
-    let text = offers_table_marked(&now, 20, &changes(&before, &now));
+    let text = offers_table_marked(&now, 20, &OfferChanges::between(&before, &now));
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(lines.len(), 4, "the header and three rows: {text}");
     // The mark column is the first, one character wide; every id starts in the same column.
@@ -292,18 +329,18 @@ fn the_marked_table_keeps_its_columns_aligned_with_a_mark_and_a_was() {
     assert!(lines[2].contains("0.550 (was 0.500)"), "{text}");
     assert!(!lines[3].contains("was"), "{text}");
     assert!(
-        offers_table_marked(&[], 20, &changes(&[], &[])).ends_with("(no offers)\n"),
+        offers_table_marked(&[], 20, &OfferChanges::between(&[], &[])).ends_with("(no offers)\n"),
         "an empty market"
     );
 }
 
 #[test]
 fn the_table_note_caps_its_gone_lines_but_changes_lists_every_change() {
-    use vast_skopos::offer::changes;
-    use vast_skopos::render::{changes_note, changes_only};
+    use vast_skopos::offer::OfferChanges;
+    use vast_skopos::render::{offers_changes_note, offers_changes_only};
     let before: Vec<_> = (1..=13).map(|id| watched(id, 0.5)).collect();
-    let c = changes(&before, &[]);
-    let note = changes_note(&c, &[], false, false);
+    let c = OfferChanges::between(&before, &[]);
+    let note = offers_changes_note(&c, &[], &page(false), false);
     assert!(note.starts_with("since the last look: 13 gone\n"), "{note}");
     assert_eq!(
         note.lines().filter(|l| l.starts_with("- ")).count(),
@@ -312,7 +349,7 @@ fn the_table_note_caps_its_gone_lines_but_changes_lists_every_change() {
     );
     assert!(note.contains("- ... and 3 more\n"), "{note}");
     // A log must not lose ids: `--changes` names every one.
-    let all = changes_only(Some(&c), 0, false, false, 0.0);
+    let all = offers_changes_only(Some(&c), &[], &page(false), false, 0.0);
     assert_eq!(
         all.lines().filter(|l| l.starts_with("- ")).count(),
         13,
@@ -323,19 +360,27 @@ fn the_table_note_caps_its_gone_lines_but_changes_lists_every_change() {
 
 #[test]
 fn the_cap_of_vast_ai_is_said_only_when_something_entered_or_left() {
-    use vast_skopos::offer::changes;
-    use vast_skopos::render::{changes_note, changes_only};
+    use vast_skopos::offer::OfferChanges;
+    use vast_skopos::render::{offers_changes_note, offers_changes_only};
     let before: Vec<_> = (1..=3).map(|id| watched(id, 0.5)).collect();
-    let gone = changes(&before, &[]);
-    assert!(!changes_note(&gone, &[], false, false).contains("caps a search"));
-    assert!(changes_note(&gone, &[], true, false).contains("vast.ai caps a search at 64 rows"));
-    // Nothing entered or left: the cap explains nothing, and is not said.
-    let steady = changes(&before, &before);
-    assert!(!changes_note(&steady, &before, true, false).contains("caps a search"));
-    assert!(!changes_only(Some(&steady), 3, true, false, 0.0).contains("caps a search"));
-    assert!(changes_only(Some(&gone), 0, true, false, 0.0).contains("caps a search"));
+    let gone = OfferChanges::between(&before, &[]);
+    assert!(!offers_changes_note(&gone, &[], &page(false), false).contains("caps a search"));
     assert!(
-        changes_only(None, 1, false, false, 0.0)
+        offers_changes_note(&gone, &[], &page(true), false)
+            .contains("vast.ai caps a search at 64 rows")
+    );
+    // Nothing entered or left: the cap explains nothing, and is not said.
+    let steady = OfferChanges::between(&before, &before);
+    assert!(!offers_changes_note(&steady, &before, &page(true), false).contains("caps a search"));
+    assert!(
+        !offers_changes_only(Some(&steady), &before, &page(true), false, 0.0)
+            .contains("caps a search")
+    );
+    assert!(
+        offers_changes_only(Some(&gone), &[], &page(true), false, 0.0).contains("caps a search")
+    );
+    assert!(
+        offers_changes_only(None, &before[..1], &page(false), false, 0.0)
             .starts_with("searched 00:00:00 UTC: 1 offer (the first"),
         "singular"
     );
@@ -343,8 +388,8 @@ fn the_cap_of_vast_ai_is_said_only_when_something_entered_or_left() {
 
 #[test]
 fn the_note_counts_the_new_and_repriced_offers_the_table_does_not_show() {
-    use vast_skopos::offer::changes;
-    use vast_skopos::render::changes_note;
+    use vast_skopos::offer::OfferChanges;
+    use vast_skopos::render::offers_changes_note;
     let before = [watched(1, 0.5), watched(2, 0.6), watched(3, 0.7)];
     // Sorted by price, as the table shows them: 1, 2, 3, 4.
     let now = [
@@ -353,8 +398,9 @@ fn the_note_counts_the_new_and_repriced_offers_the_table_does_not_show() {
         watched(3, 0.7),
         watched(4, 0.9),
     ];
-    let c = changes(&before, &now);
-    let note = |shown: &[vast_skopos::offer::Offer]| changes_note(&c, shown, false, false);
+    let c = OfferChanges::between(&before, &now);
+    let note =
+        |shown: &[vast_skopos::offer::Offer]| offers_changes_note(&c, shown, &page(false), false);
     assert_eq!(note(&now), "since the last look: 1 new, 1 repriced\n");
     assert_eq!(
         note(&now[..2]),
@@ -374,16 +420,16 @@ fn the_note_counts_the_new_and_repriced_offers_the_table_does_not_show() {
 
 #[test]
 fn a_look_after_a_failed_search_says_so_in_both_modes() {
-    use vast_skopos::offer::changes;
-    use vast_skopos::render::{changes_note, changes_only};
+    use vast_skopos::offer::OfferChanges;
+    use vast_skopos::render::{offers_changes_note, offers_changes_only};
     let before = [watched(1, 0.5)];
-    let c = changes(&before, &before);
+    let c = OfferChanges::between(&before, &before);
     assert_eq!(
-        changes_note(&c, &before, false, true),
+        offers_changes_note(&c, &before, &page(false), true),
         "since the last successful look: no change\n"
     );
     assert_eq!(
-        changes_only(Some(&c), 1, false, true, 0.0),
+        offers_changes_only(Some(&c), &before, &page(false), true, 0.0),
         "searched 00:00:00 UTC: 1 offer, no change (a search failed in between)\n"
     );
 }
@@ -405,7 +451,7 @@ fn a_credit_that_rounds_to_zero_has_no_sign_and_a_tiny_burn_no_infinite_runway()
         "{line}"
     );
     assert_eq!(
-        vast_skopos::render::Money::of(&[running(1e-320)], Some(&credit(5.0))).hours_left(),
+        vast_skopos::runway::Runway::of(&[running(1e-320)], Some(&credit(5.0))).hours_left(),
         None
     );
 }

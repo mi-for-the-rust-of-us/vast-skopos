@@ -82,7 +82,7 @@ fn each_constraint_alone_drops_a_contradicting_row_and_keeps_a_missing_field() {
 
 #[test]
 fn every_constraint_is_sent_in_the_servers_unit() {
-    let q = every_constraint().to_q(OfferSort::Price);
+    let q = every_constraint().to_search_json(OfferSort::Price);
     for (field, want) in [
         ("gpu_name", json!({"eq": "RTX 5090"})),
         ("num_gpus", json!({"eq": 1})),
@@ -116,7 +116,7 @@ fn the_gpu_model_and_the_countries_ignore_ascii_case() {
     assert!(q.admits(&row("RTX 5090", "Texas, US")));
     assert!(!q.admits(&row("RTX 5090", "Guangdong, CN")));
     assert_eq!(
-        q.to_q(OfferSort::Price)["geolocation"],
+        q.to_search_json(OfferSort::Price)["geolocation"],
         json!({"notin": ["CN"]})
     );
 }
@@ -169,7 +169,7 @@ fn a_host_and_a_machine_are_told_apart() {
     let mut q = OfferQuery::default();
     q.exclude_hosts = vec![5];
     q.exclude_machines = vec![9];
-    let sent = q.to_q(OfferSort::Price);
+    let sent = q.to_search_json(OfferSort::Price);
     assert_eq!(sent["host_id"], json!({"notin": [5]}));
     assert_eq!(sent["machine_id"], json!({"notin": [9]}));
     assert!(
@@ -206,7 +206,7 @@ fn the_changes_name_what_appeared_what_was_repriced_and_what_is_gone() {
         (3, Some(0.70)),
         (8, Some(0.90)),
     ]);
-    let c = vast_skopos::offer::changes(&before, &now);
+    let c = vast_skopos::offer::OfferChanges::between(&before, &now);
     let ids = |offers: &[Offer]| offers.iter().map(|o| o.id).collect::<Vec<_>>();
     assert_eq!(ids(&c.appeared), [9, 8], "in the current look's order");
     assert_eq!(ids(&c.gone), [2, 4], "in the previous look's order");
@@ -236,13 +236,15 @@ fn nothing_moved_when_the_looks_agree_to_the_shown_price() {
         (1, Some(0.5)),
     ]);
     assert!(
-        vast_skopos::offer::changes(&before, &now).is_empty(),
+        vast_skopos::offer::OfferChanges::between(&before, &now).is_empty(),
         "a different order is not a change"
     );
-    assert!(vast_skopos::offer::changes(&[], &[]).is_empty());
+    assert!(vast_skopos::offer::OfferChanges::between(&[], &[]).is_empty());
     // Rounding is of what the table prints: 0.5004 and 0.5006 print as 0.500 and 0.501.
-    let c =
-        vast_skopos::offer::changes(&priced(&[(1, Some(0.5004))]), &priced(&[(1, Some(0.5006))]));
+    let c = vast_skopos::offer::OfferChanges::between(
+        &priced(&[(1, Some(0.5004))]),
+        &priced(&[(1, Some(0.5006))]),
+    );
     assert_eq!(c.repriced.len(), 1);
 }
 
@@ -251,8 +253,8 @@ fn an_offer_that_sank_in_the_ranking_is_not_gone_and_the_first_look_has_everythi
     // The comparison is of the full lists kept: `vas` passes those, not the rows shown.
     let all = priced(&[(1, Some(0.5)), (2, Some(0.6)), (3, Some(0.7))]);
     let reordered = priced(&[(3, Some(0.7)), (2, Some(0.6)), (1, Some(0.5))]);
-    assert!(vast_skopos::offer::changes(&all, &reordered).is_empty());
-    let first = vast_skopos::offer::changes(&[], &all);
+    assert!(vast_skopos::offer::OfferChanges::between(&all, &reordered).is_empty());
+    let first = vast_skopos::offer::OfferChanges::between(&[], &all);
     assert_eq!((first.appeared.len(), first.gone.len()), (3, 0));
 }
 

@@ -1,13 +1,12 @@
 //! The tables `vas` prints: the instances (with the money line), and the offers (with their
 //! footer).
 
-use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
-use crate::error::SkoposError;
 use crate::instance::{Account, Instance};
 use crate::offer::{OFFER_CAP, Offer, OfferChanges, OfferPage, OfferQuery, OfferSort};
-use crate::probe::{LogReading, Probe};
+use crate::probe::{LogReading, Probe, ProbeOutcome};
+use crate::runway::Runway;
 
 /// `secs` in whole seconds, truncated: a negative or `NaN` count reads 0, an enormous one saturates.
 pub(crate) const fn whole_secs(secs: f64) -> u64 {
@@ -28,6 +27,7 @@ pub(crate) const fn whole_secs(secs: f64) -> u64 {
 /// assert_eq!((age(30.0), age(4.0 * 3600.0 + 900.0), age(2.0 * 86400.0 + 3.0 * 3600.0)),
 ///   ("0m".to_owned(), "4h 15m".to_owned(), "2d 3h".to_owned()));
 /// ```
+#[doc(hidden)]
 #[must_use]
 pub fn age(secs: f64) -> String {
     let s = whole_secs(secs);
@@ -43,15 +43,8 @@ pub fn age(secs: f64) -> String {
 
 /// The time of day of `unix_secs` in UTC, as `15:42:07 UTC` (the date is not shown: the footer that
 /// carries it is read within minutes, since offers vanish within minutes).
-///
-/// ```
-/// use vast_skopos::render::clock;
-/// assert_eq!(clock(0.0), "00:00:00 UTC");
-/// assert_eq!(clock(86_400.0 + 15.0 * 3600.0 + 42.0 * 60.0 + 7.9), "15:42:07 UTC");
-/// assert_eq!(clock(-5.0), "00:00:00 UTC");
-/// ```
 #[must_use]
-pub fn clock(unix_secs: f64) -> String {
+pub(crate) fn clock(unix_secs: f64) -> String {
     let s = whole_secs(unix_secs) % 86_400;
     format!("{:02}:{:02}:{:02} UTC", s / 3600, (s % 3600) / 60, s % 60)
 }
@@ -172,6 +165,7 @@ const PATH_WIDTH: usize = 60;
 /// let cut = short_path(&format!("/r/{}/train.log", "d".repeat(80)));
 /// assert!(cut.starts_with('…') && cut.ends_with("d/train.log") && cut.chars().count() == 61);
 /// ```
+#[doc(hidden)]
 #[must_use]
 pub fn short_path(path: &str) -> String {
     let mut parts = path.rsplit('/').filter(|c| !c.is_empty());
@@ -207,6 +201,7 @@ pub fn short_path(path: &str) -> String {
 ///     file: "/r/s1/train.log".to_owned(), line: "e41".to_owned() })), "s1/train.log: e41");
 /// assert_eq!(log_cell(Some(&LogReading::Unreadable)), "?");
 /// ```
+#[doc(hidden)]
 #[must_use]
 pub fn log_cell(log: Option<&LogReading>) -> String {
     match log {
@@ -227,20 +222,80 @@ fn mib_to_gib(mib: u64) -> f64 {
     v
 }
 
+/// Which optional columns [`table`] shows. `TableOptions::new()` is the plain table; the other
+/// columns are asked for by name, so no call site reads as two bare booleans.
+///
+/// ```
+/// use vast_skopos::render::TableOptions;
+/// let options = TableOptions::new().ssh(true).wide(true);
+/// assert!(options.ssh && options.wide);
+/// assert_eq!(TableOptions::default(), TableOptions::new());
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub struct TableOptions {
+    /// Show the probe columns (`GPU% (ssh)`, `VRAM`, `LAST LOG / SSH ERROR`), even when no box was
+    /// probed.
+    pub ssh: bool,
+    /// Show each box's machine id and host id.
+    pub wide: bool,
+}
+
+impl TableOptions {
+    /// The plain table: no probe columns, no ids.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            ssh: false,
+            wide: false,
+        }
+    }
+
+    /// With the probe columns (`on`), or without.
+    #[must_use]
+    pub const fn ssh(mut self, on: bool) -> Self {
+        self.ssh = on;
+        self
+    }
+
+    /// With the machine and host ids (`on`), or without.
+    #[must_use]
+    pub const fn wide(mut self, on: bool) -> Self {
+        self.wide = on;
+        self
+    }
+}
+
 /// The table: one row per instance, then the money line.
 ///
-/// `probes` is aligned with `instances` (`None`: not probed, e.g. not running); `with_ssh` shows
-/// the probe columns even when no box was probed; `wide` adds the machine and host ids; `now` is
-/// Unix seconds.
+/// `probes` holds one outcome per instance, in the instances' order (see [`ProbeOutcome`]); a
+/// shorter slice reads as "not probed" for the instances it does not reach. `options` chooses the
+/// optional columns, and `now` is Unix seconds.
+///
+/// ```
+/// use vast_skopos::{instance::{Account, Instance}, render::{table, TableOptions}};
+/// let i = Instance::from_json(&serde_json::json!({"id": 7, "actual_status": "running",
+///   "gpu_name": "RTX 5090", "num_gpus": 1, "dph_total": 0.5, "start_date": 0.0,
+///   "machine_id": 9, "host_id": 5})).unwrap();
+/// let account = Account::from_json(&serde_json::json!({"credit": 5.0}));
+/// let text = table(&[i], &[], Some(&account), TableOptions::new().wide(true), 3600.0);
+/// let header: Vec<&str> = text.lines().next().unwrap().split_whitespace().collect();
+/// assert_eq!(&header[8..], ["SSH", "MACHINE", "HOST"]);
+/// assert!(text.ends_with("credit $5.00 | burn $0.500/h over 1 running | ~10.0 h left at this rate\n"));
+/// ```
 #[must_use]
 pub fn table(
     instances: &[Instance],
-    probes: &[Option<Result<Probe, SkoposError>>],
-    with_ssh: bool,
-    wide: bool,
+    probes: &[ProbeOutcome],
     account: Option<&Account>,
+    options: TableOptions,
     now: f64,
 ) -> String {
+    let TableOptions {
+        ssh: with_ssh,
+        wide,
+        ..
+    } = options;
     let mut header = vec![
         "ID", "LABEL", "GPU", "WHERE", "STATUS", "$/H", "AGE", "COST~", "SSH",
     ];
@@ -289,128 +344,8 @@ pub fn table(
     out
 }
 
-/// `x` with `decimals` decimals; a value that rounds to zero loses its sign (`$-0.00` is nonsense).
-fn dollars(x: f64, decimals: usize) -> String {
-    let text = format!("{x:.decimals$}");
-    match text.strip_prefix('-') {
-        Some(rest) if rest.bytes().all(|b| b == b'0' || b == b'.') => {
-            // BORROW: explicit to_owned -- the cell is owned by the line
-            rest.to_owned()
-        }
-        _ => text,
-    }
-}
-
-/// The account's money over the fleet: what the money line prints and the compact output carries.
-///
-/// The burn counts the instances the API reads as `running` AND those it was asked to run
-/// (`intended_status`) that read otherwise (`offline`, `loading`, ...): whether those bill is not
-/// known from here, and an under-counted burn overstates the runway.
-#[derive(Debug, Clone, PartialEq)]
-#[non_exhaustive]
-pub struct Money {
-    /// The prepaid credit, in dollars, when the account answered.
-    pub credit: Option<f64>,
-    /// The burn, in dollars per hour: the running instances' `$/h` and the unsure ones'.
-    pub burn: f64,
-    /// How many instances read `running`.
-    pub running: usize,
-    /// The instances meant to run that read otherwise, counted by their state (`unknown` when the
-    /// API gave none).
-    pub unsure: BTreeMap<String, usize>,
-}
-
-impl Money {
-    /// The money of `instances` under `account`.
-    ///
-    /// ```
-    /// use vast_skopos::{instance::{Account, Instance}, render::Money};
-    /// let row = |id, actual: &str| Instance::from_json(&serde_json::json!(
-    ///   {"id": id, "actual_status": actual, "intended_status": "running", "dph_total": 0.5})).unwrap();
-    /// let a = Account::from_json(&serde_json::json!({"credit": 5.0}));
-    /// let m = Money::of(&[row(1, "running"), row(2, "offline")], Some(&a));
-    /// assert_eq!((m.running, m.burn, m.unsure.get("offline").copied()), (1, 1.0, Some(1)));
-    /// assert_eq!(m.hours_left(), Some(5.0));
-    /// ```
-    #[must_use]
-    pub fn of(instances: &[Instance], account: Option<&Account>) -> Self {
-        let running: Vec<&Instance> = instances.iter().filter(|i| i.is_running()).collect();
-        let unsure: Vec<&Instance> = instances
-            .iter()
-            .filter(|i| i.is_meant_to_run() && !i.is_running())
-            .collect();
-        // A fold from +0.0, not `sum()`: an empty f64 sum is -0.0, which would print as `$-0.000`.
-        let burn = running
-            .iter()
-            .chain(&unsure)
-            .filter_map(|i| i.dph_total)
-            .fold(0.0_f64, |acc, d| acc + d);
-        let mut by_state: BTreeMap<String, usize> = BTreeMap::new();
-        for i in &unsure {
-            *by_state
-                .entry(
-                    i.actual_status
-                        .as_deref()
-                        .unwrap_or("unknown")
-                        // BORROW: explicit to_owned -- the map owns its keys
-                        .to_owned(),
-                )
-                .or_default() += 1;
-        }
-        Self {
-            credit: account.and_then(|a| a.credit),
-            burn,
-            running: running.len(),
-            unsure: by_state,
-        }
-    }
-
-    /// The hours the credit lasts at this burn; `None` without a credit, without a burn, or when
-    /// the burn is so small that the hours are not a number worth showing.
-    #[must_use]
-    pub fn hours_left(&self) -> Option<f64> {
-        self.credit
-            .filter(|_| self.burn > 0.0)
-            .map(|c| c / self.burn)
-            .filter(|h| h.is_finite())
-    }
-
-    /// The money line, ending in a newline (see [`money_line`]).
-    #[must_use]
-    pub fn line(&self) -> String {
-        let mut s = format!(
-            "credit {} | burn ${}/h over {} running",
-            self.credit
-                .map_or_else(|| String::from("?"), |c| format!("${}", dollars(c, 2))),
-            dollars(self.burn, 3),
-            self.running
-        );
-        if !self.unsure.is_empty() {
-            let states: Vec<String> = self
-                .unsure
-                .iter()
-                .map(|(state, n)| format!("{n} {state}"))
-                .collect();
-            let _ = write!(
-                s,
-                " + {} (meant to run, billing unknown)",
-                states.join(", ")
-            );
-        }
-        if let Some(h) = self.hours_left() {
-            let _ = write!(s, " | ~{h:.1} h left at this rate");
-        }
-        s.push('\n');
-        s
-    }
-}
-
-/// The credit, the burn rate of the instances that bill or may, and the hours that credit buys.
-///
-/// The burn counts the instances the API reads as `running` AND those it was asked to run
-/// (`intended_status`) that read otherwise (`offline`, `loading`, ...): whether those bill is not
-/// known from here, and an under-counted burn overstates the runway. They are named after the
-/// running ones, by state, and the line says so.
+/// The money line: the credit, the burn rate of the instances that bill or may, and the hours that
+/// credit buys (see [`Runway`], which holds the figures, for what the burn counts).
 ///
 /// ```
 /// use vast_skopos::{instance::{Account, Instance}, render::money_line};
@@ -427,7 +362,7 @@ impl Money {
 /// ```
 #[must_use]
 pub fn money_line(instances: &[Instance], account: Option<&Account>) -> String {
-    Money::of(instances, account).line()
+    Runway::of(instances, account).line()
 }
 
 /// The offers table's header.
@@ -502,11 +437,11 @@ const PRICE_COLUMN: usize = 3;
 /// was not in the previous look, and a price that moved read `0.594 (was 0.575)`.
 ///
 /// ```
-/// use vast_skopos::{offer::{Offer, changes}, render::offers_table_marked};
+/// use vast_skopos::{offer::{Offer, OfferChanges}, render::offers_table_marked};
 /// let offer = |id: u64, p: f64| Offer::from_json(&serde_json::json!({"id": id, "dph_total": p})).unwrap();
 /// let before = [offer(1, 0.5), offer(2, 0.6)];
 /// let now = [offer(3, 0.4), offer(1, 0.55), offer(2, 0.6)];
-/// let text = offers_table_marked(&now, 20, &changes(&before, &now));
+/// let text = offers_table_marked(&now, 20, &OfferChanges::between(&before, &now));
 /// let rows: Vec<Vec<&str>> = text.lines().skip(1).map(|l| l.split_whitespace().collect()).collect();
 /// assert_eq!((rows[0][0], rows[0][1], rows[0][4]), ("+", "3", "0.400"));
 /// assert_eq!(&rows[1][..5], ["1", "-", "-", "0.550", "(was"]);
@@ -620,27 +555,35 @@ const CUT_NOTE: &str = "(vast.ai caps a search at 64 rows: an offer may only hav
 ///
 /// The table already marks the new offers and shows the changed prices, so this is the counts
 /// (naming how many of the new and repriced sit below the table, where nothing marks them), then
-/// the offers that are gone (a table cannot show them). `shown` is the rows the table shows; `cut`
-/// is whether the search may have been cut ([`crate::offer::OfferPage::maybe_cut`]); `missed` is
-/// whether a search failed since the previous look, which then reads `since the last successful
-/// look`.
+/// the offers that are gone (a table cannot show them). `shown` is the rows the table shows; `page`
+/// is the search's answer, whose cap may explain an entry or an exit; `missed` is whether a search
+/// failed since the previous look, which then reads `since the last successful look`.
 ///
 /// ```
-/// use vast_skopos::{offer::{Offer, changes}, render::changes_note};
+/// use vast_skopos::{offer::{Offer, OfferChanges, OfferPage}, render::offers_changes_note};
 /// let offer = |id: u64, p: f64| Offer::from_json(&serde_json::json!(
 ///   {"id": id, "dph_total": p, "gpu_name": "RTX 5090", "num_gpus": 1, "geolocation": "Spain, ES"})).unwrap();
+/// let page = OfferPage::from_json(&serde_json::json!({"offers": []})).unwrap();
 /// let before = [offer(1, 0.5), offer(2, 0.6)];
 /// let now = [offer(1, 0.5), offer(3, 0.7)];
-/// assert_eq!(changes_note(&changes(&before, &now), &now, false, false),
+/// let moved = OfferChanges::between(&before, &now);
+/// assert_eq!(offers_changes_note(&moved, &now, &page, false),
 ///   "since the last look: 1 new, 1 gone\n- 2  1x RTX 5090  0.600 $/h  Spain, ES\n");
 /// // Only the first row is on screen: the new offer is below the table.
-/// assert_eq!(changes_note(&changes(&before, &now), &now[..1], false, true),
+/// assert_eq!(offers_changes_note(&moved, &now[..1], &page, true),
 ///   "since the last successful look: 1 new (1 below the table), 1 gone\n\
 ///    - 2  1x RTX 5090  0.600 $/h  Spain, ES\n");
-/// assert_eq!(changes_note(&changes(&now, &now), &now, false, false), "since the last look: no change\n");
+/// let steady = OfferChanges::between(&now, &now);
+/// assert_eq!(offers_changes_note(&steady, &now, &page, false), "since the last look: no change\n");
 /// ```
 #[must_use]
-pub fn changes_note(changes: &OfferChanges, shown: &[Offer], cut: bool, missed: bool) -> String {
+pub fn offers_changes_note(
+    changes: &OfferChanges,
+    shown: &[Offer],
+    page: &OfferPage,
+    missed: bool,
+) -> String {
+    let cut = page.maybe_cut();
     let since = if missed {
         "since the last successful look"
     } else {
@@ -657,35 +600,39 @@ pub fn changes_note(changes: &OfferChanges, shown: &[Offer], cut: bool, missed: 
 /// The look of `vas offers --watch --changes`: no table, only what moved.
 ///
 /// The first look (no `changes`) is the baseline; later ones name every change, a line each (`+`
-/// new, `~` repriced, `-` gone, none left out), or say `no change` in the one line. `offers` is how
-/// many offers the look kept, `cut` whether the search may have been cut, `missed` whether a search
-/// failed since the previous look (the line then says so), `now` the time of the search (Unix
-/// seconds).
+/// new, `~` repriced, `-` gone, none left out), or say `no change` in the one line. `kept` is the
+/// offers the look kept, `page` the search's answer (whose cap may explain an entry or an exit),
+/// `missed` whether a search failed since the previous look (the line then says so), `now` the time
+/// of the search (Unix seconds).
 ///
 /// ```
-/// use vast_skopos::{offer::{Offer, changes}, render::changes_only};
+/// use vast_skopos::{offer::{Offer, OfferChanges, OfferPage}, render::offers_changes_only};
 /// let offer = |id: u64, p: f64| Offer::from_json(&serde_json::json!(
 ///   {"id": id, "dph_total": p, "gpu_name": "RTX 5090", "num_gpus": 1, "geolocation": "Spain, ES"})).unwrap();
-/// assert_eq!(changes_only(None, 2, false, false, 0.0),
-///   "searched 00:00:00 UTC: 2 offers (the first look: what moves follows)\n");
+/// let page = OfferPage::from_json(&serde_json::json!({"offers": []})).unwrap();
 /// let before = [offer(1, 0.5), offer(2, 0.6)];
 /// let now = [offer(1, 0.55), offer(3, 0.7)];
-/// assert_eq!(changes_only(Some(&changes(&before, &now)), 2, false, false, 3661.0),
+/// assert_eq!(offers_changes_only(None, &before, &page, false, 0.0),
+///   "searched 00:00:00 UTC: 2 offers (the first look: what moves follows)\n");
+/// let moved = OfferChanges::between(&before, &now);
+/// assert_eq!(offers_changes_only(Some(&moved), &now, &page, false, 3661.0),
 ///   "searched 01:01:01 UTC: 2 offers, 1 new, 1 repriced, 1 gone\n\
 ///    + 3  1x RTX 5090  0.700 $/h  Spain, ES\n\
 ///    ~ 1  1x RTX 5090  0.500 -> 0.550 $/h  Spain, ES\n\
 ///    - 2  1x RTX 5090  0.600 $/h  Spain, ES\n");
-/// assert_eq!(changes_only(Some(&changes(&now, &now)), 2, false, true, 3661.0),
+/// let steady = OfferChanges::between(&now, &now);
+/// assert_eq!(offers_changes_only(Some(&steady), &now, &page, true, 3661.0),
 ///   "searched 01:01:01 UTC: 2 offers, no change (a search failed in between)\n");
 /// ```
 #[must_use]
-pub fn changes_only(
+pub fn offers_changes_only(
     changes: Option<&OfferChanges>,
-    offers: usize,
-    cut: bool,
+    kept: &[Offer],
+    page: &OfferPage,
     missed: bool,
     now: f64,
 ) -> String {
+    let (offers, cut) = (kept.len(), page.maybe_cut());
     let at = clock(now);
     let noun = if offers == 1 { "offer" } else { "offers" };
     let Some(changes) = changes else {
@@ -718,37 +665,40 @@ pub fn changes_only(
     out
 }
 
-/// The offers footer: counts, order, constraints and the storage priced in; then any notes.
+/// The footer of the offers table: counts, order, constraints and the storage priced in; then any
+/// notes.
 ///
-/// The notes say when the answer may be cut (vast.ai's cap, or the server's own `truncated`), how
-/// many rows the re-check dropped, and how many were skipped for want of an id. `kept` is how many
-/// offers passed the re-check ([`crate::offer::select`]), `shown` how many the table shows. `now`
-/// (Unix seconds) is the time of the search, named on the first line: the list is a snapshot of a
-/// market that moves within minutes.
+/// `page` is the answer, `kept` the offers that passed the re-check ([`crate::offer::select`]) and
+/// `top` how many of them the table shows. The notes say when the answer may be cut (vast.ai's cap,
+/// or the server's own `truncated`), how many rows the re-check dropped, and how many were skipped
+/// for want of an id. `now` (Unix seconds) is the time of the search, named on the first line: the
+/// list is a snapshot of a market that moves within minutes.
 ///
 /// ```
-/// use vast_skopos::{offer::{OfferPage, OfferQuery, OfferSort}, render::offers_line};
+/// use vast_skopos::{offer::{OfferPage, OfferQuery, OfferSort}, render::offers_footer};
 /// let page = OfferPage::from_json(&serde_json::json!(
 ///   {"offers": [{"id": 1}, {"id": 2}, {"id": 3}], "truncated": false})).unwrap();
 /// let mut q = OfferQuery::default();
 /// q.disk = Some(50);
-/// assert_eq!(offers_line(&page, 2, 1, &q, OfferSort::Price, 56_527.0),
+/// // Two of the three offers passed the re-check; the table shows one.
+/// assert_eq!(offers_footer(&page, &page.offers[..2], 1, &q, OfferSort::Price, 56_527.0),
 ///   "1 of 2 offers shown, cheapest first | disk >= 50 GB | $/h includes 50 GB of storage \
 ///    | searched 15:42:07 UTC\n1 dropped here: a field contradicts a constraint\n");
 /// let one = OfferPage::from_json(&serde_json::json!({"offers": [{"id": 1}]})).unwrap();
-/// assert_eq!(offers_line(&one, 1, 1, &OfferQuery::default(), OfferSort::Up, 0.0),
+/// assert_eq!(offers_footer(&one, &one.offers, 20, &OfferQuery::default(), OfferSort::Up, 0.0),
 ///   "1 offer, fastest upload first | no constraint | $/h includes 5 GB of storage \
 ///    | searched 00:00:00 UTC\n");
 /// ```
 #[must_use]
-pub fn offers_line(
+pub fn offers_footer(
     page: &OfferPage,
-    kept: usize,
-    shown: usize,
+    kept: &[Offer],
+    top: usize,
     query: &OfferQuery,
     sort: OfferSort,
     now: f64,
 ) -> String {
+    let (kept, shown) = (kept.len(), kept.len().min(top));
     let count = if shown < kept {
         format!("{shown} of {kept} offers shown")
     } else if kept == 1 {
@@ -788,4 +738,32 @@ pub fn offers_line(
         s.push('\n');
     }
     s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{clock, whole_secs};
+
+    #[test]
+    fn the_clock_reads_the_utc_time_of_day_and_never_fails() {
+        assert_eq!(clock(0.0), "00:00:00 UTC");
+        assert_eq!(clock(142_927.9), "15:42:07 UTC");
+        assert_eq!(clock(86_399.0), "23:59:59 UTC");
+        assert_eq!(clock(86_400.0), "00:00:00 UTC", "midnight wraps");
+        for odd in [-5.0, f64::NAN, f64::NEG_INFINITY, f64::INFINITY, 1e300] {
+            let text = clock(odd);
+            assert!(
+                text.ends_with(" UTC") && text.len() == "00:00:00 UTC".len(),
+                "{odd}: {text}"
+            );
+        }
+        assert_eq!(clock(-5.0), "00:00:00 UTC");
+    }
+
+    #[test]
+    fn whole_seconds_truncate_and_saturate() {
+        assert_eq!(whole_secs(59.99), 59);
+        assert_eq!((whole_secs(-1.0), whole_secs(f64::NAN)), (0, 0));
+        assert_eq!(whole_secs(1e300), u64::MAX);
+    }
 }

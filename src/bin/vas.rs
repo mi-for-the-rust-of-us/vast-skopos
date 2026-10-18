@@ -9,16 +9,16 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use clap::{Parser, Subcommand, ValueEnum};
 use vast_skopos::api::{Client, DEFAULT_BASE, SearchClient};
-use vast_skopos::compact::compact;
+use vast_skopos::compact::json_lines;
 use vast_skopos::config::{default_offers_file, read_flag_file};
 use vast_skopos::key::ApiKey;
 use vast_skopos::offer::{
-    Offer, OfferChanges, OfferQuery, OfferSort, changes as offer_changes, country_code, gpu_model,
-    select,
+    Offer, OfferChanges, OfferQuery, OfferSort, country_code, gpu_model, select,
 };
 use vast_skopos::probe::ssh_probe;
 use vast_skopos::render::{
-    changes_note, changes_only, offers_line, offers_table, offers_table_marked, table,
+    TableOptions, offers_changes_note, offers_changes_only, offers_footer, offers_table,
+    offers_table_marked, table,
 };
 
 /// A lookout over your rented vast.ai boxes: status, $/h, cost so far, credit, and (with --ssh)
@@ -343,14 +343,13 @@ fn look(client: &Client, args: &LookArgs) -> Result<String, vast_skopos::SkoposE
         Vec::new()
     };
     Ok(if args.compact {
-        compact(&instances, &probes, account.as_ref(), now())
+        json_lines(&instances, &probes, account.as_ref(), now())
     } else {
         table(
             &instances,
             &probes,
-            args.ssh,
-            args.wide,
             account.as_ref(),
+            TableOptions::new().ssh(args.ssh).wide(args.wide),
             now(),
         )
     })
@@ -507,15 +506,13 @@ fn offers(args: OffersArgs) -> ExitCode {
                 // BORROW: explicit clone -- the footer reads the page again
                 let kept = select(page.offers.clone(), &query, sort);
                 let at = now();
-                let moved = previous.as_deref().map(|p| offer_changes(p, &kept));
+                let moved = previous.as_deref().map(|p| OfferChanges::between(p, &kept));
                 let text = match (args.watch, args.changes) {
-                    (_, true) => {
-                        changes_only(moved.as_ref(), kept.len(), page.maybe_cut(), missed, at)
-                    }
+                    (_, true) => offers_changes_only(moved.as_ref(), &kept, &page, missed, at),
                     (None, false) => format!(
                         "{}{}",
                         offers_table(&kept, top),
-                        offers_line(&page, kept.len(), kept.len().min(top), &query, sort, at)
+                        offers_footer(&page, &kept, top, &query, sort, at)
                     ),
                     (Some(_), false) => {
                         // The first look has nothing to mark; a blank line parts the looks.
@@ -523,12 +520,12 @@ fn offers(args: OffersArgs) -> ExitCode {
                         let shown = kept.get(..top).unwrap_or(&kept);
                         let note = moved
                             .as_ref()
-                            .map(|m| changes_note(m, shown, page.maybe_cut(), missed))
+                            .map(|m| offers_changes_note(m, shown, &page, missed))
                             .unwrap_or_default();
                         format!(
                             "{gap}{}{}{note}",
                             offers_table_marked(&kept, top, moved.as_ref().unwrap_or(&nothing)),
-                            offers_line(&page, kept.len(), kept.len().min(top), &query, sort, at)
+                            offers_footer(&page, &kept, top, &query, sort, at)
                         )
                     }
                 };

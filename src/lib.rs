@@ -13,17 +13,18 @@
 //! The library half is what `vas` is built from:
 //!
 //! - [`key`]: where the API key is found (and that it is never printed);
-//! - [`config`]: the `vas offers` config file, a file of flags;
 //! - [`api`]: the three endpoints read (`/api/v1/instances/`, paginated, and
 //!   `/api/v0/users/current/`, with the key; the offer search, without);
 //! - [`instance`]: the lenient readers of their JSON;
 //! - [`offer`]: the offers for rent, and the search `vas offers` sends;
 //! - [`probe`]: the `ssh` probe and its `nvidia-smi` parser;
 //! - [`render`]: the tables;
+//! - [`runway`]: the credit, the burn and the hours they last, as the money line and `--compact` read them;
 //! - [`compact`]: the same readings as JSON Lines, for scripts and monitors.
 
 pub mod api;
 pub mod compact;
+#[doc(hidden)]
 pub mod config;
 pub mod error;
 pub mod instance;
@@ -31,5 +32,6 @@ pub mod key;
 pub mod offer;
 pub mod probe;
 pub mod render;
+pub mod runway;
 
 pub use error::{Result, SkoposError};

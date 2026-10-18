@@ -76,7 +76,7 @@ fn main() -> vast_skopos::Result<()> {
 }
 ```
 
-`render::table` and `render::money_line` print what `vas` prints, and `compact::compact` the same readings as JSON Lines.
+`render::table` and `render::money_line` print what `vas` prints, and `compact::json_lines` the same readings as JSON Lines.
 
 The offer search needs no key:
 
@@ -101,7 +101,7 @@ fn main() -> vast_skopos::Result<()> {
 }
 ```
 
-`render::offers_table` and `render::offers_line` print what `vas offers` prints.
+`render::offers_table` and `render::offers_footer` print what `vas offers` prints.
 
 ## Try it
 

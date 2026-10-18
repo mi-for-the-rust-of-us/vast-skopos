@@ -67,6 +67,12 @@ pub struct Probe {
     pub log: Option<LogReading>,
 }
 
+/// What a look learned of one box over `ssh`.
+///
+/// `None` when it was not probed (no `--ssh`, or the box is not running), else the probe or the
+/// reason it failed. A look holds one per instance, in the instances' order.
+pub type ProbeOutcome = Option<Result<Probe>>;
+
 /// The longest one probe may take, connection included; the `ssh` process is killed after it.
 pub const PROBE_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -175,6 +181,7 @@ pub fn remote_command(log: Option<&str>) -> String {
 /// assert_eq!(strip(&"x".repeat(200)).chars().count(), 200);
 /// assert_eq!(strip("\r \r"), "");
 /// ```
+#[doc(hidden)]
 #[must_use]
 pub fn strip(text: &str) -> String {
     text.rsplit('\r')
@@ -195,6 +202,7 @@ pub fn strip(text: &str) -> String {
 /// assert_eq!(clean("10%\r55%\r100% done"), "100% done");
 /// assert_eq!(clean(&"x".repeat(200)).chars().count(), 121);
 /// ```
+#[doc(hidden)]
 #[must_use]
 pub fn clean(line: &str) -> String {
     let kept = strip(line);
@@ -258,6 +266,7 @@ pub fn parse_output(stdout: &str) -> Probe {
 /// assert_eq!(parse_log(""), LogReading::Unreadable);
 /// assert_eq!(parse_log("\nconnection reset\n"), LogReading::Unreadable);
 /// ```
+#[doc(hidden)]
 #[must_use]
 pub fn parse_log(text: &str) -> LogReading {
     let mut lines = text.lines().skip_while(|l| l.trim().is_empty());

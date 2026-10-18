@@ -43,7 +43,10 @@ fn a_malformed_line_names_the_file_and_the_line() {
     std::fs::write(&file, "--gpu RTX_5090\n\ngpu RTX_4090\n").unwrap();
     let err = read_flag_file(&file).unwrap_err();
     std::fs::remove_dir_all(&dir).unwrap();
-    assert!(matches!(err, SkoposError::Config { line: 3, .. }), "{err}");
+    assert!(
+        matches!(err, SkoposError::ConfigLine { line: 3, .. }),
+        "{err}"
+    );
     let text = err.to_string();
     assert!(
         text.starts_with("line 3 of the config file ")
@@ -69,7 +72,10 @@ fn a_file_of_filters_cannot_turn_the_run_into_a_loop() {
         .unwrap();
         let err = read_flag_file(&file).unwrap_err();
         std::fs::remove_dir_all(&dir).unwrap();
-        assert!(matches!(err, SkoposError::Config { line: 2, .. }), "{err}");
+        assert!(
+            matches!(err, SkoposError::ConfigLine { line: 2, .. }),
+            "{err}"
+        );
         let text = err.to_string();
         assert!(
             text.contains(&format!("`--{flag}` cannot be set from a config file"))
