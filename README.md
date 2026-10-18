@@ -197,6 +197,12 @@ application clocks and sync boost are not restraints and are not shown. `--compa
 of those words: empty when nothing holds the card, `null` when the box did not say). The power is asked in a
 second `nvidia-smi` query, so a driver that lacks a field costs the power cells (`-`) and nothing else.
 
+A cap can also arrive mid-run. Under `vas --ssh --watch N`, a line under the money says when a GPU's limit or
+its throttle reasons change from one look to the next: `! 56533728 gpu 0: power limit 575 -> 400 W, power_cap
+began` (and `... ended`). The first look of a box is the baseline, a reading the box did not give changes
+nothing, and a box that stops starts afresh. `--compact` prints each change as an object before the money
+one: `{"kind":"event","at":...,"id":...,"gpu":0,"limit_was":575,"limit_now":400,"began":["power_cap"],"ended":[]}`.
+
 **vast.ai rate-limits its API**, per endpoint, and says so in `X-RateLimit-*` headers (on 2026-10-18: 30
 calls for the offer search, ONE for the instances list). `vas` reads them. A look refused with a 429 that
 clears within 15 s waits it out once and says so (`vas: rate-limited: waiting 3 s, then trying again`), so
@@ -250,7 +256,8 @@ $ vas --compact --ssh --log '/root/runs/*/train.log'
 else `gpus`, `log` and `util_trend` (`null` in a one-shot, else the last GPU samples of a `--watch`, see
 below); `log` is `null` without `--log`, else an object whose `state` is `line`, `empty`,
 `not_a_file`, `no_match` or `unreadable`. `unsure` counts, by state, the boxes meant to run that read
-otherwise (the burn, above). With `--watch N`, a look is printed every N seconds with no separator line (the table form of `--watch`
+otherwise (the burn, above). With `--ssh --watch N`, a change of a GPU's power limit or throttle reasons is an
+`event` object, between the boxes and the money (see the power cap, above). With `--watch N`, a look is printed every N seconds with no separator line (the table form of `--watch`
 stamps each look with `== vas, unix time N`; JSON lines would not parse with it): the `at`
 tells looks apart. `jq` does the rest, for example `vas --compact | jq -r 'select(.kind=="money").hours_left'`.
 

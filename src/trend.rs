@@ -5,15 +5,71 @@
 //! [`TREND_LEN`] samples of each box, oldest first, so a run that stalls reads `99 99 98 0 0`, and a
 //! lone odd reading reads `99 99 0 99 99`.
 //!
+//! The same history notices when a box's power limit or its clock throttle reasons change between
+//! two looks (a host lowering the cap mid-run, a card starting to run hot): [`PowerChange`], which
+//! the table and `--compact` print under the look.
+//!
 //! The history lives in memory, for the length of the watch; nothing is written anywhere.
 
 use std::collections::{HashMap, VecDeque};
 
 use crate::instance::Instance;
-use crate::probe::{ProbeOutcome, outcome_at};
+use crate::probe::{GpuReading, ProbeOutcome, outcome_at};
 
 /// How many samples a box keeps.
 pub const TREND_LEN: usize = 6;
+
+/// What changed on one GPU of a box between two looks: its power limit, or what holds its clocks
+/// down.
+///
+/// ```
+/// use vast_skopos::{instance::Instance, probe::parse_output, trend::Trend};
+/// let box7 = Instance::from_json(&serde_json::json!({"id": 7, "actual_status": "running"})).unwrap();
+/// let look = |limit: u32, mask: &str| Some(Ok(parse_output(&format!(
+///   "0, 100, 1, 2\n---vas-power---\n0, 399, {limit}, 575, 1700, 3090, {mask}\n"))));
+/// let mut trend = Trend::default();
+/// trend.record(std::slice::from_ref(&box7), &[look(575, "0x0")]);
+/// assert!(trend.changes().is_empty(), "the first look is the baseline");
+/// trend.record(std::slice::from_ref(&box7), &[look(400, "0x4")]);
+/// assert_eq!(trend.changes()[0].line(), "! 7 gpu 0: power limit 575 -> 400 W, power_cap began");
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct PowerChange {
+    /// The instance's id.
+    pub id: u64,
+    /// The GPU's index on the box.
+    pub gpu: u32,
+    /// The power limit, in watts, before and after, when it moved.
+    pub limit: Option<(u32, u32)>,
+    /// The throttle reasons that began (see [`GpuReading::throttle_words`]).
+    pub began: Vec<&'static str>,
+    /// The throttle reasons that ended.
+    pub ended: Vec<&'static str>,
+}
+
+impl PowerChange {
+    /// The change as one line: `! 7 gpu 0: power limit 575 -> 400 W, power_cap began`.
+    #[must_use]
+    pub fn line(&self) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        if let Some((was, now)) = self.limit {
+            parts.push(format!("power limit {was} -> {now} W"));
+        }
+        parts.extend(self.began.iter().map(|word| format!("{word} began")));
+        parts.extend(self.ended.iter().map(|word| format!("{word} ended")));
+        format!("! {} gpu {}: {}", self.id, self.gpu, parts.join(", "))
+    }
+}
+
+/// What a watch last knew of one GPU's power: a reading the box did not give does not erase it.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct PowerState {
+    /// The power limit, in watts.
+    limit: Option<u32>,
+    /// The throttle reasons, as words.
+    throttle: Option<Vec<&'static str>>,
+}
 
 /// The last utilisation samples of each box, by instance id.
 ///
@@ -36,6 +92,10 @@ pub const TREND_LEN: usize = 6;
 pub struct Trend {
     /// The samples of each box, oldest first, at most [`TREND_LEN`].
     by_box: HashMap<u64, VecDeque<u32>>,
+    /// The power of each GPU of each box, as last read.
+    power: HashMap<u64, HashMap<u32, PowerState>>,
+    /// What changed at the last [`record`](Trend::record).
+    changes: Vec<PowerChange>,
 }
 
 /// The mean of the GPUs' utilisation, rounded; `None` without a GPU reading.
@@ -45,19 +105,76 @@ fn mean_util(utils: &[u32]) -> Option<u32> {
     Some((sum + count / 2) / count)
 }
 
+/// Compares `gpu` with what `known` holds of it and remembers the reading: the change, if the
+/// power limit or the throttle reasons moved since the last look. A reading the box did not give
+/// neither makes a change nor erases what was known.
+fn note_power(
+    known: &mut HashMap<u32, PowerState>,
+    id: u64,
+    gpu: &GpuReading,
+) -> Option<PowerChange> {
+    let now = PowerState {
+        limit: gpu.power_limit_w,
+        throttle: gpu.throttle_words(),
+    };
+    let Some(was) = known.get_mut(&gpu.index) else {
+        known.insert(gpu.index, now);
+        return None;
+    };
+    let limit = match (was.limit, now.limit) {
+        (Some(before), Some(after)) if before != after => Some((before, after)),
+        _ => None,
+    };
+    let (began, ended) = match (&was.throttle, &now.throttle) {
+        (Some(before), Some(after)) => (
+            after
+                .iter()
+                .copied()
+                .filter(|w| !before.contains(w))
+                .collect(),
+            before
+                .iter()
+                .copied()
+                .filter(|w| !after.contains(w))
+                .collect(),
+        ),
+        _ => (Vec::new(), Vec::new()),
+    };
+    was.limit = now.limit.or(was.limit);
+    was.throttle = now.throttle.or_else(|| was.throttle.take());
+    (limit.is_some() || !began.is_empty() || !ended.is_empty()).then_some(PowerChange {
+        id,
+        gpu: gpu.index,
+        limit,
+        began,
+        ended,
+    })
+}
+
 impl Trend {
     /// Records one look: the mean GPU utilisation of every box that was probed and answered.
     ///
     /// A probe that failed adds nothing and keeps what the box had (one dropped `ssh` is not the
     /// run stopping). A box that is no longer in `instances`, or no longer running, loses its
     /// history: the numbers of its last run say nothing of the next.
+    ///
+    /// The power limit and the throttle reasons of each GPU are compared with the last look's:
+    /// [`changes`](Trend::changes) then holds what moved (and nothing on a box's first look).
     pub fn record(&mut self, instances: &[Instance], probes: &[ProbeOutcome]) {
-        self.by_box
-            .retain(|id, _| instances.iter().any(|i| i.id == *id && i.is_running()));
+        let running = |id: &u64| instances.iter().any(|i| i.id == *id && i.is_running());
+        self.by_box.retain(|id, _| running(id));
+        self.power.retain(|id, _| running(id));
+        self.changes.clear();
         for (n, instance) in instances.iter().enumerate() {
             let Some(Ok(probe)) = outcome_at(probes, n) else {
                 continue;
             };
+            let known = self.power.entry(instance.id).or_default();
+            for gpu in &probe.gpus {
+                if let Some(change) = note_power(known, instance.id, gpu) {
+                    self.changes.push(change);
+                }
+            }
             let utils: Vec<u32> = probe.gpus.iter().map(|g| g.util_pct).collect();
             let Some(sample) = mean_util(&utils) else {
                 continue;
@@ -68,6 +185,13 @@ impl Trend {
             }
             history.push_back(sample);
         }
+    }
+
+    /// What changed in the power of the boxes at the last [`record`](Trend::record): empty on the
+    /// first look, and when nothing moved.
+    #[must_use]
+    pub fn changes(&self) -> &[PowerChange] {
+        &self.changes
     }
 
     /// The samples of box `id`, oldest first; empty when it has none.

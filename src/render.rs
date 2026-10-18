@@ -399,6 +399,11 @@ pub fn table(
         out.push_str("(no instances)\n");
     }
     out.push_str(&money_line(instances, account));
+    // What moved in the boxes' power since the last look, under the money (a watch that probes).
+    for change in trend.map_or(&[][..], Trend::changes) {
+        out.push_str(&change.line());
+        out.push('\n');
+    }
     out
 }
 

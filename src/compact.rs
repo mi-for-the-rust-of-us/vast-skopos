@@ -15,7 +15,7 @@ use crate::instance::whole_secs;
 use crate::instance::{Account, Instance};
 use crate::probe::{LogReading, Probe, ProbeOutcome, outcome_at};
 use crate::runway::Runway;
-use crate::trend::Trend;
+use crate::trend::{PowerChange, Trend};
 
 /// `x` rounded to `decimals` places: a sum would print as `1.2860000000000003`, and vast.ai's own
 /// credit arrives as `12.059765171599793`, float noise from its arithmetic.
@@ -90,6 +90,20 @@ fn box_json(i: &Instance, probe: Option<&Result<Probe>>, trend: Option<&Trend>, 
     })
 }
 
+/// One change of a box's power, as an object.
+fn event_json(change: &PowerChange, now: f64) -> Value {
+    json!({
+        "kind": "event",
+        "at": whole_secs(now),
+        "id": change.id,
+        "gpu": change.gpu,
+        "limit_was": change.limit.map(|(was, _)| was),
+        "limit_now": change.limit.map(|(_, now)| now),
+        "began": change.began,
+        "ended": change.ended,
+    })
+}
+
 /// The money's object.
 fn money_json(money: &Runway, now: f64) -> Value {
     json!({
@@ -135,6 +149,11 @@ pub fn json_lines(
     for (n, i) in instances.iter().enumerate() {
         let probe = outcome_at(probes, n);
         out.push_str(&box_json(i, probe, trend, now).to_string());
+        out.push('\n');
+    }
+    // What moved in the boxes' power since the last look comes before the money, which closes the look.
+    for change in trend.map_or(&[][..], Trend::changes) {
+        out.push_str(&event_json(change, now).to_string());
         out.push('\n');
     }
     out.push_str(&money_json(&Runway::of(instances, account), now).to_string());

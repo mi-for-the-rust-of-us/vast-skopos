@@ -52,6 +52,11 @@ All notable changes to this project are documented here. The format is based on
   at ~1,700 of 3,090 MHz by the software power cap, with 100 % utilisation. A second `nvidia-smi` query, so
   an old driver costs only these cells. `probe::GpuReading` gains the six fields (it is `#[non_exhaustive]`),
   `GpuReading::throttle_words`.
+- A watch tells when a cap arrives or leaves: under `vas --ssh --watch N`, a line under the money when a GPU's
+  power limit or throttle reasons change between two looks (`! 56533728 gpu 0: power limit 575 -> 400 W,
+  power_cap began`), and in `--compact` an `event` object before the money one (`id`, `gpu`, `limit_was`,
+  `limit_now`, `began`, `ended`). A box's first look is the baseline; a reading the box did not give changes
+  nothing. `trend::PowerChange`, `Trend::changes` (what the last `record` found).
 - Every `vas offers` search ends with a line saying that vast.ai's answers vary from one search to the
   next (a watch says it under its first look, `--changes` does not): `render::offers_variance_note`.
 

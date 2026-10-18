@@ -177,3 +177,84 @@ fn the_json_carries_the_power_or_nulls_and_the_throttle_as_words() {
         capped.as_object().unwrap().keys().collect::<Vec<_>>()
     );
 }
+
+/// A trend that has seen the box at its default, then capped.
+fn capped_trend() -> vast_skopos::trend::Trend {
+    let mut trend = vast_skopos::trend::Trend::default();
+    let free = "0, 100, 1, 2\n---vas-power---\n0, 560, 575, 575, 2900, 3090, 0x0\n";
+    trend.record(&[running()], &[outcome(free)]);
+    trend.record(&[running()], &[outcome(CAPPED)]);
+    trend
+}
+
+#[test]
+fn the_table_of_a_watch_says_what_changed_under_the_money_and_a_one_shot_says_nothing() {
+    let trend = capped_trend();
+    let text = table(
+        &[running()],
+        &[outcome(CAPPED)],
+        None,
+        TableOptions::new().ssh(true).trend(&trend),
+        0.0,
+    );
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(lines[lines.len() - 2].starts_with("credit "), "{text}");
+    assert_eq!(
+        lines[lines.len() - 1],
+        "! 1 gpu 0: power limit 575 -> 400 W, power_cap began",
+        "{text}"
+    );
+    // No trend (a one-shot), or nothing moved: no such line.
+    let once = table(
+        &[running()],
+        &[outcome(CAPPED)],
+        None,
+        TableOptions::new().ssh(true),
+        0.0,
+    );
+    assert!(!once.contains("! 1 gpu"), "{once}");
+    let mut quiet = capped_trend();
+    quiet.record(&[running()], &[outcome(CAPPED)]);
+    let again = table(
+        &[running()],
+        &[outcome(CAPPED)],
+        None,
+        TableOptions::new().ssh(true).trend(&quiet),
+        0.0,
+    );
+    assert!(!again.contains("! 1 gpu"), "{again}");
+}
+
+#[test]
+fn compact_prints_the_change_as_an_event_before_the_money_that_closes_the_look() {
+    let trend = capped_trend();
+    let text = json_lines(&[running()], &[outcome(CAPPED)], Some(&trend), None, 42.0);
+    let kinds: Vec<String> = text
+        .lines()
+        .map(|l| {
+            serde_json::from_str::<serde_json::Value>(l).unwrap()["kind"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        })
+        .collect();
+    assert_eq!(kinds, ["box", "event", "money"], "{text}");
+    let event: serde_json::Value = serde_json::from_str(text.lines().nth(1).unwrap()).unwrap();
+    assert_eq!(
+        event,
+        serde_json::json!({"kind": "event", "at": 42, "id": 1, "gpu": 0,
+          "limit_was": 575, "limit_now": 400, "began": ["power_cap"], "ended": []})
+    );
+    // A change of reasons only: the limit keys stay, null.
+    let mut trend = vast_skopos::trend::Trend::default();
+    let free = "0, 1, 1, 2\n---vas-power---\n0, 1, 400, 575, 1, 2, 0x0\n";
+    let capped = "0, 1, 1, 2\n---vas-power---\n0, 1, 400, 575, 1, 2, 0x4\n";
+    trend.record(&[running()], &[outcome(free)]);
+    trend.record(&[running()], &[outcome(capped)]);
+    let text = json_lines(&[running()], &[outcome(capped)], Some(&trend), None, 0.0);
+    let event: serde_json::Value = serde_json::from_str(text.lines().nth(1).unwrap()).unwrap();
+    assert!(event["limit_was"].is_null() && event["limit_now"].is_null());
+    // Without a trend there is no event at all.
+    let once = json_lines(&[running()], &[outcome(CAPPED)], None, None, 0.0);
+    assert_eq!(once.lines().count(), 2);
+}
