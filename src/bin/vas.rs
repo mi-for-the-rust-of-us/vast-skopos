@@ -72,7 +72,7 @@ struct LookArgs {
     compact: bool,
     /// Append one row per look to this CSV file: unix_time,credit,burn_per_hour,running,unsure (a
     /// header when the file is new or empty). The credit as a curve; never the API key.
-    #[arg(long, value_name = "FILE")]
+    #[arg(long, value_name = "FILE", value_parser = non_blank_path)]
     credit_log: Option<PathBuf>,
     /// Refresh every N seconds (at least 30) until Ctrl+C.
     #[arg(long, value_name = "SECONDS")]
@@ -152,9 +152,10 @@ struct OffersArgs {
     /// to the config file's.
     #[arg(long, value_name = "MACHINE_ID")]
     exclude_machine: Vec<u64>,
-    /// Search again every N seconds (at least 30) until Ctrl+C: each look is the whole table, new
-    /// offers marked with a plus sign and a moved price shown beside its old one, and what vanished
-    /// listed under it.
+    /// Search again every N seconds (at least 30) until Ctrl+C: each look is the whole table with a
+    /// SEEN column (in how many looks each machine appeared). vast.ai's answers vary, so the first
+    /// three looks only learn; after them a new machine is marked with a plus sign, a moved price is
+    /// shown beside its old one, and a machine missing for five looks is listed under the table.
     #[arg(long, value_name = "SECONDS")]
     watch: Option<u64>,
     /// With --watch: print only what moved since the last look (one line each), not the table.
@@ -193,6 +194,17 @@ impl OffersArgs {
         q.exclude_hosts.clone_from(&self.exclude_host);
         q.exclude_machines.clone_from(&self.exclude_machine);
         q
+    }
+}
+
+/// `--credit-log`'s file, refused when blank: an unset shell variable would name a file that is not one.
+fn non_blank_path(path: &str) -> Result<PathBuf, String> {
+    if path.trim().is_empty() {
+        Err(String::from(
+            "the file name is blank (an unset variable?): name the CSV file",
+        ))
+    } else {
+        Ok(PathBuf::from(path))
     }
 }
 
@@ -422,8 +434,10 @@ fn look(
             None
         }
     };
+    // One time for the whole look: the log's row, the table and the JSON all carry it.
+    let at = now();
     if let Some(log) = credit_log
-        && let Some(failure) = log.record(&Runway::of(&instances, account.as_ref()), now())
+        && let Some(failure) = log.record(&Runway::of(&instances, account.as_ref()), at)
     {
         eprintln!("vas: {failure}; the credit log is not written any more");
     }
@@ -432,13 +446,13 @@ fn look(
         &*history
     });
     Ok(if args.compact {
-        json_lines(&instances, &probes, trend, account.as_ref(), now())
+        json_lines(&instances, &probes, trend, account.as_ref(), at)
     } else {
         let mut options = TableOptions::new().ssh(args.ssh).wide(args.wide);
         if let Some(history) = trend {
             options = options.trend(history);
         }
-        table(&instances, &probes, account.as_ref(), options, now())
+        table(&instances, &probes, account.as_ref(), options, at)
     })
 }
 
@@ -601,7 +615,7 @@ fn offers(args: OffersArgs) -> ExitCode {
                 let variance = if args.watch.is_none() || market.looks() == 1 {
                     offers_variance_note(args.watch.is_some())
                 } else {
-                    ""
+                    String::new()
                 };
                 let shown = kept.get(..top).unwrap_or(&kept);
                 let note = moved

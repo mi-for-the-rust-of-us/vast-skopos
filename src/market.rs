@@ -74,6 +74,8 @@ impl OfferKey {
 struct Entry {
     /// The offer as it read the last time it was seen.
     offer: Offer,
+    /// The last price seen, in dollars per hour: a look that gave none does not erase it.
+    price: Option<f64>,
     /// The index of the look where this run of sightings began.
     first: usize,
     /// The index of the look where it was last seen.
@@ -85,6 +87,14 @@ struct Entry {
 /// A price as the table shows it: to the thousandth of a dollar.
 fn shown(price: f64) -> String {
     format!("{price:.3}")
+}
+
+/// The cheaper offer first, then the lower id; an offer with no price last.
+fn by_price(a: &Offer, b: &Offer) -> std::cmp::Ordering {
+    a.dph_total
+        .unwrap_or(f64::INFINITY)
+        .total_cmp(&b.dph_total.unwrap_or(f64::INFINITY))
+        .then(a.id.cmp(&b.id))
 }
 
 /// The machines of a watch, over its looks.
@@ -121,18 +131,34 @@ impl MarketWatch {
     ///
     /// Returns what moved since the machines were last seen, or `None` while the watch is still
     /// learning (its first [`LEARNING_LOOKS`] looks). Two offers of one machine with the same GPU
-    /// count count once, the first.
+    /// count count once, the cheaper (then the lower id), whatever order the caller sorted them in:
+    /// the one kept does not flip from look to look and does not read as a price that moved.
     pub fn record(&mut self, offers: &[Offer]) -> Option<OfferChanges> {
         let at = self.looks;
         self.looks += 1;
         let reporting = at >= LEARNING_LOOKS;
         let mut report = OfferChanges::default();
-        let mut in_look: HashSet<OfferKey> = HashSet::new();
+        // One offer per machine in this look: the cheapest, in the order the machines first appear.
+        let mut order: Vec<OfferKey> = Vec::new();
+        let mut best: HashMap<OfferKey, &Offer> = HashMap::new();
         for offer in offers {
             let key = OfferKey::of(offer);
-            if !in_look.insert(key) {
-                continue;
+            match best.get(&key) {
+                None => {
+                    order.push(key);
+                    best.insert(key, offer);
+                }
+                Some(kept) if by_price(offer, kept).is_lt() => {
+                    best.insert(key, offer);
+                }
+                Some(_) => {}
             }
+        }
+        let in_look: HashSet<OfferKey> = order.iter().copied().collect();
+        for key in order {
+            let Some(offer) = best.get(&key).copied() else {
+                continue;
+            };
             match self.entries.get_mut(&key) {
                 None => {
                     self.entries.insert(
@@ -140,6 +166,7 @@ impl MarketWatch {
                         Entry {
                             // BORROW: explicit clone -- the watch keeps its own copy of the offer
                             offer: offer.clone(),
+                            price: offer.dph_total,
                             first: at,
                             last: at,
                             count: 1,
@@ -161,7 +188,7 @@ impl MarketWatch {
                         entry.first = at;
                         entry.count = 0;
                     } else if reporting
-                        && let (Some(was), Some(now)) = (entry.offer.dph_total, offer.dph_total)
+                        && let (Some(was), Some(now)) = (entry.price, offer.dph_total)
                         && shown(was) != shown(now)
                     {
                         report.repriced.push(Repriced {
@@ -172,6 +199,7 @@ impl MarketWatch {
                     }
                     // BORROW: explicit clone -- the watch keeps its own copy of the offer
                     entry.offer = offer.clone();
+                    entry.price = offer.dph_total.or(entry.price);
                     entry.last = at;
                     entry.count += 1;
                 }
@@ -190,12 +218,7 @@ impl MarketWatch {
                 report.gone.push(entry.offer);
             }
         }
-        report.gone.sort_by(|a, b| {
-            a.dph_total
-                .unwrap_or(f64::INFINITY)
-                .total_cmp(&b.dph_total.unwrap_or(f64::INFINITY))
-                .then(a.id.cmp(&b.id))
-        });
+        report.gone.sort_by(by_price);
         reporting.then_some(report)
     }
 

@@ -719,6 +719,14 @@ fn a_watch_goes_on_after_a_failure_once_a_look_has_succeeded_and_says_so() {
         "the looks before the refused search are the ones compared with: {lines:#?}"
     );
     assert_eq!(notes[1], "since the last look: no change");
+    // The refused search was no look: a machine seen at the three learning looks and the first one
+    // after the failure has been seen in 4 looks of 4 (not 4 of 5, which counts the failed search).
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.contains("51179006") && l.contains(" 4/4 ")),
+        "{lines:#?}"
+    );
 }
 
 #[test]

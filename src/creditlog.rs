@@ -1,9 +1,12 @@
 //! The credit history: one CSV row per look, appended to a file the user names.
 //!
 //! The account's credit is only a number today; with one row per look it becomes a curve, and the
-//! burn beside it says whether the curve matches the boxes (a box that is `offline` but still billed
-//! shows as a credit that falls faster than the burn). This is the one file the crate writes, and
-//! only when asked (`vas --credit-log FILE`): see CONVENTIONS.md, "When Writing a File".
+//! burn beside it says whether the curve matches the boxes. The burn counts the boxes meant to run
+//! that read otherwise (`unsure`), so compare the fall of the credit with `burn_per_hour`: a fall
+//! well below it, while `unsure` is above zero, says those boxes do not bill; a fall above it says
+//! something else does (vast.ai bills the storage of a stopped box, which `vas` does not count). This
+//! is the one file the crate writes, and only when asked (`vas --credit-log FILE`): see
+//! CONVENTIONS.md, "When Writing a File".
 //!
 //! ```text
 //! unix_time,credit,burn_per_hour,running,unsure
@@ -11,7 +14,7 @@
 //! ```
 
 use std::fs::OpenOptions;
-use std::io::Write as _;
+use std::io::{Read as _, Seek as _, SeekFrom, Write as _};
 use std::path::{Path, PathBuf};
 
 use crate::instance::whole_secs;
@@ -40,7 +43,7 @@ pub const HEADER: &str = "unix_time,credit,burn_per_hour,running,unsure";
 ///   "unix_time,credit,burn_per_hour,running,unsure\n1792328430,12.0598,0.5000,1,0\n");
 /// std::fs::remove_dir_all(&dir).unwrap();
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct CreditLog {
     /// The file the rows are appended to.
     path: PathBuf,
@@ -89,7 +92,9 @@ impl CreditLog {
     /// Appends the row of this look, with the header first when the file is new or empty.
     ///
     /// Returns the message of the first failure (`failed to write the credit log FILE: ...`), once;
-    /// after a failure nothing more is written and `None` is returned.
+    /// after a failure nothing more is written and `None` is returned. A row is appended on a line of
+    /// its own, even to a file whose last line has no newline.
+    #[must_use = "the message is the only report of a failure to write"]
     pub fn record(&mut self, runway: &Runway, at: f64) -> Option<String> {
         if self.failed {
             return None;
@@ -109,15 +114,28 @@ impl CreditLog {
     /// Appends `row`, preceded by the header when the file is empty, in one write.
     fn append(&self, row: &str) -> std::io::Result<()> {
         let mut file = OpenOptions::new()
+            .read(true)
             .create(true)
             .append(true)
             .open(&self.path)?;
+        let len = file.metadata()?.len();
         let mut text = String::new();
-        if file.metadata()?.len() == 0 {
+        if len == 0 {
             text.push_str(HEADER);
+            text.push('\n');
+        } else if !ends_with_newline(&mut file)? {
+            // A file edited by hand may end mid-line: the row must not glue onto it.
             text.push('\n');
         }
         text.push_str(row);
         file.write_all(text.as_bytes())
     }
+}
+
+/// Whether the last byte of the (non-empty) `file` is a newline.
+fn ends_with_newline(file: &mut std::fs::File) -> std::io::Result<bool> {
+    file.seek(SeekFrom::End(-1))?;
+    let mut last = [0_u8; 1];
+    file.read_exact(&mut last)?;
+    Ok(last == *b"\n")
 }

@@ -400,7 +400,7 @@ const OFFER_HEADER: [&str; 12] = [
     "WHERE",
 ];
 
-/// One offer's cells, in [`OFFER_HEADER`]'s order; `was` is the price it had at the previous look,
+/// One offer's cells, in [`OFFER_HEADER`]'s order; `was` is the price it had when last seen,
 /// when it moved, shown beside the current one.
 fn offer_row(o: &Offer, was: Option<f64>) -> Vec<String> {
     let whole = |v: Option<f64>| or_dash(v.map(|x| format!("{x:.0}")));
@@ -447,8 +447,11 @@ pub fn offers_table(offers: &[Offer], top: usize) -> String {
     offers_view(offers, top, None)
 }
 
-/// The offers table, with a first column of marks, the previous price of the offers that moved, and
+/// The offers table, with a first column of marks, the old price of the offers that moved, and
 /// a SEEN column (before WHERE) when `marks` is given (a watch's look), without them otherwise.
+///
+/// A `+` follows the machine (every row of a new machine is marked); a `(was ..)` follows the offer
+/// id (the row the watch saw move), so a machine answering twice at two prices shows it on one row.
 fn offers_view(
     offers: &[Offer],
     top: usize,
@@ -618,7 +621,7 @@ fn cut_note(changes: &OfferChanges, page: &OfferPage) -> &'static str {
     }
 }
 
-/// What moved since the previous look, to print under the table of a watch.
+/// What moved since the machines were last seen, to print under the table of a watch.
 ///
 /// The table already marks the new offers and shows the changed prices, so this is the counts
 /// (naming how many of the new and repriced sit below the table, where nothing marks them), then
@@ -746,11 +749,16 @@ pub fn offers_changes_only(
 /// assert!(offers_variance_note(true).contains("SEEN"));
 /// ```
 #[must_use]
-pub const fn offers_variance_note(watching: bool) -> &'static str {
+pub fn offers_variance_note(watching: bool) -> String {
     if watching {
-        "vast.ai's answers vary from one search to the next; SEEN says in how many looks each machine appeared; changes are marked from look 4.\n"
+        format!(
+            "vast.ai's answers vary from one search to the next; SEEN says in how many looks each machine appeared; changes are marked from look {}.\n",
+            LEARNING_LOOKS + 1
+        )
     } else {
-        "vast.ai's answers vary from one search to the next; repeat the search, or use --watch, to see more.\n"
+        String::from(
+            "vast.ai's answers vary from one search to the next; repeat the search, or use --watch, to see more.\n",
+        )
     }
 }
 

@@ -374,7 +374,7 @@ fn the_marked_table_keeps_its_columns_aligned_with_a_mark_and_a_was() {
 }
 
 #[test]
-fn the_marks_follow_the_machine_not_the_offer_id() {
+fn a_machine_back_under_another_offer_id_has_no_mark_and_shows_its_old_price() {
     use vast_skopos::render::offers_table_marked;
     // Machine 1 comes back under another offer id and a new price; machine 2 is new.
     let before = [on_machine(10, 1, 0.5)];
@@ -413,6 +413,22 @@ fn every_row_of_a_new_machine_is_marked_but_only_the_row_that_moved_has_a_was() 
         !lines[4].contains("was"),
         "no was for a row that did not move: {text}"
     );
+}
+
+#[test]
+fn a_machine_the_watch_does_not_remember_has_a_dash_for_seen() {
+    use vast_skopos::market::MarketWatch;
+    use vast_skopos::offer::OfferChanges;
+    use vast_skopos::render::offers_table_marked;
+    let text = offers_table_marked(
+        &[watched(1, 0.5)],
+        20,
+        &OfferChanges::default(),
+        &MarketWatch::default(),
+    );
+    let row = text.lines().nth(1).unwrap();
+    let seen = row.split_whitespace().rev().nth(2).unwrap();
+    assert_eq!(seen, "-", "{text}");
 }
 
 #[test]
@@ -529,6 +545,13 @@ fn a_search_says_that_its_answers_vary_and_a_watch_says_it_once_differently() {
     let watching = offers_variance_note(true);
     assert!(watching.starts_with("vast.ai's answers vary from one search to the next; "));
     assert!(watching.contains("SEEN") && !watching.contains("repeat the search"));
+    assert!(
+        watching.contains(&format!(
+            "from look {}",
+            vast_skopos::market::LEARNING_LOOKS + 1
+        )),
+        "{watching}"
+    );
 }
 
 #[test]

@@ -801,7 +801,12 @@ fn a_watch_that_probes_has_a_trend_column_and_a_one_shot_does_not() {
 
 /// `vas args` against the mock, whatever the exit code: the whole output.
 fn vas_output(args: &[&OsStr]) -> std::process::Output {
-    let (base, _) = serve(account);
+    vas_output_with(account, args)
+}
+
+/// `vas args` against `respond`, whatever the exit code: the whole output.
+fn vas_output_with(respond: common::Respond, args: &[&OsStr]) -> std::process::Output {
+    let (base, _) = serve(respond);
     let call = CALLS.fetch_add(1, Ordering::Relaxed);
     let home = std::env::temp_dir().join(format!("vas-look-{call}-{}", std::process::id()));
     std::fs::create_dir_all(&home).unwrap();
@@ -892,4 +897,125 @@ fn a_credit_log_that_cannot_be_written_is_said_once_and_the_look_goes_on() {
         "the table is printed as ever"
     );
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The mock of an account whose credit cannot be read: the instances answer, the account does not.
+fn no_credit(target: &str) -> (u16, String) {
+    if target.starts_with("/api/v0/users/current") {
+        (500, "{}".to_owned())
+    } else {
+        account(target)
+    }
+}
+
+/// A box that runs ($0.9/h) and one meant to run that reads `offline` ($0.5/h), then the account.
+fn one_offline(target: &str) -> (u16, String) {
+    if target.starts_with("/api/v1/instances/") {
+        (
+            200,
+            r#"{"instances": [
+                {"id": 1, "actual_status": "running", "intended_status": "running", "dph_total": 0.9},
+                {"id": 2, "actual_status": "offline", "intended_status": "running", "dph_total": 0.5}
+              ], "next_token": null}"#
+                .to_owned(),
+        )
+    } else {
+        account(target)
+    }
+}
+
+/// The rows (after the header) of the CSV at `file`, split into their cells.
+fn csv_rows(file: &Path) -> Vec<Vec<String>> {
+    let text = std::fs::read_to_string(file).unwrap();
+    text.lines()
+        .skip(1)
+        .map(|l| l.split(',').map(str::to_owned).collect())
+        .collect()
+}
+
+#[test]
+fn a_watch_logs_one_row_per_look_and_the_header_once() {
+    let dir = log_dir("watch");
+    let _cleanup = common::RemoveOnDrop(dir.clone());
+    let file = dir.join("credit.csv");
+    let mut child = spawn_watch(
+        account,
+        &["--credit-log", file.to_str().unwrap(), "--watch", "0"],
+        Some("50"),
+    );
+    let _ = read_lines_until(&mut child, "credit $12.93", 3);
+    let text = std::fs::read_to_string(&file).unwrap();
+    assert_eq!(
+        text.lines().filter(|l| l.starts_with("unix_time,")).count(),
+        1,
+        "{text}"
+    );
+    assert!(
+        csv_rows(&file).len() >= 3,
+        "a row for each of the three looks: {text}"
+    );
+}
+
+#[test]
+fn the_credit_cell_is_empty_when_the_account_did_not_answer_and_the_look_goes_on() {
+    let dir = log_dir("nocredit");
+    let _cleanup = common::RemoveOnDrop(dir.clone());
+    let file = dir.join("credit.csv");
+    let out = vas_output_with(no_credit, &[OsStr::new("--credit-log"), file.as_os_str()]);
+    assert!(out.status.success());
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("no credit shown"),
+        "the failure is said as ever"
+    );
+    let rows = csv_rows(&file);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0][1..], ["", "0.9000", "1", "0"], "{rows:?}");
+}
+
+#[test]
+fn the_unsure_boxes_are_counted_in_the_burn_and_in_the_row() {
+    let dir = log_dir("unsure");
+    let _cleanup = common::RemoveOnDrop(dir.clone());
+    let file = dir.join("credit.csv");
+    let out = vas_output_with(one_offline, &[OsStr::new("--credit-log"), file.as_os_str()]);
+    assert!(out.status.success());
+    let rows = csv_rows(&file);
+    assert_eq!(rows[0][1..], ["12.9300", "1.4000", "1", "1"], "{rows:?}");
+}
+
+#[test]
+fn a_look_whose_instances_failed_writes_no_row_and_the_row_and_the_clock_agree_otherwise() {
+    let dir = log_dir("failed");
+    let _cleanup = common::RemoveOnDrop(dir.clone());
+    let file = dir.join("credit.csv");
+    let out = vas_output_with(refused, &[OsStr::new("--credit-log"), file.as_os_str()]);
+    assert!(!out.status.success());
+    assert!(
+        !file.exists(),
+        "no row, and no file, for a look that failed"
+    );
+    // With --compact the row and the money object of one look carry the same second.
+    let out = vas_output(&[
+        OsStr::new("--compact"),
+        OsStr::new("--credit-log"),
+        file.as_os_str(),
+    ]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let money: serde_json::Value = stdout
+        .lines()
+        .map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap())
+        .find(|o| o["kind"] == "money")
+        .unwrap();
+    assert_eq!(
+        csv_rows(&file)[0][0],
+        money["at"].as_u64().unwrap().to_string()
+    );
+}
+
+#[test]
+fn a_blank_credit_log_name_is_refused_before_any_request() {
+    let out = vas_output(&[OsStr::new("--credit-log"), OsStr::new("  ")]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("the file name is blank"), "{stderr}");
 }

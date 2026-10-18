@@ -3,7 +3,7 @@
 This document describes the [Amphigraphic coding](https://github.com/PCfVW/Amphigraphic-Strict) conventions used in vast-skopos. It is a superset of
 the [Grit — Strict Rust for AI-Assisted Development](https://github.com/PCfVW/Amphigraphic-Strict/tree/master/Grit), and follows
 [`hf-fetch-model/CONVENTIONS.md`](https://github.com/mi-for-the-rust-of-us/hf-fetch-model/blob/main/CONVENTIONS.md) section for section. Its
-last two sections are this crate's own: [the API key](#when-handling-the-api-key) and [talking to a box](#when-talking-to-a-box).
+own sections are [writing a file](#when-writing-a-file), [the API key](#when-handling-the-api-key), [calling the vast.ai API](#when-calling-the-vastai-api) and [talking to a box](#when-talking-to-a-box).
 
 ## Trigger Checklist
 
@@ -280,6 +280,9 @@ its own review, not a convenience.
   is written only when the file is new or empty, so a log survives restarts and a user's own edits.
 - **No secret.** A row holds the time, the credit and the burn: never the key, an endpoint or a
   header ([The API key](#when-handling-the-api-key)).
+- **Appended whole, last line first.** A row goes out in one write, on a line of its own (a file whose
+  last line has no newline gets one first). Two `vas` processes on one NEW file may both write the
+  header: that race is accepted. A change of columns is a new file, never a rewrite of an old one.
 - **A failure is said once.** A file that cannot be written is named on stderr one time
   (`failed to write the credit log FILE: ...`); the look goes on and the log stops trying. A
   lookout does not die because a disk is full.
@@ -295,7 +298,7 @@ the `Authorization: Bearer` header of a request to the vast.ai API host.
   endpoint PATH, never a full URL with a query, never a header.
 - **Never parsed from a response.** `/api/v0/users/current/` returns the key: only
   `credit` and `balance` are read from it (`Account::from_json`).
-- **Never written to disk** by this crate, and never accepted on the command line
+- **Never written to disk** by this crate (not even in the credit log), and never accepted on the command line
   (a `--key` flag would land in shell history): `VAST_API_KEY`, the `vastai` CLI's
   key files, or `--key-file`.
 - **Tests use dummy keys** and assert that error text does not contain them.

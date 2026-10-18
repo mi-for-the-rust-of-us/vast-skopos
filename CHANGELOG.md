@@ -42,11 +42,11 @@ All notable changes to this project are documented here. The format is based on
   `render::offers_footer`). `VAS_WATCH_FLOOR_MS` lowers the 30 s floor of both watches, for tests only.
 - `vas --credit-log FILE`: appends one CSV row per look (`unix_time,credit,burn_per_hour,running,unsure`,
   a header when the file is new or empty) so the credit becomes a curve and a box that bills while it reads
-  `offline` shows as a credit that falls faster than the burn. Append-only, only when asked, never the key;
+  `offline` shows as a credit that falls slower than the burn. Append-only, only when asked, never the key;
   a file that cannot be written is said once and the look goes on. The first file this crate writes:
   `creditlog::CreditLog` and a new rule in CONVENTIONS.md ("When Writing a File").
 - Every `vas offers` search ends with a line saying that vast.ai's answers vary from one search to the
-  next (a watch says it under its first look): `render::offers_variance_note`.
+  next (a watch says it under its first look, `--changes` does not): `render::offers_variance_note`.
 
 - The GPU trend: under `vas --ssh --watch N` the table gains a `TREND` column after `VRAM`, the last six
   samples of each box oldest first (`97 99 0 98 99 99`: the mean utilisation of its GPUs), and `--compact`

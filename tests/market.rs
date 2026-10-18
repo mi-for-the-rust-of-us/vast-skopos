@@ -195,18 +195,91 @@ fn a_machine_back_after_a_long_absence_is_new_not_repriced() {
 }
 
 #[test]
-fn a_machine_answered_twice_in_one_look_counts_once_and_the_first_stays() {
+fn a_machine_answered_twice_in_one_look_counts_once_and_the_cheaper_row_stays() {
     let mut watch = learned(&[at(1, 0.5)]);
     let report = watch
-        .record(&[offer(21, 2, 1, 0.4), offer(22, 2, 1, 0.9), at(1, 0.5)])
+        .record(&[offer(22, 2, 1, 0.9), offer(21, 2, 1, 0.4), at(1, 0.5)])
         .unwrap();
     assert_eq!(report.appeared.len(), 1);
-    assert_eq!(report.appeared[0].id, 21);
+    assert_eq!(
+        report.appeared[0].id, 21,
+        "the cheaper row, not the first one: the order of --sort must not decide"
+    );
     assert_eq!(
         watch.seen(&at(2, 0.4)),
         Some((1, 1)),
         "one sighting, not two"
     );
+    // The same price twice: the lower id.
+    let report = watch
+        .record(&[
+            offer(32, 3, 1, 0.7),
+            offer(31, 3, 1, 0.7),
+            at(1, 0.5),
+            at(2, 0.4),
+        ])
+        .unwrap();
+    assert_eq!(report.appeared[0].id, 31);
+    // The kept row does not flip from look to look, so no price seems to move.
+    let steady = watch
+        .record(&[
+            offer(31, 3, 1, 0.7),
+            offer(32, 3, 1, 0.9),
+            at(1, 0.5),
+            at(2, 0.4),
+        ])
+        .unwrap();
+    assert!(steady.repriced.is_empty(), "{steady:?}");
+}
+
+#[test]
+fn a_look_that_gave_no_price_does_not_erase_the_last_price_seen() {
+    let unpriced = Offer::from_json(&serde_json::json!(
+        {"id": 10, "machine_id": 1, "num_gpus": 1}))
+    .unwrap();
+    let mut watch = learned(&[at(1, 0.5)]);
+    assert!(
+        watch
+            .record(std::slice::from_ref(&unpriced))
+            .unwrap()
+            .is_empty()
+    );
+    let report = watch.record(&[at(1, 0.6)]).unwrap();
+    assert_eq!(
+        report.repriced.len(),
+        1,
+        "0.5 -> (nothing) -> 0.6 is a move"
+    );
+    assert!((report.repriced[0].was - 0.5).abs() < 1e-12);
+}
+
+#[test]
+fn offers_without_a_machine_are_followed_by_their_id() {
+    let anonymous = |id: u64, price: f64| {
+        Offer::from_json(&serde_json::json!({"id": id, "dph_total": price})).unwrap()
+    };
+    let mut watch = learned(&[anonymous(1, 0.5)]);
+    let report = watch
+        .record(&[anonymous(1, 0.55), anonymous(2, 0.6)])
+        .unwrap();
+    assert_eq!(report.appeared.len(), 1);
+    assert_eq!(report.appeared[0].id, 2);
+    assert_eq!(report.repriced.len(), 1);
+    assert_eq!(watch.seen(&anonymous(1, 0.55)), Some((4, 4)));
+}
+
+#[test]
+fn a_gone_machine_with_no_price_comes_last() {
+    let unpriced = Offer::from_json(&serde_json::json!(
+        {"id": 5, "machine_id": 5, "num_gpus": 1}))
+    .unwrap();
+    let mut watch = learned(&[unpriced, at(1, 0.9)]);
+    let mut report = OfferChanges::default();
+    for _ in 0..ABSENT_FOR_GONE {
+        report = watch.record(&[]).unwrap();
+    }
+    let ids: Vec<u64> = report.gone.iter().map(|o| o.id).collect();
+    assert_eq!(ids, [10, 5]);
 }
 
 #[test]

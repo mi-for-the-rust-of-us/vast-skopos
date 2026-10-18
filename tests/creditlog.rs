@@ -9,11 +9,27 @@ use vast_skopos::creditlog::{CreditLog, HEADER};
 use vast_skopos::instance::{Account, Instance};
 use vast_skopos::runway::Runway;
 
-fn dir(name: &str) -> PathBuf {
+/// A fresh directory, removed when the test ends, even when an assertion panics first.
+struct Dir(PathBuf);
+
+impl std::ops::Deref for Dir {
+    type Target = PathBuf;
+    fn deref(&self) -> &PathBuf {
+        &self.0
+    }
+}
+
+impl Drop for Dir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn dir(name: &str) -> Dir {
     let dir = std::env::temp_dir().join(format!("vas-creditlog-lib-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    dir
+    Dir(dir)
 }
 
 fn instance(id: u64, actual: &str, dph: f64) -> Instance {
@@ -82,6 +98,14 @@ fn the_header_is_written_once_to_a_new_or_empty_file_and_never_again() {
     std::fs::write(&empty, "").unwrap();
     assert_eq!(CreditLog::new(&empty).record(&runway, 1.0), None);
     assert!(std::fs::read_to_string(&empty).unwrap().starts_with(HEADER));
+    // A file whose last line has no newline: the row starts a line of its own.
+    let glued = dir.join("glued.csv");
+    std::fs::write(&glued, "my notes").unwrap();
+    assert_eq!(CreditLog::new(&glued).record(&runway, 1.0), None);
+    assert_eq!(
+        std::fs::read_to_string(&glued).unwrap(),
+        "my notes\n1,5.0000,0.5000,1,0\n"
+    );
     // A file with content is appended to, whatever it holds, and its content is kept.
     let mine = dir.join("mine.csv");
     std::fs::write(&mine, "my notes\n").unwrap();
@@ -90,7 +114,6 @@ fn the_header_is_written_once_to_a_new_or_empty_file_and_never_again() {
         std::fs::read_to_string(&mine).unwrap(),
         "my notes\n1,5.0000,0.5000,1,0\n"
     );
-    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
@@ -98,7 +121,7 @@ fn a_file_that_cannot_be_written_is_said_once_then_left_alone() {
     let dir = dir("refused");
     let runway = Runway::of(&[], Some(&account(5.0)));
     // A directory is not a file one can append to.
-    let mut log = CreditLog::new(&dir);
+    let mut log = CreditLog::new(dir.clone());
     let message = log.record(&runway, 1.0).unwrap();
     assert!(
         message.starts_with("failed to write the credit log "),
@@ -113,5 +136,4 @@ fn a_file_that_cannot_be_written_is_said_once_then_left_alone() {
     let repaired = dir.join("later.csv");
     assert_eq!(CreditLog::new(&repaired).record(&runway, 1.0), None);
     assert!(repaired.exists());
-    std::fs::remove_dir_all(&dir).unwrap();
 }

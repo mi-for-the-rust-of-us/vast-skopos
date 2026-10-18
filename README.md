@@ -213,9 +213,13 @@ unix_time,credit,burn_per_hour,running,unsure
 
 The header is written only when the file is new or empty; the file is only ever appended to, so a log
 survives restarts, and `credit` is empty when the account did not answer. `unsure` counts the boxes meant to
-run that read otherwise: a credit that falls faster than `burn_per_hour` says one of them bills. Nothing is
+run that read otherwise, and the burn counts them, so compare the fall of the credit with `burn_per_hour`: a
+fall well below it, while `unsure` is above zero, says those boxes do not bill; a fall above it says
+something else does (vast.ai bills the storage of a stopped box, which `vas` does not count). A look whose
+instances request failed writes no row. Nothing is
 written unless you name the file, the API key is never in it, and a file that cannot be written is said
-once on stderr (`failed to write the credit log ...`) while the look goes on.
+once on stderr (`failed to write the credit log ...`) while the look goes on and the log stops trying for
+the rest of the run (on Windows, a file open in Excel is such a file: close it, then restart the watch).
 
 ### `vas --compact`: JSON Lines
 
@@ -292,7 +296,8 @@ the search (UTC): the list is a snapshot of a market where offers vanish within 
 **vast.ai's answers vary.** Measured on 2026-10-18: fifteen identical searches, 2.5 s apart, saw 129
 machines (64 per answer), and only 30 of them in every answer; the others came and went, and one machine
 could answer under two or three offer ids. A single search is a sample of the market, not the market:
-`vas offers` ends with a line saying so (`repeat the search, or use --watch, to see more`). Comparing one
+`vas offers` ends with a line saying so (`repeat the search, or use --watch, to see more`; a watch says it once,
+`--changes` not at all). Comparing one
 answer with the next, offer by offer, would report that sampling as a market in turmoil, so a watch
 reads the machines over several looks instead.
 
@@ -309,8 +314,7 @@ first seen (`15/15` is a dependable listing, `3/9` one that flickers; why it fli
 Under the footer, what the table cannot show:
 
 ```text
-since the last look: 1 new, 1 repriced
-since the last look: 1 gone
+since the last look: 1 new, 1 repriced, 1 gone
 - 46579456  1x RTX 5090  0.554 $/h  California, US
 ```
 
