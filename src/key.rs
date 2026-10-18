@@ -59,7 +59,7 @@ impl ApiKey {
     ///
     /// # Errors
     /// Returns [`SkoposError::NoApiKey`] if no source holds a key; when a searched file is missing
-    /// but its `.txt` twin exists, the error names the twin ([`txt_hint`]).
+    /// but its `.txt` twin exists, the error names the twin (see `txt_hint`).
     /// Returns [`SkoposError::KeyFile`] if a key file exists but cannot be read.
     pub fn discover() -> Result<Self> {
         if let Some(key) = std::env::var("VAST_API_KEY")

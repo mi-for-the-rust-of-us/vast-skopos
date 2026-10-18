@@ -29,9 +29,10 @@ All notable changes to this project are documented here. The format is based on
   under the footer the counts and the offers that are gone. `--changes` prints only what moved, a line
   each (`+` new, `~` repriced, `-` gone, or `no change`). Offers are compared as the FULL lists the
   searches kept (an offer sinking below the table's last row is not gone), and a note says when vast.ai's
-  64-row cap may explain an entry or an exit. `OfferChanges::between` (and its `Repriced`), `render::offers_table_marked`,
-  `render::offers_changes_note`, `render::offers_changes_only`. `VAS_WATCH_FLOOR_MS` lowers the 30 s
-  floor of both watches, for tests only.
+  64-row cap may explain an entry or an exit. `OfferChanges::between` (and its `Repriced`),
+  `render::offers_table_marked`, `render::offers_changes_note`, `render::offers_changes_only` (the
+  page first, like `render::offers_footer`). `VAS_WATCH_FLOOR_MS` lowers the 30 s floor of both
+  watches, for tests only.
 
 ### Changed
 
@@ -46,8 +47,8 @@ All notable changes to this project are documented here. The format is based on
   `probes` contract (one outcome per instance, in order) is stated where it is taken.
 - Under the hood, no output changes: one table function for the offers (plain or marked), the cell
   helpers every table repeated, one ellipsis cut, one watch loop for `vas` and `vas offers`, one error
-  constructor per kind in the API client, one reader for the key and the config file, and `admits` no
-  longer rebuilds the country list for every row.
+  constructor per kind in the API client and one for the `ssh` error, one reader for the key and the
+  config file, and `admits` no longer rebuilds the country list for every row.
 - The money line's burn counts the boxes the API reads as `running` AND those it was asked to run
   (`intended_status`) that read `offline`, `loading` or anything else, and names them by state
   (`burn $1.940/h over 3 running + 1 offline (meant to run, billing unknown)`): one such box,

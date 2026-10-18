@@ -340,7 +340,7 @@ fn the_table_note_caps_its_gone_lines_but_changes_lists_every_change() {
     use vast_skopos::render::{offers_changes_note, offers_changes_only};
     let before: Vec<_> = (1..=13).map(|id| watched(id, 0.5)).collect();
     let c = OfferChanges::between(&before, &[]);
-    let note = offers_changes_note(&c, &[], &page(false), false);
+    let note = offers_changes_note(&page(false), &c, &[], false);
     assert!(note.starts_with("since the last look: 13 gone\n"), "{note}");
     assert_eq!(
         note.lines().filter(|l| l.starts_with("- ")).count(),
@@ -349,7 +349,7 @@ fn the_table_note_caps_its_gone_lines_but_changes_lists_every_change() {
     );
     assert!(note.contains("- ... and 3 more\n"), "{note}");
     // A log must not lose ids: `--changes` names every one.
-    let all = offers_changes_only(Some(&c), &[], &page(false), false, 0.0);
+    let all = offers_changes_only(&page(false), Some(&c), &[], false, 0.0);
     assert_eq!(
         all.lines().filter(|l| l.starts_with("- ")).count(),
         13,
@@ -364,23 +364,23 @@ fn the_cap_of_vast_ai_is_said_only_when_something_entered_or_left() {
     use vast_skopos::render::{offers_changes_note, offers_changes_only};
     let before: Vec<_> = (1..=3).map(|id| watched(id, 0.5)).collect();
     let gone = OfferChanges::between(&before, &[]);
-    assert!(!offers_changes_note(&gone, &[], &page(false), false).contains("caps a search"));
+    assert!(!offers_changes_note(&page(false), &gone, &[], false).contains("caps a search"));
     assert!(
-        offers_changes_note(&gone, &[], &page(true), false)
+        offers_changes_note(&page(true), &gone, &[], false)
             .contains("vast.ai caps a search at 64 rows")
     );
     // Nothing entered or left: the cap explains nothing, and is not said.
     let steady = OfferChanges::between(&before, &before);
-    assert!(!offers_changes_note(&steady, &before, &page(true), false).contains("caps a search"));
+    assert!(!offers_changes_note(&page(true), &steady, &before, false).contains("caps a search"));
     assert!(
-        !offers_changes_only(Some(&steady), &before, &page(true), false, 0.0)
+        !offers_changes_only(&page(true), Some(&steady), &before, false, 0.0)
             .contains("caps a search")
     );
     assert!(
-        offers_changes_only(Some(&gone), &[], &page(true), false, 0.0).contains("caps a search")
+        offers_changes_only(&page(true), Some(&gone), &[], false, 0.0).contains("caps a search")
     );
     assert!(
-        offers_changes_only(None, &before[..1], &page(false), false, 0.0)
+        offers_changes_only(&page(false), None, &before[..1], false, 0.0)
             .starts_with("searched 00:00:00 UTC: 1 offer (the first"),
         "singular"
     );
@@ -400,7 +400,7 @@ fn the_note_counts_the_new_and_repriced_offers_the_table_does_not_show() {
     ];
     let c = OfferChanges::between(&before, &now);
     let note =
-        |shown: &[vast_skopos::offer::Offer]| offers_changes_note(&c, shown, &page(false), false);
+        |shown: &[vast_skopos::offer::Offer]| offers_changes_note(&page(false), &c, shown, false);
     assert_eq!(note(&now), "since the last look: 1 new, 1 repriced\n");
     assert_eq!(
         note(&now[..2]),
@@ -425,11 +425,11 @@ fn a_look_after_a_failed_search_says_so_in_both_modes() {
     let before = [watched(1, 0.5)];
     let c = OfferChanges::between(&before, &before);
     assert_eq!(
-        offers_changes_note(&c, &before, &page(false), true),
+        offers_changes_note(&page(false), &c, &before, true),
         "since the last successful look: no change\n"
     );
     assert_eq!(
-        offers_changes_only(Some(&c), &before, &page(false), true, 0.0),
+        offers_changes_only(&page(false), Some(&c), &before, true, 0.0),
         "searched 00:00:00 UTC: 1 offer, no change (a search failed in between)\n"
     );
 }

@@ -3,7 +3,7 @@
 //!
 //! - `GET /api/v1/instances/`, paginated (`limit`, `order_by`, then `after_token` from each page's
 //!   `next_token`), as the official CLI's `show instances` does since the v0 list was deprecated;
-//! - `GET /api/v0/users/current`, for the credit;
+//! - `GET /api/v0/users/current/`, for the credit;
 //! - `GET /api/v0/bundles/?q=<JSON>`, the offer search, sent WITHOUT any key by a [`SearchClient`]
 //!   (see [`crate::offer`]).
 //!

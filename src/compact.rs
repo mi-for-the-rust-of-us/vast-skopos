@@ -10,10 +10,10 @@
 
 use serde_json::{Value, json};
 
-use crate::error::SkoposError;
+use crate::error::Result;
+use crate::instance::whole_secs;
 use crate::instance::{Account, Instance};
-use crate::probe::{LogReading, Probe, ProbeOutcome};
-use crate::render::whole_secs;
+use crate::probe::{LogReading, Probe, ProbeOutcome, outcome_at};
 use crate::runway::Runway;
 
 /// `x` rounded to `decimals` places: a sum would print as `1.2860000000000003`, and vast.ai's own
@@ -41,7 +41,7 @@ fn log_json(log: Option<&LogReading>) -> Value {
 
 /// One probe: its GPUs and its log, or the reason it failed; `null` when the box was not probed
 /// (`--ssh` not given, or the box not running).
-fn probe_json(probe: Option<&Result<Probe, SkoposError>>) -> Value {
+fn probe_json(probe: Option<&Result<Probe>>) -> Value {
     match probe {
         None => Value::Null,
         Some(Err(e)) => json!({"error": e.to_string()}),
@@ -58,7 +58,7 @@ fn probe_json(probe: Option<&Result<Probe, SkoposError>>) -> Value {
 }
 
 /// One box's object.
-fn box_json(i: &Instance, probe: Option<&Result<Probe, SkoposError>>, now: f64) -> Value {
+fn box_json(i: &Instance, probe: Option<&Result<Probe>>, now: f64) -> Value {
     let endpoint = i.ssh_endpoint();
     json!({
         "kind": "box",
@@ -123,7 +123,7 @@ pub fn json_lines(
 ) -> String {
     let mut out = String::new();
     for (n, i) in instances.iter().enumerate() {
-        let probe = probes.get(n).and_then(Option::as_ref);
+        let probe = outcome_at(probes, n);
         out.push_str(&box_json(i, probe, now).to_string());
         out.push('\n');
     }

@@ -21,10 +21,8 @@ use vast_skopos::render::{
     offers_table_marked, table,
 };
 
-/// A lookout over your rented vast.ai boxes: status, $/h, cost so far, credit, and (with --ssh)
-/// what the GPUs are actually doing. Read-only. Not affiliated with vast.ai.
-// EXPLICIT: these doc comments ARE the `--help` text, where backticks would print literally.
-#[allow(clippy::doc_markdown)]
+/// The command line: the lookout's flags, or the `offers` subcommand. (`--help` opens with `about`,
+/// which is Cargo.toml's `description`: one place to say what `vas` is.)
 #[derive(Debug, Parser)]
 #[command(name = "vas", version, about, args_conflicts_with_subcommands = true)]
 struct Cli {
@@ -62,11 +60,12 @@ struct LookArgs {
     /// Read the API key from this file (default: VAST_API_KEY, then the vastai CLI's files).
     #[arg(long, value_name = "FILE")]
     key_file: Option<PathBuf>,
-    /// Also show each box's machine id and host id (what a rentals log or an AVOID list needs).
+    /// Also show each box's machine id and host id (what a rentals log, --exclude-machine and
+    /// --exclude-host need).
     #[arg(long)]
     wide: bool,
     /// JSON Lines instead of the table, for scripts and monitors: one object per box, then one for
-    /// the money, each with a `kind` and an `at` (Unix seconds); the machine and host ids always.
+    /// the money, each with a kind and an at (Unix seconds); the machine and host ids always.
     #[arg(long, conflicts_with = "wide")]
     compact: bool,
     /// Refresh every N seconds (at least 30) until Ctrl+C.
@@ -143,13 +142,13 @@ struct OffersArgs {
     /// Leave out this host. Repeatable; added to the config file's.
     #[arg(long, value_name = "HOST_ID")]
     exclude_host: Vec<u64>,
-    /// Leave out this machine (a host may own several; `vas --wide` shows yours). Repeatable; added
+    /// Leave out this machine (a host may own several; vas --wide shows yours). Repeatable; added
     /// to the config file's.
     #[arg(long, value_name = "MACHINE_ID")]
     exclude_machine: Vec<u64>,
-    /// Search again every N seconds (at least 30) until Ctrl+C: each look is the whole table, with a
-    /// `+` on the offers that are new since the last one and the prices that moved, and what
-    /// vanished listed under it.
+    /// Search again every N seconds (at least 30) until Ctrl+C: each look is the whole table, new
+    /// offers marked with a plus sign and a moved price shown beside its old one, and what vanished
+    /// listed under it.
     #[arg(long, value_name = "SECONDS")]
     watch: Option<u64>,
     /// With --watch: print only what moved since the last look (one line each), not the table.
@@ -161,7 +160,8 @@ struct OffersArgs {
     /// The order of the offers (and which ones vast.ai sends: it sends at most 64).
     #[arg(long, value_enum, default_value_t = Sort::Price)]
     sort: Sort,
-    /// Read the flags of this file first (default: ~/.config/vast-skopos/offers, when it exists).
+    /// Read the flags of this file first (default: $XDG_CONFIG_HOME/vast-skopos/offers, else
+    /// ~/.config/vast-skopos/offers, when one exists).
     #[arg(long, value_name = "FILE", conflicts_with = "no_config")]
     config: Option<PathBuf>,
     /// Read no config file.
@@ -257,6 +257,7 @@ fn country(code: &str) -> Result<String, String> {
 /// `print!` would panic.
 fn emit(text: &str) -> bool {
     let mut out = std::io::stdout().lock();
+    // BORROW: explicit as_bytes -- the writer takes bytes
     out.write_all(text.as_bytes())
         .and_then(|()| out.flush())
         .is_ok()
@@ -502,7 +503,7 @@ fn offers(args: OffersArgs) -> ExitCode {
         let at = now();
         let moved = previous.as_deref().map(|p| OfferChanges::between(p, &kept));
         let text = if args.changes {
-            offers_changes_only(moved.as_ref(), &kept, &page, missed, at)
+            offers_changes_only(&page, moved.as_ref(), &kept, missed, at)
         } else {
             // The first look has nothing to mark (and a one-shot never has a second); a blank line
             // parts the looks of a watch.
@@ -516,7 +517,7 @@ fn offers(args: OffersArgs) -> ExitCode {
             let shown = kept.get(..top).unwrap_or(&kept);
             let note = moved
                 .as_ref()
-                .map(|m| offers_changes_note(m, shown, &page, missed))
+                .map(|m| offers_changes_note(&page, m, shown, missed))
                 .unwrap_or_default();
             format!("{gap}{table}{footer}{note}")
         };

@@ -63,6 +63,18 @@ pub(crate) fn is_hidden(c: char) -> bool {
         )
 }
 
+/// `secs` in whole seconds, truncated: a negative or `NaN` count reads 0, an enormous one saturates.
+pub(crate) const fn whole_secs(secs: f64) -> u64 {
+    // CAST: f64 → u64, a non-negative time in seconds, truncated to whole seconds on purpose
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::as_conversions
+    )]
+    let s = secs.max(0.0) as u64;
+    s
+}
+
 /// The first `max` characters of `text` and an ellipsis, when `text` has more; `None` when it fits.
 pub(crate) fn shortened(text: &str, max: usize) -> Option<String> {
     (text.chars().count() > max).then(|| {
@@ -224,7 +236,7 @@ impl Instance {
     }
 }
 
-/// The account's money, from `/api/v0/users/current`.
+/// The account's money, from `/api/v0/users/current/`.
 ///
 /// Only these two fields are read: that endpoint's answer also carries the API key, which is
 /// never parsed, kept or printed.
@@ -238,7 +250,7 @@ pub struct Account {
 }
 
 impl Account {
-    /// Reads the `/api/v0/users/current` answer.
+    /// Reads the `/api/v0/users/current/` answer.
     ///
     /// ```
     /// use vast_skopos::instance::Account;
@@ -251,5 +263,17 @@ impl Account {
             credit: number(user, "credit"),
             balance: number(user, "balance"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::whole_secs;
+
+    #[test]
+    fn whole_seconds_truncate_and_saturate() {
+        assert_eq!(whole_secs(59.99), 59);
+        assert_eq!((whole_secs(-1.0), whole_secs(f64::NAN)), (0, 0));
+        assert_eq!(whole_secs(1e300), u64::MAX);
     }
 }

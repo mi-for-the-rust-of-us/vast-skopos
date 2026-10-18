@@ -1,5 +1,6 @@
 //! `vas offers`, the binary, against a local mock of the search: the identity, the config file
-//! merged with the command line, and what stops a run. No key anywhere, no network.
+//! merged with the command line, what stops a run, and the watch (`--watch`, `--changes`, the floor,
+//! a closed pipe). No key anywhere, no network.
 
 #![allow(
     clippy::unwrap_used,

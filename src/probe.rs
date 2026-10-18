@@ -37,20 +37,20 @@ pub enum LogReading {
     NoMatch,
     /// The newest match is not a regular file (a directory, say).
     NotAFile {
-        /// Its path on the box, control characters dropped ([`strip`]).
+        /// Its path on the box, control characters dropped (see `strip`).
         file: String,
     },
     /// The newest matching file has no line to show: it is empty, or its last lines are blank
-    /// once cleaned ([`clean`]).
+    /// once cleaned (see `clean`).
     Empty {
-        /// The file's path on the box, control characters dropped ([`strip`]).
+        /// The file's path on the box, control characters dropped (see `strip`).
         file: String,
     },
     /// The newest matching file's last non-blank line.
     Line {
-        /// The file's path on the box, control characters dropped ([`strip`]).
+        /// The file's path on the box, control characters dropped (see `strip`).
         file: String,
-        /// Its last non-blank line, cleaned ([`clean`]).
+        /// Its last non-blank line, cleaned (see `clean`).
         line: String,
     },
     /// The output after the separator carried none of the remote command's markers (the session
@@ -367,6 +367,12 @@ pub fn ssh_command(host: &str, port: u16, identity: Option<&Path>, log: Option<&
     cmd
 }
 
+/// The outcome for instance `n`; `None` when `probes` is shorter than the instances (read as "not
+/// probed"), like an instance that was not probed.
+pub(crate) fn outcome_at(probes: &[ProbeOutcome], n: usize) -> Option<&Result<Probe>> {
+    probes.get(n).and_then(Option::as_ref)
+}
+
 /// Kills `child` and waits for it, so no process is left behind (the outcome is of no use: the
 /// probe has already failed).
 fn reap(child: &mut Child) {
@@ -402,12 +408,10 @@ pub fn probe_all(
             .zip(instances)
             .map(|(handle, i)| {
                 handle.join().unwrap_or_else(|_| {
-                    Some(Err(SkoposError::Ssh {
-                        target: i
-                            .ssh_endpoint()
-                            .map_or_else(|| String::from("?"), |(h, p)| format!("{h}:{p}")),
-                        message: String::from("the probe thread panicked"),
-                    }))
+                    let target = i
+                        .ssh_endpoint()
+                        .map_or_else(|| String::from("?"), |(h, p)| format!("{h}:{p}"));
+                    Some(Err(SkoposError::ssh(target, "the probe thread panicked")))
                 })
             })
             .collect()
@@ -428,31 +432,28 @@ pub fn ssh_probe(
 ) -> Result<Probe> {
     let target = format!("{host}:{port}");
     if host.starts_with('-') {
-        return Err(SkoposError::Ssh {
+        return Err(SkoposError::ssh(
             target,
-            message: String::from(
-                "host name starts with '-' (refused: it would read as an option)",
-            ),
-        });
+            "host name starts with '-' (refused: it would read as an option)",
+        ));
     }
     let mut cmd = ssh_command(host, port, identity, log);
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let mut child = cmd.spawn().map_err(|e| SkoposError::Ssh {
-        target: target.clone(),
-        message: format!("failed to run ssh: {e}"),
-    })?;
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| SkoposError::ssh(target.clone(), format!("failed to run ssh: {e}")))?;
     // Both pipes are drained on their own threads WHILE the child runs: a pipe buffer is 4 KB on
     // Windows, and a child writing more than that into an undrained pipe blocks until killed.
     let (out, err) = match (drain(child.stdout.take()), drain(child.stderr.take())) {
         (Ok(out), Ok(err)) => (out, err),
         (Err(e), _) | (_, Err(e)) => {
             reap(&mut child);
-            return Err(SkoposError::Ssh {
+            return Err(SkoposError::ssh(
                 target,
-                message: format!("failed to read ssh's output: {e}"),
-            });
+                format!("failed to read ssh's output: {e}"),
+            ));
         }
     };
     let started = Instant::now();
@@ -467,21 +468,21 @@ pub fn ssh_probe(
             Ok(None) => std::thread::sleep(Duration::from_millis(100)),
             Err(e) => {
                 reap(&mut child);
-                return Err(SkoposError::Ssh {
+                return Err(SkoposError::ssh(
                     target,
-                    message: format!("failed to wait for ssh: {e}"),
-                });
+                    format!("failed to wait for ssh: {e}"),
+                ));
             }
         }
     };
     let Some(status) = status else {
-        return Err(SkoposError::Ssh {
+        return Err(SkoposError::ssh(
             target,
-            message: format!(
+            format!(
                 "no answer within {} s (ssh killed)",
                 PROBE_TIMEOUT.as_secs()
             ),
-        });
+        ));
     };
     // One deadline for both pipes, so a stray holder costs at most `DRAIN_GRACE` in all.
     let deadline = Instant::now() + DRAIN_GRACE;
@@ -499,10 +500,7 @@ pub fn ssh_probe(
             .unwrap_or_else(|| {
                 format!("no GPU reading (ssh exit {})", status.code().unwrap_or(-1))
             });
-        return Err(SkoposError::Ssh {
-            target,
-            message: reason,
-        });
+        return Err(SkoposError::ssh(target, reason));
     }
     Ok(probe)
 }

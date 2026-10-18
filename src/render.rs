@@ -1,24 +1,12 @@
-//! The tables `vas` prints: the instances (with the money line), and the offers (with their
-//! footer).
+//! The tables `vas` prints: the instances (with the money line), the offers (with their footer),
+//! and what a watch adds to them (the marks, and the notes on what moved).
 
 use std::fmt::Write as _;
 
-use crate::instance::{Account, Instance, shortened};
+use crate::instance::{Account, Instance, shortened, whole_secs};
 use crate::offer::{OFFER_CAP, Offer, OfferChanges, OfferPage, OfferQuery, OfferSort};
-use crate::probe::{LogReading, Probe, ProbeOutcome};
+use crate::probe::{LogReading, Probe, ProbeOutcome, outcome_at};
 use crate::runway::Runway;
-
-/// `secs` in whole seconds, truncated: a negative or `NaN` count reads 0, an enormous one saturates.
-pub(crate) const fn whole_secs(secs: f64) -> u64 {
-    // CAST: f64 → u64, a non-negative time in seconds, truncated to whole seconds on purpose
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        clippy::as_conversions
-    )]
-    let s = secs.max(0.0) as u64;
-    s
-}
 
 /// `secs` as `2d 3h`, `4h 15m` or `7m`.
 ///
@@ -58,8 +46,8 @@ fn or_dash(v: Option<String>) -> String {
 /// string must not widen every row.
 const TEXT_WIDTH: usize = 40;
 
-/// `text`, at most [`TEXT_WIDTH`] characters; a longer one loses its tail to an ellipsis (tested
-/// through `offers_table`, in `tests/render.rs`).
+/// `text`; when it has more than [`TEXT_WIDTH`] characters, its first [`TEXT_WIDTH`] and an ellipsis
+/// (tested through `offers_table`, in `tests/render.rs`).
 fn capped(text: &str) -> String {
     // BORROW: explicit to_owned -- the cell is owned by the row
     shortened(text, TEXT_WIDTH).unwrap_or_else(|| text.to_owned())
@@ -331,7 +319,7 @@ pub fn table(
             ]);
         }
         if with_ssh {
-            match probes.get(n).and_then(Option::as_ref) {
+            match outcome_at(probes, n) {
                 Some(Ok(p)) => {
                     let (util, mem) = gpu_cells(p);
                     row.extend([util, mem, log_cell(p.log.as_ref())]);
@@ -520,6 +508,9 @@ fn counted(n: usize, word: &str, below: usize) -> String {
 /// `shown` is the rows of the table, when there is one: a new or repriced offer that is not among
 /// them has no mark and no changed price on screen, so the counts say how many sit below it.
 fn change_counts(changes: &OfferChanges, shown: Option<&[Offer]>) -> String {
+    if changes.is_empty() {
+        return String::from("no change");
+    }
     let below = |id: u64| shown.is_some_and(|rows| !rows.iter().any(|o| o.id == id));
     let mut parts: Vec<String> = Vec::new();
     if !changes.appeared.is_empty() {
@@ -537,11 +528,7 @@ fn change_counts(changes: &OfferChanges, shown: Option<&[Offer]>) -> String {
     if !changes.gone.is_empty() {
         parts.push(format!("{} gone", changes.gone.len()));
     }
-    if parts.is_empty() {
-        String::from("no change")
-    } else {
-        parts.join(", ")
-    }
+    parts.join(", ")
 }
 
 /// The lines of one kind of change: `mark` and `describe(item)` for the first `cap` items (all of
@@ -565,6 +552,16 @@ fn change_lines<T>(
 /// vast.ai answers at most 64 rows per search: an offer may only have entered or left them.
 const CUT_NOTE: &str = "(vast.ai caps a search at 64 rows: an offer may only have entered or left them; narrow the search)\n";
 
+/// The note about vast.ai's 64-row cap, when the answer may have been cut AND something entered or
+/// left (the only changes the cap can explain); empty otherwise.
+fn cut_note(changes: &OfferChanges, page: &OfferPage) -> &'static str {
+    if page.maybe_cut() && !(changes.appeared.is_empty() && changes.gone.is_empty()) {
+        CUT_NOTE
+    } else {
+        ""
+    }
+}
+
 /// What moved since the previous look, to print under the table of a watch.
 ///
 /// The table already marks the new offers and shows the changed prices, so this is the counts
@@ -581,23 +578,22 @@ const CUT_NOTE: &str = "(vast.ai caps a search at 64 rows: an offer may only hav
 /// let before = [offer(1, 0.5), offer(2, 0.6)];
 /// let now = [offer(1, 0.5), offer(3, 0.7)];
 /// let moved = OfferChanges::between(&before, &now);
-/// assert_eq!(offers_changes_note(&moved, &now, &page, false),
+/// assert_eq!(offers_changes_note(&page, &moved, &now, false),
 ///   "since the last look: 1 new, 1 gone\n- 2  1x RTX 5090  0.600 $/h  Spain, ES\n");
 /// // Only the first row is on screen: the new offer is below the table.
-/// assert_eq!(offers_changes_note(&moved, &now[..1], &page, true),
+/// assert_eq!(offers_changes_note(&page, &moved, &now[..1], true),
 ///   "since the last successful look: 1 new (1 below the table), 1 gone\n\
 ///    - 2  1x RTX 5090  0.600 $/h  Spain, ES\n");
 /// let steady = OfferChanges::between(&now, &now);
-/// assert_eq!(offers_changes_note(&steady, &now, &page, false), "since the last look: no change\n");
+/// assert_eq!(offers_changes_note(&page, &steady, &now, false), "since the last look: no change\n");
 /// ```
 #[must_use]
 pub fn offers_changes_note(
+    page: &OfferPage,
     changes: &OfferChanges,
     shown: &[Offer],
-    page: &OfferPage,
     missed: bool,
 ) -> String {
-    let cut = page.maybe_cut();
     let since = if missed {
         "since the last successful look"
     } else {
@@ -605,9 +601,7 @@ pub fn offers_changes_note(
     };
     let mut out = format!("{since}: {}\n", change_counts(changes, Some(shown)));
     change_lines(&mut out, '-', &changes.gone, Some(NOTE_LINES), brief);
-    if cut && !(changes.appeared.is_empty() && changes.gone.is_empty()) {
-        out.push_str(CUT_NOTE);
-    }
+    out.push_str(cut_note(changes, page));
     out
 }
 
@@ -626,27 +620,27 @@ pub fn offers_changes_note(
 /// let page = OfferPage::from_json(&serde_json::json!({"offers": []})).unwrap();
 /// let before = [offer(1, 0.5), offer(2, 0.6)];
 /// let now = [offer(1, 0.55), offer(3, 0.7)];
-/// assert_eq!(offers_changes_only(None, &before, &page, false, 0.0),
+/// assert_eq!(offers_changes_only(&page, None, &before, false, 0.0),
 ///   "searched 00:00:00 UTC: 2 offers (the first look: what moves follows)\n");
 /// let moved = OfferChanges::between(&before, &now);
-/// assert_eq!(offers_changes_only(Some(&moved), &now, &page, false, 3661.0),
+/// assert_eq!(offers_changes_only(&page, Some(&moved), &now, false, 3661.0),
 ///   "searched 01:01:01 UTC: 2 offers, 1 new, 1 repriced, 1 gone\n\
 ///    + 3  1x RTX 5090  0.700 $/h  Spain, ES\n\
 ///    ~ 1  1x RTX 5090  0.500 -> 0.550 $/h  Spain, ES\n\
 ///    - 2  1x RTX 5090  0.600 $/h  Spain, ES\n");
 /// let steady = OfferChanges::between(&now, &now);
-/// assert_eq!(offers_changes_only(Some(&steady), &now, &page, true, 3661.0),
+/// assert_eq!(offers_changes_only(&page, Some(&steady), &now, true, 3661.0),
 ///   "searched 01:01:01 UTC: 2 offers, no change (a search failed in between)\n");
 /// ```
 #[must_use]
 pub fn offers_changes_only(
+    page: &OfferPage,
     changes: Option<&OfferChanges>,
     kept: &[Offer],
-    page: &OfferPage,
     missed: bool,
     now: f64,
 ) -> String {
-    let (offers, cut) = (kept.len(), page.maybe_cut());
+    let offers = kept.len();
     let at = clock(now);
     let noun = if offers == 1 { "offer" } else { "offers" };
     let Some(changes) = changes else {
@@ -667,9 +661,7 @@ pub fn offers_changes_only(
         offer_brief(&r.offer, &price)
     });
     change_lines(&mut out, '-', &changes.gone, None, brief);
-    if cut && !(changes.appeared.is_empty() && changes.gone.is_empty()) {
-        out.push_str(CUT_NOTE);
-    }
+    out.push_str(cut_note(changes, page));
     out
 }
 
@@ -764,7 +756,7 @@ pub fn offers_footer(
 
 #[cfg(test)]
 mod tests {
-    use super::{clock, whole_secs};
+    use super::clock;
 
     #[test]
     fn the_clock_reads_the_utc_time_of_day_and_never_fails() {
@@ -780,12 +772,5 @@ mod tests {
             );
         }
         assert_eq!(clock(-5.0), "00:00:00 UTC");
-    }
-
-    #[test]
-    fn whole_seconds_truncate_and_saturate() {
-        assert_eq!(whole_secs(59.99), 59);
-        assert_eq!((whole_secs(-1.0), whole_secs(f64::NAN)), (0, 0));
-        assert_eq!(whole_secs(1e300), u64::MAX);
     }
 }

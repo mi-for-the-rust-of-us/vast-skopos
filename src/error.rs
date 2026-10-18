@@ -111,6 +111,14 @@ impl SkoposError {
         }
     }
 
+    /// The `ssh` probe of `target` (`host:port`) failed, for `message`.
+    pub(crate) fn ssh(target: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::Ssh {
+            target: target.into(),
+            message: message.into(),
+        }
+    }
+
     /// A non-success `status` from `path`, with a `hint` when the status is a common one.
     pub(crate) fn status(path: &str, status: u16, hint: &'static str) -> Self {
         Self::Status {

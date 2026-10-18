@@ -1,5 +1,6 @@
 //! `vas`, the lookout, the binary, against a local mock of the account API: the columns `--wide`
-//! adds, and that the machine and the host each land under their own header. No network.
+//! adds, `--compact`, `--watch`, the probe's wiring (`--ssh`), where the key is found, and the flags
+//! that are refused. No network, no real key.
 
 #![allow(
     clippy::unwrap_used,
