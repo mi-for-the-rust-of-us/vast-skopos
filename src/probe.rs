@@ -27,6 +27,56 @@ pub struct GpuReading {
     pub mem_used_mib: u64,
     /// Memory total, MiB.
     pub mem_total_mib: u64,
+    /// The power it draws now, in watts (rounded); `None` when the box did not say.
+    pub power_w: Option<u32>,
+    /// The power limit set on it, in watts (rounded): a host can set it below the default.
+    pub power_limit_w: Option<u32>,
+    /// The power limit the card ships with, in watts (575 for an RTX 5090).
+    pub power_default_w: Option<u32>,
+    /// The SM clock now, in MHz.
+    pub sm_mhz: Option<u32>,
+    /// The highest SM clock the card can reach, in MHz.
+    pub sm_max_mhz: Option<u32>,
+    /// Why the clocks are held down: `nvidia-smi`'s bit mask of clock event reasons (`0x4` is the
+    /// software power cap); `None` when the box did not say.
+    pub throttle_mask: Option<u64>,
+}
+
+/// The clock event reasons that mean the card is held below what it could do, as `nvidia-smi`
+/// names their bits: the software power cap, the thermal slowdowns, the hardware slowdown and the
+/// power brake. An idle GPU, application clocks and sync boost are not in the list: they are not a
+/// restraint on a run.
+const THROTTLE_WORDS: [(u64, &str); 5] = [
+    (0x4, "power_cap"),
+    (0x8, "slowdown"),
+    (0x20, "thermal"),
+    (0x40, "thermal"),
+    (0x80, "power_brake"),
+];
+
+impl GpuReading {
+    /// The reasons the clocks are held down, as short words (`power_cap`, `thermal`, `slowdown`,
+    /// `power_brake`); `None` when the box did not say, empty when nothing holds the card.
+    ///
+    /// ```
+    /// use vast_skopos::probe::parse_output;
+    /// let p = parse_output("0, 100, 24745, 32607\n---vas-power---\n0, 399.86, 400.00, 575.00, 1695, 3090, 0x0000000000000004\n");
+    /// let g = &p.gpus[0];
+    /// assert_eq!(g.throttle_words(), Some(vec!["power_cap"]));
+    /// assert_eq!((g.power_w, g.power_limit_w, g.power_default_w), (Some(400), Some(400), Some(575)));
+    /// assert_eq!((g.sm_mhz, g.sm_max_mhz), (Some(1695), Some(3090)));
+    /// ```
+    #[must_use]
+    pub fn throttle_words(&self) -> Option<Vec<&'static str>> {
+        let mask = self.throttle_mask?;
+        let mut words: Vec<&'static str> = Vec::new();
+        for (bit, word) in THROTTLE_WORDS {
+            if mask & bit != 0 && !words.contains(&word) {
+                words.push(word);
+            }
+        }
+        Some(words)
+    }
 }
 
 /// What `--log` found on a box: the newest file matching the pattern, and its last line.
@@ -83,6 +133,11 @@ const LOG_WIDTH: usize = 120;
 /// The line separating `nvidia-smi`'s output from the log's in the remote command's output.
 const SEPARATOR: &str = "---vas-log---";
 
+/// The line separating the main `nvidia-smi` query from the power query that follows it. The power
+/// query is asked on its own, so a driver that lacks one of its fields costs the power readings
+/// and nothing else.
+const POWER_SEPARATOR: &str = "---vas-power---";
+
 /// The prefix of the line naming the newest matching file, after [`SEPARATOR`].
 const FILE_MARK: &str = "vas-file:";
 
@@ -118,6 +173,12 @@ pub fn parse_nvidia_smi(csv: &str) -> Vec<GpuReading> {
                 util_pct: f.next()?.parse().ok()?,
                 mem_used_mib: f.next()?.parse().ok()?,
                 mem_total_mib: f.next()?.parse().ok()?,
+                power_w: None,
+                power_limit_w: None,
+                power_default_w: None,
+                sm_mhz: None,
+                sm_max_mhz: None,
+                throttle_mask: None,
             })
         })
         .collect()
@@ -143,13 +204,17 @@ pub fn parse_nvidia_smi(csv: &str) -> Vec<GpuReading> {
 pub fn remote_command(log: Option<&str>) -> String {
     // `timeout` on the box guards `nvidia-smi` and `tail`; the glob's expansion and `ls` are bounded
     // only by the local deadline ([`PROBE_TIMEOUT`]), which kills `ssh`.
-    let smi = "timeout 20 nvidia-smi --query-gpu=index,utilization.gpu,memory.used,memory.total \
-               --format=csv,noheader,nounits";
+    let smi = format!(
+        "timeout 20 nvidia-smi --query-gpu=index,utilization.gpu,memory.used,memory.total \
+         --format=csv,noheader,nounits; echo '{POWER_SEPARATOR}'; \
+         timeout 20 nvidia-smi --query-gpu=index,power.draw,power.limit,power.default_limit,\
+         clocks.sm,clocks.max.sm,clocks_throttle_reasons.active \
+         --format=csv,noheader,nounits 2>/dev/null"
+    );
     // The glob is left unquoted on purpose so the box's shell expands it: the pattern is the
     // user's own, sent to the user's own box. Everything else interpolated here is a constant.
     log.map_or_else(
-        // BORROW: explicit to_owned -- the command is returned owned
-        || smi.to_owned(),
+        || smi.clone(),
         |pattern| {
             // The match is named on its own line before the file's last lines, so the table can
             // say which run wrote it, and "nothing matched", "not a file" and "empty" stay apart.
@@ -223,15 +288,52 @@ pub fn clean(line: &str) -> String {
 /// ```
 #[must_use]
 pub fn parse_output(stdout: &str) -> Probe {
-    match stdout.split_once(SEPARATOR) {
-        Some((smi, log)) => Probe {
-            gpus: parse_nvidia_smi(smi),
-            log: Some(parse_log(log)),
-        },
-        None => Probe {
-            gpus: parse_nvidia_smi(stdout),
-            log: None,
-        },
+    let (gpus_and_power, log) = match stdout.split_once(SEPARATOR) {
+        Some((smi, log)) => (smi, Some(parse_log(log))),
+        None => (stdout, None),
+    };
+    let (smi, power) = gpus_and_power
+        .split_once(POWER_SEPARATOR)
+        .unwrap_or((gpus_and_power, ""));
+    let mut gpus = parse_nvidia_smi(smi);
+    merge_power(&mut gpus, power);
+    Probe { gpus, log }
+}
+
+/// A number of watts or MHz as `nvidia-smi` prints it (`399.86`), rounded; `None` for `[N/A]`,
+/// text, a negative or a non-finite number.
+fn rounded_u32(text: &str) -> Option<u32> {
+    let value = text.trim().parse::<f64>().ok()?;
+    // CAST: f64 → u32, a rounded non-negative reading in watts or MHz (checked above), saturating
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::as_conversions
+    )]
+    let rounded = value.round() as u32;
+    (value.is_finite() && value >= 0.0).then_some(rounded)
+}
+
+/// Reads the power query (`index,power.draw,power.limit,power.default_limit,clocks.sm,
+/// clocks.max.sm,clocks_throttle_reasons.active`) into the GPUs it names; lines that do not parse,
+/// or name a GPU the main query did not, are skipped, and a field the box did not give stays `None`.
+fn merge_power(gpus: &mut [GpuReading], power: &str) {
+    for line in power.lines() {
+        let mut f = line.split(',').map(str::trim);
+        let Some(index) = f.next().and_then(|i| i.parse::<u32>().ok()) else {
+            continue;
+        };
+        let Some(gpu) = gpus.iter_mut().find(|g| g.index == index) else {
+            continue;
+        };
+        gpu.power_w = f.next().and_then(rounded_u32);
+        gpu.power_limit_w = f.next().and_then(rounded_u32);
+        gpu.power_default_w = f.next().and_then(rounded_u32);
+        gpu.sm_mhz = f.next().and_then(rounded_u32);
+        gpu.sm_max_mhz = f.next().and_then(rounded_u32);
+        gpu.throttle_mask = f
+            .next()
+            .and_then(|mask| u64::from_str_radix(mask.trim_start_matches("0x"), 16).ok());
     }
 }
 

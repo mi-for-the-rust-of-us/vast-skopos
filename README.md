@@ -186,6 +186,17 @@ kept in memory for the length of the watch; `--compact` carries the same numbers
 probe that failed adds nothing and keeps the history (one dropped `ssh` is not the run stopping), and a box
 that stops or leaves is forgotten. A single look has no history, and no such column.
 
+**The power cap.** A host can set a card's power limit below what it ships with. Seen on 2026-10-18 on two
+rented RTX 5090s: a limit of 400 W against the 575 W default, `SW Power Cap: Active`, and the SM clock held
+at about 1,700 MHz of a possible 3,090: the run goes slower than the model suggests, and the dashboard's
+utilisation (100 %) does not show it. Under `--ssh`, the `POWER` column (after `VRAM`) says the limit and
+the default when the limit is lower, and what holds the clocks down: `400/575W+power_cap`; `575W` is a card
+at its default and free. The words are `power_cap`, `thermal`, `slowdown` and `power_brake`; an idle GPU,
+application clocks and sync boost are not restraints and are not shown. `--compact` carries, per GPU,
+`power_w` (the draw now), `power_limit_w`, `power_default_w`, `sm_mhz`, `sm_max_mhz` and `throttle` (a list
+of those words: empty when nothing holds the card, `null` when the box did not say). The power is asked in a
+second `nvidia-smi` query, so a driver that lacks a field costs the power cells (`-`) and nothing else.
+
 **vast.ai rate-limits its API**, per endpoint, and says so in `X-RateLimit-*` headers (on 2026-10-18: 30
 calls for the offer search, ONE for the instances list). `vas` reads them. A look refused with a 429 that
 clears within 15 s waits it out once and says so (`vas: rate-limited: waiting 3 s, then trying again`), so

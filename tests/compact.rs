@@ -91,7 +91,9 @@ fn a_box_with_everything_and_a_box_with_nothing_have_the_same_keys() {
     );
     assert_eq!(
         b["probe"]["gpus"],
-        json!([{"index": 0, "util_pct": 99, "mem_used_mib": 29_400, "mem_total_mib": 32_607}])
+        json!([{"index": 0, "util_pct": 99, "mem_used_mib": 29_400, "mem_total_mib": 32_607,
+                "power_w": null, "power_limit_w": null, "power_default_w": null,
+                "sm_mhz": null, "sm_max_mhz": null, "throttle": null}])
     );
     assert_eq!(
         b["probe"]["log"],

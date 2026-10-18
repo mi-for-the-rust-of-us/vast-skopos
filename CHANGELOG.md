@@ -45,6 +45,13 @@ All notable changes to this project are documented here. The format is based on
   `offline` shows as a credit that falls slower than the burn. Append-only, only when asked, never the key;
   a file that cannot be written is said once and the look goes on. The first file this crate writes:
   `creditlog::CreditLog` and a new rule in CONVENTIONS.md ("When Writing a File").
+- The power cap, under `vas --ssh`: a `POWER` column after `VRAM` (`400/575W+power_cap`: the limit set on
+  the card, the default when it is higher, and what holds the clocks down: `power_cap`, `thermal`, `slowdown`,
+  `power_brake`) and, in `--compact`, per GPU `power_w`, `power_limit_w`, `power_default_w`, `sm_mhz`,
+  `sm_max_mhz` and `throttle`. Seen on two rented RTX 5090s: 400 W against the 575 W default, SM clock held
+  at ~1,700 of 3,090 MHz by the software power cap, with 100 % utilisation. A second `nvidia-smi` query, so
+  an old driver costs only these cells. `probe::GpuReading` gains the six fields (it is `#[non_exhaustive]`),
+  `GpuReading::throttle_words`.
 - Every `vas offers` search ends with a line saying that vast.ai's answers vary from one search to the
   next (a watch says it under its first look, `--changes` does not): `render::offers_variance_note`.
 
