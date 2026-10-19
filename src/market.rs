@@ -12,7 +12,9 @@
 //! - the first [`LEARNING_LOOKS`] looks only learn: nothing is reported;
 //! - after that, a machine is new when it was absent from the previous [`ABSENT_FOR_NEW`] looks, and
 //!   gone when it has been missing for [`ABSENT_FOR_GONE`] looks in a row (reported once);
-//! - a price that moved is compared with the last price seen;
+//! - a price that moved is compared with the last price seen (a machine listed under two ids at
+//!   different prices counts once, by its cheaper row: if one look shows only the cheaper id and the
+//!   next only the dearer one, that reads as a price that moved);
 //! - [`MarketWatch::seen`] says in how many looks a machine appeared, which is the flicker, made
 //!   visible: a machine seen in every look is a dependable listing, one seen in a third of them
 //!   may be a host that reports late (a hypothesis, not a finding).

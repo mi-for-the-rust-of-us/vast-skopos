@@ -387,6 +387,13 @@ loop, or print and stop).
   box's shell expands the glob.
 - **One attempt.** `BatchMode=yes`, `ConnectTimeout=10`, and no retry loop: a box
   that refuses is reported in its row, and what to do about it is a person's call,
-  made from the dashboard.
+  made from the dashboard. One session per probe too (`ControlMaster=no`,
+  `ControlPath=none`): a shared master of the user's config would hold the pipes open.
+- **One question per `nvidia-smi` query, when a driver may lack the field.** The
+  utilisation and memory, the power and clocks, the clock event reasons (asked under
+  both names, `||`), the GPUs' bus ids and the compute processes each have their own
+  query and section: a driver that lacks a field costs that reading and nothing else.
+  Every query is bounded by `timeout` on the box, and an error `nvidia-smi` prints
+  (on stdout) is a line the parsers skip.
 - **Trust the box, not the dashboard** for GPU utilisation: the API's `gpu_util` is
   not shown, because it has been seen to read 0 % on boxes at 97-99 %.

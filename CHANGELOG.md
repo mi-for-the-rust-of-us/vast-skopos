@@ -195,6 +195,25 @@ All notable changes to this project are documented here. The format is based on
 - `--min-days` is capped at 36500 (a hundred years): `1e305` days overflowed to infinity and was sent to the
   server as `null`.
 - `RateLimit::from_headers` is `#[must_use]`.
+- A driver that lacks one name of a field no longer costs the power and the clock: the clock event reasons
+  are their own query, asked as `clocks_event_reasons.active` and, failing that, as the older
+  `clocks_throttle_reasons.active` (NVIDIA deprecated it), where a single query naming the older field lost
+  the power, the clock and the reasons together when a driver dropped it. `nvidia-smi` prints an unknown
+  field's error on stdout and exits 2; the parsers skip that line. A fake `nvidia-smi` in the Linux tests
+  answers like a driver that knows the new name, the old one, or neither.
+- The log's last line is read from the last 4096 BYTES of the file, then the last 20 lines of those: a
+  progress bar written for hours with no newline made `tail -n` scan the whole file under the box's 5 s
+  `timeout`, which printed nothing and read as an empty file.
+- Each probe has an `ssh` session of its own (`ControlMaster=no`, `ControlPath=none`): a `ControlPersist`
+  master in the user's `~/.ssh/config` kept the pipes open and cost up to two seconds a probe.
+- A `Retry-After` above a day is not taken as a wait (`1e300` parses, and printed as a 300-digit number of
+  seconds): the budget headers speak instead. A row that says `ssh_port` 0 has no endpoint to probe. An
+  explicit `--key-file` that is blank says so (`(that file is blank)`) instead of listing itself among the
+  places searched.
+- The README and the docs say what is true of: trust on first use for host keys, the throttle bits that come
+  and go (each flip is said), a GPU the main query cannot read whole being left out (MIG slices), a machine
+  listed under two ids at different prices, and `VAS_WATCH_FLOOR_MS` (for tests; it removes the courtesy
+  floor and nothing else).
 - The README says what is true: the probe columns' order (`GPU% (ssh)`, `VRAM`, `OTHER`, `POWER`, `CLOCK`, then
   `TREND` and `CLOCK TREND` in a watch), a "Try it" sample with those columns, the `--compact` example with
   every GPU key and the `event` kind, `kind` as `box`, `event` or `money`, and that the lookout prints no

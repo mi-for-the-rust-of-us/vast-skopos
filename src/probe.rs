@@ -169,6 +169,12 @@ const LOG_WIDTH: usize = 120;
 /// The line separating `nvidia-smi`'s output from the log's in the remote command's output.
 const SEPARATOR: &str = "---vas-log---";
 
+/// The line separating the power query from the throttle query that follows it. The reasons that
+/// hold the clocks down are asked on their own, under the name current drivers use and, failing that,
+/// the older one (`clocks_event_reasons` and `clocks_throttle_reasons`), so a driver that knows only
+/// one of the names costs the throttle reading and not the power and clock ones.
+const THROTTLE_SEPARATOR: &str = "---vas-throttle---";
+
 /// The line opening the apps section: each GPU's PCI bus id, then ([`APPS_BY_GPU`]) the memory the
 /// compute processes hold on each bus id.
 const APPS_SEPARATOR: &str = "---vas-apps---";
@@ -197,8 +203,10 @@ const NO_FILE: &str = "vas-no-file";
 /// The lines read from the end of the file: the last non-blank one among them is shown.
 const TAIL_LINES: usize = 20;
 
-/// The bytes those lines are capped at on the box, so a progress bar rewritten in place for hours
-/// (one enormous line) cannot fill the pipe; the tail of the bytes holds the bar's final state.
+/// The bytes read from the end of the file, before its lines are counted: a progress bar rewritten
+/// in place for hours (one enormous line, with no newline to stop a line count) cannot fill the pipe
+/// or run past the box's 5 s `timeout` (which would print nothing, and read as an empty file); the
+/// tail of the bytes holds the bar's final state.
 const TAIL_BYTES: usize = 4096;
 
 /// Parses `nvidia-smi --query-gpu=index,utilization.gpu,memory.used,memory.total
@@ -245,7 +253,7 @@ pub fn parse_nvidia_smi(csv: &str) -> Vec<GpuReading> {
 /// let cmd = remote_command(Some("/root/run/*.log"));
 /// assert!(cmd.contains("ls -dt -- /root/run/*.log"));
 /// assert!(cmd.contains("printf 'vas-file:%s\\n' \"$f\""));
-/// assert!(cmd.contains("tail -n 20 -- \"$f\" | tail -c 4096"));
+/// assert!(cmd.contains("tail -c 4096 -- \"$f\" | tail -n 20"));
 /// assert!(cmd.contains("printf 'vas-not-a-file:%s\\n' \"$f\"") && cmd.contains("echo 'vas-no-file'"));
 /// ```
 #[must_use]
@@ -256,7 +264,11 @@ pub fn remote_command(log: Option<&str>) -> String {
         "timeout 20 nvidia-smi --query-gpu=index,utilization.gpu,memory.used,memory.total \
          --format=csv,noheader,nounits; echo '{POWER_SEPARATOR}'; \
          timeout 20 nvidia-smi --query-gpu=index,power.draw,power.limit,power.default_limit,\
-         clocks.sm,clocks.max.sm,clocks_throttle_reasons.active \
+         clocks.sm,clocks.max.sm --format=csv,noheader,nounits 2>/dev/null; \
+         echo '{THROTTLE_SEPARATOR}'; \
+         timeout 20 nvidia-smi --query-gpu=index,clocks_event_reasons.active \
+         --format=csv,noheader,nounits 2>/dev/null || \
+         timeout 20 nvidia-smi --query-gpu=index,clocks_throttle_reasons.active \
          --format=csv,noheader,nounits 2>/dev/null; echo '{APPS_SEPARATOR}'; \
          timeout 20 nvidia-smi --query-gpu=index,pci.bus_id --format=csv,noheader,nounits 2>/dev/null; \
          echo '{APPS_BY_GPU}'; \
@@ -277,7 +289,7 @@ pub fn remote_command(log: Option<&str>) -> String {
                 "{smi}; echo '{SEPARATOR}'; f=$(ls -dt -- {pattern} 2>/dev/null | head -n 1); \
                  if [ -z \"$f\" ]; then echo '{NO_FILE}'; \
                  elif [ -f \"$f\" ]; then printf '{FILE_MARK}%s\\n' \"$f\"; \
-                 timeout 5 tail -n {TAIL_LINES} -- \"$f\" | tail -c {TAIL_BYTES}; \
+                 timeout 5 tail -c {TAIL_BYTES} -- \"$f\" | tail -n {TAIL_LINES}; \
                  else printf '{NOT_A_FILE}%s\\n' \"$f\"; fi"
             )
         },
@@ -347,9 +359,13 @@ pub fn parse_output(stdout: &str) -> Probe {
     let (smi, rest) = gpus_and_power
         .split_once(POWER_SEPARATOR)
         .unwrap_or((gpus_and_power, ""));
-    let (power, apps) = rest.split_once(APPS_SEPARATOR).unwrap_or((rest, ""));
+    let (power_and_throttle, apps) = rest.split_once(APPS_SEPARATOR).unwrap_or((rest, ""));
+    let (power, throttle) = power_and_throttle
+        .split_once(THROTTLE_SEPARATOR)
+        .unwrap_or((power_and_throttle, ""));
     let mut gpus = parse_nvidia_smi(smi);
     merge_power(&mut gpus, power);
+    merge_throttle(&mut gpus, throttle);
     merge_apps(&mut gpus, apps);
     Probe { gpus, log }
 }
@@ -416,9 +432,37 @@ fn rounded_u32(text: &str) -> Option<u32> {
     (value.is_finite() && value >= 0.0).then_some(rounded)
 }
 
+/// A clock event reasons mask as `nvidia-smi` prints it (`0x0000000000000004`): hexadecimal, with a
+/// `0x` or `0X` prefix (one, never two); `None` for anything else.
+fn parse_mask(text: &str) -> Option<u64> {
+    let digits = text
+        .strip_prefix("0x")
+        .or_else(|| text.strip_prefix("0X"))
+        .unwrap_or(text);
+    u64::from_str_radix(digits, 16).ok()
+}
+
+/// Reads the throttle query (`index,clocks_event_reasons.active`) into the GPUs it names; lines that
+/// do not parse (an error message `nvidia-smi` printed for a field its driver lacks, say) or name a
+/// GPU the main query did not are skipped.
+fn merge_throttle(gpus: &mut [GpuReading], throttle: &str) {
+    for line in throttle.lines() {
+        let Some((index, mask)) = line.split_once(',') else {
+            continue;
+        };
+        let (Ok(index), Some(mask)) = (index.trim().parse::<u32>(), parse_mask(mask.trim())) else {
+            continue;
+        };
+        if let Some(gpu) = gpus.iter_mut().find(|g| g.index == index) {
+            gpu.throttle_mask = Some(mask);
+        }
+    }
+}
+
 /// Reads the power query (`index,power.draw,power.limit,power.default_limit,clocks.sm,
-/// clocks.max.sm,clocks_throttle_reasons.active`) into the GPUs it names; lines that do not parse,
-/// or name a GPU the main query did not, are skipped, and a field the box did not give stays `None`.
+/// clocks.max.sm`) into the GPUs it names; lines that do not parse, or name a GPU the main query
+/// did not, are skipped, and a field the box did not give stays `None`. A seventh field, the
+/// throttle mask, is read too when a line carries it (one query with every field says the same).
 fn merge_power(gpus: &mut [GpuReading], power: &str) {
     for line in power.lines() {
         let mut f = line.split(',').map(str::trim);
@@ -433,13 +477,9 @@ fn merge_power(gpus: &mut [GpuReading], power: &str) {
         gpu.power_default_w = f.next().and_then(rounded_u32);
         gpu.sm_mhz = f.next().and_then(rounded_u32);
         gpu.sm_max_mhz = f.next().and_then(rounded_u32);
-        gpu.throttle_mask = f.next().and_then(|mask| {
-            let digits = mask
-                .strip_prefix("0x")
-                .or_else(|| mask.strip_prefix("0X"))
-                .unwrap_or(mask);
-            u64::from_str_radix(digits, 16).ok()
-        });
+        if let Some(mask) = f.next().and_then(parse_mask) {
+            gpu.throttle_mask = Some(mask);
+        }
     }
 }
 
@@ -559,6 +599,9 @@ pub fn ssh_command(host: &str, port: u16, identity: Option<&Path>, log: Option<&
     cmd.args(["-p", &port.to_string()]);
     cmd.args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]);
     cmd.args(["-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=3"]);
+    // One session of its own, whatever the user's `~/.ssh/config` says: a `ControlPersist` master
+    // would keep the pipes open after the command, and the probe would wait out the drain grace.
+    cmd.args(["-o", "ControlMaster=no", "-o", "ControlPath=none"]);
     cmd.args([
         "-o",
         "StrictHostKeyChecking=accept-new",
@@ -639,10 +682,12 @@ pub fn ssh_probe(
     log: Option<&str>,
 ) -> Result<Probe> {
     let target = format!("{host}:{port}");
+    // Defence in depth: the target is passed as `root@host` after `--`, so a host starting with `-`
+    // could not read as an option, and a name like that is a malformed one all the same.
     if host.starts_with('-') {
         return Err(SkoposError::ssh(
             target,
-            "host name starts with '-' (refused: it would read as an option)",
+            "host name starts with '-' (refused: not a host name)",
         ));
     }
     let mut cmd = ssh_command(host, port, identity, log);

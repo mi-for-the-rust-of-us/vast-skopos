@@ -171,6 +171,10 @@ impl RateLimit {
     }
 }
 
+/// The longest `Retry-After` taken as a wait: a day. A larger one (`1e300` parses) is not a wait
+/// anyone means, and would print as a 300-digit number of seconds; the budget headers speak instead.
+const MAX_RETRY_AFTER_SECS: f64 = 86_400.0;
+
 /// What each endpoint last said about its budget, by path.
 #[derive(Debug, Default)]
 struct Limits(Mutex<HashMap<String, RateLimit>>);
@@ -241,7 +245,7 @@ fn get_json(
             .get("retry-after")
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.trim().parse::<f64>().ok())
-            .filter(|n| n.is_finite() && *n >= 0.0);
+            .filter(|n| n.is_finite() && (0.0..=MAX_RETRY_AFTER_SECS).contains(n));
         return Err(SkoposError::rate_limited(
             path,
             named.or_else(|| budget.wait_secs(unix_now())),

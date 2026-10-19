@@ -74,6 +74,8 @@ fn the_ssh_command_keeps_every_value_a_separate_argument_and_the_target_after_th
             "ConnectTimeout=10",
             "ServerAliveInterval=5",
             "ServerAliveCountMax=3",
+            "ControlMaster=no",
+            "ControlPath=none",
             "StrictHostKeyChecking=accept-new",
             "LogLevel=ERROR",
         ]

@@ -86,6 +86,17 @@ fn the_api_text_loses_the_same_characters() {
 }
 
 #[test]
+fn a_row_that_says_port_zero_has_no_endpoint_to_probe() {
+    let row = |port: u64| {
+        Instance::from_json(&serde_json::json!(
+            {"id": 1, "ssh_host": "ssh4.vast.ai", "ssh_port": port}))
+        .unwrap()
+    };
+    assert_eq!(row(0).ssh_endpoint(), None);
+    assert_eq!(row(22).ssh_endpoint(), Some(("ssh4.vast.ai", 22)));
+}
+
+#[test]
 fn an_integer_written_as_a_float_or_a_float_string_is_still_an_integer() {
     let read = |row: serde_json::Value| Instance::from_json(&row);
     let i = read(

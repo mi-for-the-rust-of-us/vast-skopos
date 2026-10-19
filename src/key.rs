@@ -69,7 +69,7 @@ impl ApiKey {
             Ok(Some(key)) => Ok(Self(key)),
             Ok(None) => Err(SkoposError::NoApiKey {
                 searched: file.display().to_string(),
-                hint: String::new(),
+                hint: String::from(" (that file is blank)"),
             }),
             Err(why) => Err(SkoposError::KeyFile {
                 path: file.display().to_string(),

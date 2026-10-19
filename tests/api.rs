@@ -607,12 +607,19 @@ fn a_retry_after_that_is_a_wait_beats_the_budget_headers_and_anything_else_falls
     assert_eq!(wait("7"), Some(7.0));
     assert_eq!(wait(" 12.5 "), Some(12.5));
     assert_eq!(wait("0"), Some(0.0), "zero is a wait of zero");
+    assert_eq!(
+        wait("86400"),
+        Some(86_400.0),
+        "a day is the longest wait taken"
+    );
     // Not a usable number of seconds: the budget's own reset (about 4 s) is the wait.
     for unusable in [
         "",
         "-3",
         "NaN",
         "inf",
+        "86401",
+        "1e300",
         "soon",
         "Wed, 21 Oct 2026 07:28:00 GMT",
     ] {

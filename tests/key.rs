@@ -78,10 +78,12 @@ fn a_key_is_one_word_and_anything_else_is_refused_with_a_message_that_does_not_s
     assert!(!text.contains("SECRETKEY123"), "{text}");
     // A blank file is still a missing key.
     let (blank, _blank_dir) = file_with("blank", b"  \r\n");
-    assert!(matches!(
-        ApiKey::from_file(&blank).unwrap_err(),
-        SkoposError::NoApiKey { .. }
-    ));
+    let blank_error = ApiKey::from_file(&blank).unwrap_err();
+    assert!(matches!(blank_error, SkoposError::NoApiKey { .. }));
+    assert!(
+        blank_error.to_string().ends_with("(that file is blank)"),
+        "a file the user named says it is blank: {blank_error}"
+    );
     // A good one.
     let (good, _good_dir) = file_with("good", b"k3y123\r\n");
     assert!(ApiKey::from_file(&good).is_ok());

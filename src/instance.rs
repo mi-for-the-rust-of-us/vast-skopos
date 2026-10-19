@@ -257,7 +257,11 @@ impl Instance {
             .image_runtype
             .as_deref()
             .is_some_and(|r| r.contains("jupyter"));
-        let port = self.ssh_port?.checked_add(u16::from(jupyter))?;
+        // Port 0 is no port: a row that says so has no endpoint to probe.
+        let port = self
+            .ssh_port
+            .filter(|p| *p != 0)?
+            .checked_add(u16::from(jupyter))?;
         Some((self.ssh_host.as_deref()?, port))
     }
 }

@@ -218,3 +218,64 @@ fn a_last_line_longer_than_the_byte_cap_shows_its_end_cut_to_the_width() {
     assert_eq!(shown.chars().count(), 121, "120 characters and an ellipsis");
     let _ = fs::remove_dir_all(&d);
 }
+
+/// A directory with an executable `nvidia-smi` that answers like a driver whose names for the clock
+/// event reasons are those `mode` says: `new` (both answer), `old` (only `clocks_throttle_reasons`),
+/// `none` (neither). Invalid fields exit 2 and print their error on STDOUT, as the real one does.
+fn fake_nvidia_smi(name: &str, mode: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let d = scratch(name);
+    let script = format!(
+        r#"#!/bin/sh
+case "$*" in
+  *utilization.gpu*) echo "0, 100, 24809, 32607" ;;
+  *power.draw*) echo "0, 399.86, 400.00, 575.00, 1695, 3090" ;;
+  *clocks_event_reasons*)
+    if [ "{mode}" = new ]; then echo "0, 0x0000000000000004"; else echo 'Field "clocks_event_reasons.active" is not a valid field to query.'; exit 2; fi ;;
+  *clocks_throttle_reasons*)
+    if [ "{mode}" != none ]; then echo "0, 0x0000000000000004"; else echo 'Field "clocks_throttle_reasons.active" is not a valid field to query.'; exit 2; fi ;;
+  *pci.bus_id*) echo "0, 00000000:C1:00.0" ;;
+  *compute-apps*) echo "00000000:C1:00.0, 8720" ;;
+esac
+"#
+    );
+    let file = d.join("nvidia-smi");
+    fs::write(&file, script).unwrap();
+    fs::set_permissions(&file, fs::Permissions::from_mode(0o755)).unwrap();
+    d
+}
+
+/// What the remote command reads, run by `sh` with `bin` first on the `PATH`.
+fn probe_with(bin: &Path) -> vast_skopos::probe::Probe {
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+    let out = Command::new("sh")
+        .arg("-c")
+        .arg(remote_command(None))
+        .env("PATH", path)
+        .output()
+        .unwrap();
+    parse_output(&String::from_utf8_lossy(&out.stdout))
+}
+
+#[test]
+fn a_driver_that_knows_the_reasons_by_either_name_or_by_neither_still_gives_the_power() {
+    for (mode, reasons) in [("new", Some(4)), ("old", Some(4)), ("none", None)] {
+        let bin = fake_nvidia_smi(&format!("smi-{mode}"), mode);
+        let probe = probe_with(&bin);
+        let g = &probe.gpus[0];
+        assert_eq!(g.throttle_mask, reasons, "{mode}");
+        assert_eq!(
+            (
+                g.util_pct,
+                g.power_limit_w,
+                g.power_default_w,
+                g.sm_mhz,
+                g.sm_max_mhz
+            ),
+            (100, Some(400), Some(575), Some(1695), Some(3090)),
+            "{mode}: the rest is read whatever the reasons' name"
+        );
+        assert_eq!(g.other_user_mib(), Some(16_089), "{mode}");
+        let _ = fs::remove_dir_all(&bin);
+    }
+}

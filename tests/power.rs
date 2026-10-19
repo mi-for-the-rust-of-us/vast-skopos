@@ -366,3 +366,53 @@ fn a_throttle_is_shown_even_when_the_limit_is_not_known() {
         "-"
     );
 }
+
+#[test]
+fn the_throttle_reasons_are_their_own_section_and_an_error_message_in_it_is_skipped() {
+    // What the box prints: the power and clocks, then the reasons. A driver that lacks the first name
+    // for the reasons prints an error line on stdout before the second name answers.
+    let text = "0, 100, 1, 2\n---vas-power---\n0, 399.86, 400, 575, 1695, 3090\n\
+                ---vas-throttle---\nField \"clocks_event_reasons.active\" is not a valid field to query.\n\
+                0, 0x0000000000000004\n";
+    let g = &parse_output(text).gpus[0];
+    assert_eq!(g.throttle_words(), Some(vec!["power_cap"]));
+    assert_eq!((g.power_limit_w, g.sm_mhz), (Some(400), Some(1695)));
+    // A driver with neither name: the power and clocks are still read.
+    let none =
+        "0, 100, 1, 2\n---vas-power---\n0, 399.86, 400, 575, 1695, 3090\n---vas-throttle---\n";
+    let g = &parse_output(none).gpus[0];
+    assert_eq!((g.power_limit_w, g.sm_max_mhz), (Some(400), Some(3090)));
+    assert_eq!(g.throttle_mask, None);
+    // The reasons of a GPU the main query did not name are not invented; a bad mask is none.
+    let odd = "0, 100, 1, 2\n---vas-power---\n---vas-throttle---\n7, 0x4\n0, 0x0x4\n";
+    assert_eq!(parse_output(odd).gpus[0].throttle_mask, None);
+    // The section before the apps one, and the apps one still reads.
+    let both = "0, 100, 24809, 32607\n---vas-power---\n---vas-throttle---\n0, 0x20\n\
+                ---vas-apps---\n0, b\n---vas-apps-by-gpu---\nb, 8720\nvas-apps-ok\n";
+    let g = &parse_output(both).gpus[0];
+    assert_eq!(g.throttle_words(), Some(vec!["thermal"]));
+    assert_eq!(g.other_mem_mib, Some(16_089));
+}
+
+#[test]
+fn the_reasons_are_asked_apart_from_the_power_under_both_names_of_the_field() {
+    let command = remote_command(None);
+    let power = command.find("clocks.max.sm --format").unwrap();
+    let separator = command.find("---vas-throttle---").unwrap();
+    let new = command.find("clocks_event_reasons.active").unwrap();
+    let old = command.find("clocks_throttle_reasons.active").unwrap();
+    let apps = command.find("---vas-apps---").unwrap();
+    assert!(
+        power < separator && separator < new && new < old && old < apps,
+        "{command}"
+    );
+    // The power query no longer carries the reasons: a driver without them keeps its power.
+    assert!(!command[..separator].contains("reasons"), "{command}");
+    // The old name is the fallback of the new one (`||`), and each call is bounded on the box.
+    assert!(command[new..old].contains("||"), "{command}");
+    assert_eq!(
+        command.matches("nvidia-smi").count(),
+        command.matches("timeout 20 nvidia-smi").count(),
+        "{command}"
+    );
+}

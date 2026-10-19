@@ -178,8 +178,9 @@ ID        GPU          VRAM  $/H    CUDA  DISK   UP/DOWN Mb/s  REL %  MAX DAYS  
 `--ssh` uses your system `ssh` with `BatchMode=yes`, `ConnectTimeout=10` and keep-alives, gives
 each probe 30 s in all (and `nvidia-smi` 20 s on the box), and makes **one attempt** per box per
 refresh: a box that refuses is reported in its row (with `ssh`'s own last error line), never
-retried in a loop. Host keys are accepted on first use (`StrictHostKeyChecking=accept-new`), since
-vast.ai's `ssh` proxies are reached by port.
+retried in a loop. Host keys are accepted on first use (`StrictHostKeyChecking=accept-new`: trust on first use, a changed key
+is refused), since vast.ai's `ssh` proxies are reached by port. Each probe has an `ssh` session of its own
+(`ControlMaster=no`, `ControlPath=none`), whatever `~/.ssh/config` says about shared connections.
 
 `COST~` is an estimate: today's `$/h` times the hours since creation. vast.ai bills storage while an
 instance is stopped and prices can change; the invoice is the reference.
@@ -205,7 +206,11 @@ at its default and free. The words are `power_cap`, `thermal`, `slowdown` and `p
 application clocks and sync boost are not restraints and are not shown. `--compact` carries, per GPU,
 `power_w` (the draw now), `power_limit_w`, `power_default_w`, `sm_mhz`, `sm_max_mhz` and `throttle` (a list
 of those words: empty when nothing holds the card, `null` when the box did not say). The power is asked in a
-second `nvidia-smi` query, so a driver that lacks a field costs the power cells (`-`) and nothing else.
+second `nvidia-smi` query, so a driver that lacks a field costs the power cells (`-`) and nothing else; the
+reasons that hold the clocks down are a third, asked as `clocks_event_reasons` and, failing that, as the older
+`clocks_throttle_reasons`, so a driver that knows only one name still gives the power and the clock.
+A GPU the main query cannot read whole (one `[N/A]` among its fields, as with MIG slices) is left out of the
+table, not shown half-read.
 
 <a id="someone-else-on-the-gpu"></a>
 
@@ -228,6 +233,9 @@ The clock itself is the `CLOCK` column (`1702/3090`: the SM clock now over the h
 MHz), and under `--watch` a `CLOCK TREND` column after `TREND` keeps its last six samples, the mean of the box's
 GPUs: a card that fell from 3000 to 1700 MHz reads `3000 2900 1700 1700 1700 1700`, while its utilisation
 still reads `100`. `--compact` carries them as `probe.clock_trend` (`null` in a one-shot).
+
+A cap that comes and goes (a power cap is often intermittent) makes a watch say `power_cap began` and
+`power_cap ended` at every look it flips: that is what the card did, not noise to filter.
 
 A cap can also arrive mid-run. Under `vas --ssh --watch N`, a line under the money says when a GPU's limit,
 its throttle reasons or its other users change from one look to the next: `! 56533728 gpu 0: power limit 575 -> 400 W, power_cap
@@ -383,12 +391,17 @@ A few details keep the notes honest:
   the note counts it (`1 new (1 below the table)`).
 - vast.ai answers at most 64 rows per search: when it does, a change in who entered or left may only be an
   offer crossing that line, and the note says so.
+- A machine listed under two offer ids at DIFFERENT prices (the same GPU count) counts once, by its cheaper
+  row; if one look shows only the cheap id and the next only the dearer one, that reads as a price that moved.
+  The table can show a machine twice (two rows), and `SEEN` counts it once.
 - A search that fails ends a watch whose FIRST look failed (a wrong `VAST_URL` or key would otherwise loop on
   stderr forever); after one look has succeeded, a failure is only said on stderr, and the next look reads
   `since the last successful look`. The lookout's `vas --watch` shares the first two rules (a failed first
   look ends it, a failure after a success is said and the watch goes on) but prints no such note.
 - A `--watch` under the floor (10 s for `vas`, 20 s for `vas offers`) is raised to it, and `vas` says so on
   stderr. The floor is a courtesy to the service: vast.ai's own limits are read and obeyed whatever it says.
+  `VAS_WATCH_FLOOR_MS` (milliseconds) replaces both floors: it exists for the test suite, and setting it
+  removes the courtesy and nothing else.
 - A table every few seconds scrolls past unread in a terminal: for a person, `--changes` (one line per look and
   per change) reads best; `vas --compact --watch N` is for scripts.
 - A config file cannot hold `--watch` or `--changes`: a file of filters must not turn a run into a loop.
