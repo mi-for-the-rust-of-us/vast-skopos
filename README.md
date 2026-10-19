@@ -9,7 +9,7 @@
 **σκοπός** — *Your rented vast.ai boxes, watched.* **Not affiliated with vast.ai:** an independent,
 read-only tool that reads the vast.ai API with your own key, and your boxes over your own `ssh`.
 
-> 🆕 **`0.2.0` shows what a dashboard does not.** On two rented RTX 5090s, `vas --ssh` found a power limit of 400 W against the card's 575 W default (the SM clock held at about 1,700 of 3,090 MHz while the card read 100 %), and, on one of them, about 16 GiB of GPU memory and half of the GPU's time held by something outside the container. It now shows `POWER`, `CLOCK` and `OTHER` columns and, in a watch, says when they change; `--credit-log` keeps the credit as a curve; `vas offers --watch` reads machines over several looks (vast.ai's search answers a flickering sample) with a `SEEN` column; `--compact` prints JSON Lines; and vast.ai's rate limits are read and obeyed. See [`CHANGELOG.md`](CHANGELOG.md) and [`docs/dogfooding/2026-10-18.md`](https://github.com/mi-for-the-rust-of-us/vast-skopos/blob/main/docs/dogfooding/2026-10-18.md).
+> 🆕 **`0.2.0` adds what a dashboard does not show.** On two rented RTX 5090s, `vas --ssh` found a power limit of 400 W against the card's 575 W default (the SM clock held at about 1,700 of 3,090 MHz while the card read 100 %), and, on one of them, about 16 GiB of GPU memory and about half of the GPU's compute time used by something outside the container (what, and why, was not determined). It now shows `POWER`, `CLOCK` and `OTHER` columns and, in a watch, says when they change; `--credit-log` keeps the credit as a curve; `vas offers --watch` reads machines over several looks (vast.ai's search answers a flickering sample) with a `SEEN` column; `--compact` prints JSON Lines; and vast.ai's rate limits are read and obeyed. See [`CHANGELOG.md`](CHANGELOG.md) and [`docs/dogfooding/2026-10-18.md`](https://github.com/mi-for-the-rust-of-us/vast-skopos/blob/main/docs/dogfooding/2026-10-18.md).
 
 ## Table of Contents
 
@@ -32,6 +32,8 @@ read-only tool that reads the vast.ai API with your own key, and your boxes over
 > - **A long rental to watch?** → `vas --ssh --log … --watch 120` — the table every two minutes, until Ctrl+C.
 > - **Which boxes could I rent that pass my filters?** → [`vas offers`](#vas-offers) — GPU, CUDA, disk, reliability, upload, countries and hosts left out, cheapest first; no key needed, and the filters can live in a config file.
 > - **`no vast.ai API key found`?** → [The API key](#the-api-key) — where `vas` looks, and why there is no `--key` flag.
+> - **The GPU reads 100 % but the run is slow?** → the `POWER`, `CLOCK` and `OTHER` columns of `vas --ssh` — [the FAQ](docs/FAQ.md#when-a-rental-is-slow) says what they mean.
+> - **First rental?** → [From filters to a running box](docs/tutorials/from-filters-to-a-running-box.md), a walk through one rental, step by step.
 >
 > Every flag is in `vas --help`; how `vas` differs from Vast.ai's own CLI is in [`docs/comparison-with-vastai.md`](docs/comparison-with-vastai.md).
 
@@ -147,7 +149,7 @@ later. Both cards are capped by their hosts at 400 W against a 575 W default, an
 that no process of its own accounts for: see [the power cap](#the-power-cap-and-the-clock) and
 [someone else on the GPU](#someone-else-on-the-gpu) below. `--log PATH_OR_GLOB` fills the last column.)
 
-And with no key at all, the offers askesis rents by (captured 2026-10-16: a search today also names its time and ends with the line saying that vast.ai's answers vary):
+And with no key at all, the offers the author rents by (captured 2026-10-16: a search today also names its time and ends with the line saying that vast.ai's answers vary):
 
 ```text
 $ vas offers --gpu RTX_5090 --num-gpus 1 --cuda 12.8 --disk 50 --reliability 0.99 --inet-up 200 --exclude-country CN --exclude-host 362355 --verified --top 5
@@ -215,8 +217,8 @@ table, not shown half-read.
 <a id="someone-else-on-the-gpu"></a>
 
 **Someone else on the GPU.** On 2026-10-18 a rented RTX 5090 held 24,809 MiB while its only visible process, the
-training, held 8,720: about 16 GiB belonged to something outside the container (another tenant of the card,
-or the host), which also took roughly half of the GPU's time (`nvidia-smi pmon` gave the training 24-82 % of
+training, held 8,720: about 16 GiB belonged to something outside the container (what, and why, was not determined:
+another user of the card, or the host), which also took roughly half of the GPU's time (ten one-second `nvidia-smi pmon` samples gave the training 24-82 % of
 the SM, while the card read 100 %). Its twin on another machine, same workload, added up to the MiB. Under
 `--ssh`, the `OTHER` column (after `VRAM`) says that memory, per GPU (`15.7G`), or `-` when nothing notable is
 held (the driver's own few MiB are not shown: the threshold is 1 GiB) or the box did not say. It is the
@@ -258,6 +260,8 @@ the boxes it was asked to run (`intended_status`) that read otherwise (`offline`
 is not known from here, and a burn that leaves it out overstates the runway; the `~H h left` figure
 uses the larger burn. A stopped box is not counted, though vast.ai still bills its storage: `vas`
 does not show that cost yet.
+
+<a id="the-credit-history"></a>
 
 **The credit history.** `vas --credit-log credit.csv` appends one row per look to the file, so a watch (or a
 cron job running `vas` every hour) leaves a curve of the account's money behind:
@@ -470,6 +474,9 @@ rental is a budget, and how long the credit lasts at the current burn is the num
 
 | Doc | |
 |-----|---|
+| [From filters to a running box](docs/tutorials/from-filters-to-a-running-box.md) | A tutorial: from a filters file to a running box, and watching it until you are done |
+| [FAQ](docs/FAQ.md) | The questions that came up on real rentals: the key and the files, why the offer list changes, the money line, what `--ssh` reads, a slow rental (power cap, someone else on the GPU), rate limits |
+| [Roadmap](docs/roadmap-v0.2.0.md) | What 0.2.0 contains and does not, the known limits, and the candidates for later (a text interface, a measured upload, ...) |
 | [`vas` and `vastai`](docs/comparison-with-vastai.md) | Vast.ai's own CLI/SDK and `vas`, compared row by row: scope, read-only by design, the GPU read on the box, the runway, the offer search, key hygiene, redirects, the `ssh` port rule |
 | [Dogfooding, 2026-10-16](https://github.com/mi-for-the-rust-of-us/vast-skopos/blob/main/docs/dogfooding/2026-10-16.md) | The first real rental (Me35, three RTX 5090s): what broke in the first minute, what helped, the next features, and `vas offers` probed and built for the next rental |
 | [Dogfooding, 2026-10-17](https://github.com/mi-for-the-rust-of-us/vast-skopos/blob/main/docs/dogfooding/2026-10-17.md) | `vas offers`' first rental (Me36, five 5090s for three slots): what worked, seven notes for the next versions (offers that vanish, a burn line that can mislead, machine ids, a compact mode, labels, a two-size uplink measure for `vas check`, a credit history) |

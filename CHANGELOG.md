@@ -88,6 +88,12 @@ All notable changes to this project are documented here. The format is based on
   named and ends the run; a `--watch` leaves at least the reset between two looks. The library never
   sleeps or retries.
 
+- Documentation for people, not only for the code: [`docs/FAQ.md`](docs/FAQ.md) (the questions that came up on
+  real rentals), [`docs/tutorials/from-filters-to-a-running-box.md`](docs/tutorials/from-filters-to-a-running-box.md)
+  (one rental, step by step, with its safety warnings) and [`docs/roadmap-v0.2.0.md`](docs/roadmap-v0.2.0.md) (what
+  0.2.0 contains and does not, the known limits, the candidates for later). Each claim in the first two was checked
+  against the code and the tests, and the tutorial was read as a newcomer would.
+
 ### Changed
 
 - The `--watch` floor, 30 s for both watches until now (a guess made before vast.ai's limits were measured), is
