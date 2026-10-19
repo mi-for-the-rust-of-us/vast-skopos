@@ -40,10 +40,11 @@ read-only tool that reads the vast.ai API with your own key, and your boxes over
 ## Install
 
 ```sh
-cargo install vast-skopos            # installs the `vas` binary
+cargo install vast-skopos --locked   # installs the `vas` binary
 ```
 
-From a clone: `cargo install --path . --locked`. As a library, without the CLI (no `clap`):
+`--locked` uses the dependency versions the crate was tested with (without it, `cargo install` resolves
+the newest compatible ones). From a clone: `cargo install --path . --locked`. As a library, without the CLI (no `clap`):
 
 ```toml
 [dependencies]

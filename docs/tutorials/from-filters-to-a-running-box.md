@@ -32,12 +32,12 @@ have a PowerShell spelling where it differs.
 ## 1. Install
 
 ```sh
-cargo install vast-skopos
+cargo install vast-skopos --locked
 vas --help
 ```
 
 `vas --help` lists the flags of the lookout; `vas offers --help` lists those of the offer search. To update,
-run `cargo install vast-skopos --force`; to remove it, `cargo uninstall vast-skopos` (your key file and your
+run `cargo install vast-skopos --locked --force`; to remove it, `cargo uninstall vast-skopos` (your key file and your
 filters file are not touched). `vas` prints what you asked for on **stdout** and its notices (a wait, a
 warning, an error) on **stderr**.
 
