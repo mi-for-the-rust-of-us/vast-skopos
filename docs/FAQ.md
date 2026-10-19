@@ -204,7 +204,9 @@ no endpoint, is not probed (`-`).
 
 On 2026-10-15 it read 0 % on boxes running at 97-99 %. `vas` shows what `nvidia-smi` says on the box, and
 not the API's figure. (One `nvidia-smi` sample is not a diagnosis either: it has read 100 % with 0 MiB used
-while nothing held the card, which is why a watch keeps a short history in `TREND`.)
+while nothing held the card, which is why a watch keeps a short history in `TREND`. Seen again on 2026-10-19 on
+an idle rented RTX 5090: 100 %, 2 MiB used, 129 W, 2,925 MHz, and no process listed by `nvidia-smi pmon`. A
+real load draws far more power and holds memory; read `VRAM` and `POWER` beside `GPU%`.)
 
 ### What does `--log` show?
 
