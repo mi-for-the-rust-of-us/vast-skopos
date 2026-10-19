@@ -277,12 +277,13 @@ pub fn log_cell(log: Option<&LogReading>) -> String {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub struct TableOptions<'a> {
-    /// Show the probe columns (`GPU% (ssh)`, `VRAM`, `LAST LOG / SSH ERROR`), even when no box was
-    /// probed.
+    /// Show the probe columns (`GPU% (ssh)`, `VRAM`, `OTHER`, `POWER`, `CLOCK`, `LAST LOG / SSH
+    /// ERROR`), even when no box was probed.
     pub ssh: bool,
     /// Show each box's machine id and host id.
     pub wide: bool,
-    /// The samples a watch has kept: adds a `TREND` column after `VRAM` (with the probe columns).
+    /// The samples a watch has kept: adds `TREND` and `CLOCK TREND` columns after `CLOCK` (with the
+    /// probe columns), and prints what changed in the boxes' power under the money line.
     pub trend: Option<&'a Trend>,
 }
 
@@ -297,8 +298,9 @@ impl<'a> TableOptions<'a> {
         }
     }
 
-    /// With the last GPU samples of each box (see [`Trend`]), as a `TREND` column after `VRAM`;
-    /// it shows with the probe columns.
+    /// With the last GPU samples of each box (see [`Trend`]), as `TREND` and `CLOCK TREND` columns
+    /// after `CLOCK`, and the changes the last look found under the money line; the columns show
+    /// with the probe columns.
     #[must_use]
     pub const fn trend(mut self, trend: &'a Trend) -> Self {
         self.trend = Some(trend);

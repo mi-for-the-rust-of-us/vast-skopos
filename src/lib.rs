@@ -26,8 +26,9 @@
 //! - [`render`]: the tables;
 //! - [`runway`]: the credit, the burn and the hours they last, as the money line and `--compact` read them;
 //! - [`compact`]: the same readings as JSON Lines, for scripts and monitors;
-//! - [`trend`]: the last GPU utilisation samples of each box, kept by a watch;
-//! - [`creditlog`]: the credit history, one CSV row per look, in the file `--credit-log` names.
+//! - [`trend`]: the last GPU utilisation and clock samples of each box, and what changed in their power, kept by a watch;
+//! - [`creditlog`]: the credit history, one CSV row per look, in the file `--credit-log` names;
+//! - [`error`]: [`SkoposError`] and the [`Result`] alias every fallible call returns.
 
 pub mod api;
 pub mod compact;

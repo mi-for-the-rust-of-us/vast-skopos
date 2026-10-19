@@ -45,7 +45,7 @@ All notable changes to this project are documented here. The format is based on
   `offline` shows as a credit that falls slower than the burn. Append-only, only when asked, never the key;
   a file that cannot be written is said once and the look goes on. The first file this crate writes:
   `creditlog::CreditLog` and a new rule in CONVENTIONS.md ("When Writing a File").
-- The power cap, under `vas --ssh`: a `POWER` column after `VRAM` (`400/575W+power_cap`: the limit set on
+- The power cap, under `vas --ssh`: a `POWER` column after `OTHER` (`400/575W+power_cap`: the limit set on
   the card, the default when it is higher, and what holds the clocks down: `power_cap`, `thermal`, `slowdown`,
   `power_brake`) and, in `--compact`, per GPU `power_w`, `power_limit_w`, `power_default_w`, `sm_mhz`,
   `sm_max_mhz` and `throttle`. Seen on two rented RTX 5090s: 400 W against the 575 W default, SM clock held
@@ -72,8 +72,7 @@ All notable changes to this project are documented here. The format is based on
   `record` found).
 - Every `vas offers` search ends with a line saying that vast.ai's answers vary from one search to the
   next (a watch says it under its first look, `--changes` does not): `render::offers_variance_note`.
-
-- The GPU trend: under `vas --ssh --watch N` the table gains a `TREND` column after `VRAM`, the last six
+- The GPU trend: under `vas --ssh --watch N` the table gains a `TREND` column after `CLOCK`, the last six
   samples of each box oldest first (`97 99 0 98 99 99`: the mean utilisation of its GPUs), and `--compact`
   carries them as `probe.util_trend` (`null` in a one-shot). One `nvidia-smi` sample is not a diagnosis: it has
   read 100 % with 0 MiB used while nothing held the card. In memory only; a failed probe adds nothing and keeps
@@ -196,6 +195,12 @@ All notable changes to this project are documented here. The format is based on
 - `--min-days` is capped at 36500 (a hundred years): `1e305` days overflowed to infinity and was sent to the
   server as `null`.
 - `RateLimit::from_headers` is `#[must_use]`.
+- The README says what is true: the probe columns' order (`GPU% (ssh)`, `VRAM`, `OTHER`, `POWER`, `CLOCK`, then
+  `TREND` and `CLOCK TREND` in a watch), a "Try it" sample with those columns, the `--compact` example with
+  every GPU key and the `event` kind, `kind` as `box`, `event` or `money`, and that the lookout prints no
+  `since the last successful look` note. The module list of the crate docs names `error`, and the docs of
+  `TableOptions` name every probe column. A test now compares the README's sample header, its probe-column
+  order and its `--compact` example with what the code prints, so they cannot drift again unseen.
 - `vas` waits out a short budget between two pages of the instances list (said on stderr:
   `waiting 1 s before the next page of instances`), where it used to fail the look with a 429 on the second
   page; a longer one ends the look like any other rate limit.

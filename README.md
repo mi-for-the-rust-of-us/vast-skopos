@@ -9,7 +9,7 @@
 **σκοπός** — *Your rented vast.ai boxes, watched.* **Not affiliated with vast.ai:** an independent,
 read-only tool that reads the vast.ai API with your own key, and your boxes over your own `ssh`.
 
-> 🆕 **`0.1.0` watched its first rental, then learned to name the run it reads.** `vas` watched askesis's Me35 rental (three RTX 5090s, six runs, 2026-10-16); its first minutes fixed what that rental found: the account endpoint's `301` (no redirect is ever followed, so the canonical `/api/v0/users/current/` is requested) and the `ssh` proxy port of Jupyter-launched boxes (`ssh_port + 1`, the dashboard's own rule). For Me36's four sequential runs per box, `--log` now names the run it read (`me36_ab_s0_d1/train.log: …`) and says `(no file matches)`, `(not a file)`, `(empty)` or `?` where it once printed a bare `-`; a key saved by Notepad as `vast_api_key.txt` is named in the error. And before the next rental, **`vas offers`** lists the offers that pass your renting filters, keyless, with every constraint re-checked on each row and vast.ai's 64-row cap said aloud. See [`CHANGELOG.md`](CHANGELOG.md) and [`docs/dogfooding/2026-10-16.md`](https://github.com/mi-for-the-rust-of-us/vast-skopos/blob/main/docs/dogfooding/2026-10-16.md).
+> 🆕 **`0.2.0` shows what a dashboard does not.** On two rented RTX 5090s, `vas --ssh` found a power limit of 400 W against the card's 575 W default (the SM clock held at about 1,700 of 3,090 MHz while the card read 100 %), and, on one of them, about 16 GiB of GPU memory and half of the GPU's time held by something outside the container. It now shows `POWER`, `CLOCK` and `OTHER` columns and, in a watch, says when they change; `--credit-log` keeps the credit as a curve; `vas offers --watch` reads machines over several looks (vast.ai's search answers a flickering sample) with a `SEEN` column; `--compact` prints JSON Lines; and vast.ai's rate limits are read and obeyed. See [`CHANGELOG.md`](CHANGELOG.md) and [`docs/dogfooding/2026-10-18.md`](https://github.com/mi-for-the-rust-of-us/vast-skopos/blob/main/docs/dogfooding/2026-10-18.md).
 
 ## Table of Contents
 
@@ -135,14 +135,19 @@ table of a watch.
 With your key where the `vastai` CLI keeps it ([The API key](#the-api-key)):
 
 ```text
-$ vas --ssh --log '/root/runs/*/train.log'
-ID        LABEL  GPU          WHERE  STATUS   $/H    AGE    COST~  SSH                 GPU% (ssh)  VRAM       LAST LOG / SSH ERROR
-56053340  -      1x RTX 5090  US     running  0.643  2h 0m  1.29   ssh4.vast.ai:23484  98%         29.4/32G   s0/train.log: [ 796.4s] layer 4: ...
-56053638  -      1x RTX 5090  US     exited   0.608  10m    0.10   ssh4.vast.ai:37038  -           -          -
-credit $5.94 | burn $0.643/h over 1 running | ~9.2 h left at this rate
+$ vas --ssh
+ID        LABEL  GPU          WHERE              STATUS   $/H    AGE     COST~  SSH                 GPU% (ssh)  VRAM      OTHER  POWER               CLOCK      LAST LOG / SSH ERROR
+56533728  -      1x RTX 5090  United States, US  running  0.491  4h 26m  2.18   ssh5.vast.ai:24016  100%        24.2/32G  15.7G  400/575W+power_cap  1717/3090  -
+56558627  -      1x RTX 5090  Texas, US          running  0.704  51m     0.61   ssh2.vast.ai:20294  99%         8.6/32G   -      400/575W+power_cap  2100/3090  -
+credit $9.33 | burn $1.195/h over 2 running | ~7.8 h left at this rate
 ```
 
-And with no key at all, the offers askesis rents by (captured 2026-10-16, 20:34, before the footer named the time of the search):
+(Two rented RTX 5090s, 2026-10-18, one look of a watch; the `OTHER` of the first box is its reading minutes
+later. Both cards are capped by their hosts at 400 W against a 575 W default, and the first holds 15.7 GiB
+that no process of its own accounts for: see [the power cap](#the-power-cap-and-the-clock) and
+[someone else on the GPU](#someone-else-on-the-gpu) below. `--log PATH_OR_GLOB` fills the last column.)
+
+And with no key at all, the offers askesis rents by (captured 2026-10-16: a search today also names its time and ends with the line saying that vast.ai's answers vary):
 
 ```text
 $ vas offers --gpu RTX_5090 --num-gpus 1 --cuda 12.8 --disk 50 --reliability 0.99 --inet-up 200 --exclude-country CN --exclude-host 362355 --verified --top 5
@@ -179,23 +184,30 @@ vast.ai's `ssh` proxies are reached by port.
 `COST~` is an estimate: today's `$/h` times the hours since creation. vast.ai bills storage while an
 instance is stopped and prices can change; the invoice is the reference.
 
+**The probe columns.** Under `--ssh`, in order: `GPU% (ssh)`, `VRAM`, `OTHER`, `POWER`, `CLOCK`, then, under
+`--watch`, `TREND` and `CLOCK TREND`, and `LAST LOG / SSH ERROR` last; each is explained below.
+
 **The GPU trend.** One `nvidia-smi` sample is not a diagnosis (it has read 100 % with 0 MiB used while
-nothing held the card). Under `vas --ssh --watch N`, the table gains a `TREND` column after `VRAM`: the
+nothing held the card). Under `vas --ssh --watch N`, the table gains a `TREND` column after `CLOCK`: the
 last six samples of each box, oldest first, as the mean utilisation of its GPUs (`97 99 0 98 99 99`),
 kept in memory for the length of the watch; `--compact` carries the same numbers as `probe.util_trend`. A
 probe that failed adds nothing and keeps the history (one dropped `ssh` is not the run stopping), and a box
 that stops or leaves is forgotten. A single look has no history, and no such column.
 
+<a id="the-power-cap-and-the-clock"></a>
+
 **The power cap.** A host can set a card's power limit below what it ships with. Seen on 2026-10-18 on two
 rented RTX 5090s: a limit of 400 W against the 575 W default, `SW Power Cap: Active`, and the SM clock held
 at about 1,700 MHz of a possible 3,090: the run goes slower than the model suggests, and the dashboard's
-utilisation (100 %) does not show it. Under `--ssh`, the `POWER` column (after `VRAM`) says the limit and
+utilisation (100 %) does not show it. Under `--ssh`, the `POWER` column (after `OTHER`) says the limit and
 the default when the limit is lower, and what holds the clocks down: `400/575W+power_cap`; `575W` is a card
 at its default and free. The words are `power_cap`, `thermal`, `slowdown` and `power_brake`; an idle GPU,
 application clocks and sync boost are not restraints and are not shown. `--compact` carries, per GPU,
 `power_w` (the draw now), `power_limit_w`, `power_default_w`, `sm_mhz`, `sm_max_mhz` and `throttle` (a list
 of those words: empty when nothing holds the card, `null` when the box did not say). The power is asked in a
 second `nvidia-smi` query, so a driver that lacks a field costs the power cells (`-`) and nothing else.
+
+<a id="someone-else-on-the-gpu"></a>
 
 **Someone else on the GPU.** On 2026-10-18 a rented RTX 5090 held 24,809 MiB while its only visible process, the
 training, held 8,720: about 16 GiB belonged to something outside the container (another tenant of the card,
@@ -204,7 +216,9 @@ the SM, while the card read 100 %). Its twin on another machine, same workload, 
 `--ssh`, the `OTHER` column (after `VRAM`) says that memory, per GPU (`15.7G`), or `-` when nothing notable is
 held (the driver's own few MiB are not shown: the threshold is 1 GiB) or the box did not say. It is the
 device's memory in use minus what the compute processes the box lists hold, so nothing is concluded unless
-that list was read whole (a figure that is not a number, or a missing bus id, gives `-`). Under `--watch`, a
+that list was read whole: a figure that is not a number, a missing bus id, or NO process listed on the GPU
+gives `-` (a run that has just restarted, or a container that cannot see its own processes, lists none while
+the memory is still its own; the gap is then unknown, not "all someone else's"). Under `--watch`, a
 line says when it appears or goes: `! 56533728 gpu 0: memory held outside the container 0.0 -> 15.7 GiB`.
 `--compact` carries the raw gap as `other_mem_mib` per GPU (`null` when unknown) and the change as an `event`
 object (`other_mib_was`, `other_mib_now`). `vas` cannot name the process (it is outside the box): report the
@@ -258,21 +272,25 @@ the rest of the run (on Windows, a file open in Excel is such a file: close it, 
 
 ### `vas --compact`: JSON Lines
 
-One object per box, then one for the money, each on one line, each with a `kind` (`box` or `money`) and
-`at` (Unix seconds, the same on every line of a look), so a line read alone says what it is and when.
-The keys of each object never change: what is not known is `null`, not a missing key. Keys come out in alphabetical order, as `serde_json` writes them by default (`kind` is not first: filter on it with
+One object per box, then (under `--ssh --watch`) one per change of a GPU's power, then one for the money,
+each on one line, each with a `kind` (`box`, `event` or `money`) and `at` (Unix seconds, the same on every
+line of a look), so a line read alone says what it is and when; the money object closes a look. The
+top-level keys of each `kind` never change: what is not known is `null`, not a missing key (`probe` is
+described below: it is `null`, an error object, or the readings). Keys come out in alphabetical order, as `serde_json` writes them by default (`kind` is not first: filter on it with
 `jq` or `grep '"kind":"money"'`). Money is rounded to ten-thousandths of a dollar (`credit`, `burn`, `cost`, `dph`):
 about two seconds of a $0.19/h box, and vast.ai sends the credit with float noise (`12.059765171599793`).
 
 ```text
 $ vas --compact --ssh --log '/root/runs/*/train.log'
-{"age_s":8100,"at":1792250000,"cost":2.025,"dph":0.9,"gpu_name":"RTX 5090","host_id":406325,"id":56362434,"intended":"running","kind":"box","label":"me36 box 2","machine_id":100682,"num_gpus":1,"probe":{"gpus":[{"index":0,"mem_total_mib":32607,"mem_used_mib":29400,"util_pct":99}],"log":{"file":"/root/runs/s0/train.log","line":"e41 loss 0.3","state":"line"},"util_trend":null},"ssh_host":"ssh6.vast.ai","ssh_port":36000,"status":"running","where":"South Korea, KR"}
+{"age_s":8100,"at":1792250000,"cost":2.025,"dph":0.9,"gpu_name":"RTX 5090","host_id":406325,"id":56362434,"intended":"running","kind":"box","label":"me36 box 2","machine_id":100682,"num_gpus":1,"probe":{"clock_trend":null,"gpus":[{"index":0,"mem_total_mib":32607,"mem_used_mib":29400,"other_mem_mib":10,"power_default_w":575,"power_limit_w":575,"power_w":560,"sm_max_mhz":3090,"sm_mhz":2900,"throttle":[],"util_pct":99}],"log":{"file":"/root/runs/s0/train.log","line":"e41 loss 0.3","state":"line"},"util_trend":null},"ssh_host":"ssh6.vast.ai","ssh_port":36000,"status":"running","where":"South Korea, KR"}
 {"at":1792250000,"burn":0.9,"credit":12.93,"hours_left":14.4,"kind":"money","running":1,"unsure":{}}
 ```
 
 `probe` is `null` for a box not probed (no `--ssh`, or not running), `{"error": "..."}` when the probe failed,
-else `gpus`, `log` and `util_trend` (`null` in a one-shot, else the last GPU samples of a `--watch`, see
-below); `log` is `null` without `--log`, else an object whose `state` is `line`, `empty`,
+else `gpus` (per GPU: `util_pct`, `mem_used_mib`, `mem_total_mib`, `other_mem_mib`, `power_w`,
+`power_limit_w`, `power_default_w`, `sm_mhz`, `sm_max_mhz` and `throttle`, each `null` when the box did not
+say), `log`, `util_trend` and `clock_trend` (`null` in a one-shot, else the last GPU samples of a `--watch`,
+see above); `log` is `null` without `--log`, else an object whose `state` is `line`, `empty`,
 `not_a_file`, `no_match` or `unreadable`. `unsure` counts, by state, the boxes meant to run that read
 otherwise (the burn, above). With `--ssh --watch N`, a change of a GPU's power limit or throttle reasons is an
 `event` object, between the boxes and the money (see the power cap, above). With `--watch N`, a look is printed every N seconds with no separator line (the table form of `--watch`
@@ -367,7 +385,8 @@ A few details keep the notes honest:
   offer crossing that line, and the note says so.
 - A search that fails ends a watch whose FIRST look failed (a wrong `VAST_URL` or key would otherwise loop on
   stderr forever); after one look has succeeded, a failure is only said on stderr, and the next look reads
-  `since the last successful look`. The lookout's `vas --watch` does the same.
+  `since the last successful look`. The lookout's `vas --watch` shares the first two rules (a failed first
+  look ends it, a failure after a success is said and the watch goes on) but prints no such note.
 - A `--watch` under the floor (10 s for `vas`, 20 s for `vas offers`) is raised to it, and `vas` says so on
   stderr. The floor is a courtesy to the service: vast.ai's own limits are read and obeyed whatever it says.
 - A table every few seconds scrolls past unread in a terminal: for a person, `--changes` (one line per look and
