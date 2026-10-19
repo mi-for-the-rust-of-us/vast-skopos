@@ -1,6 +1,8 @@
 # vast-skopos
 
 [![CI](https://github.com/mi-for-the-rust-of-us/vast-skopos/actions/workflows/ci.yml/badge.svg)](https://github.com/mi-for-the-rust-of-us/vast-skopos/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/vast-skopos.svg)](https://crates.io/crates/vast-skopos)
+[![docs.rs](https://docs.rs/vast-skopos/badge.svg)](https://docs.rs/vast-skopos)
 [![MSRV](https://img.shields.io/badge/MSRV-1.88-blue.svg)](https://www.rust-lang.org)
 [![license](https://img.shields.io/badge/license-MIT_OR_Apache--2.0-blue.svg)](#license)
 [![unsafe: forbid](https://img.shields.io/badge/unsafe-forbid-success.svg)](https://github.com/rust-secure-code/safety-dance/)
