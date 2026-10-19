@@ -6,7 +6,7 @@ use std::fmt::Write as _;
 use crate::instance::{Account, Instance, shortened, whole_secs};
 use crate::market::{LEARNING_LOOKS, MarketWatch, OfferKey};
 use crate::offer::{OFFER_CAP, Offer, OfferChanges, OfferPage, OfferQuery, OfferSort};
-use crate::probe::{LogReading, Probe, ProbeOutcome, outcome_at};
+use crate::probe::{GpuReading, LogReading, Probe, ProbeOutcome, outcome_at};
 use crate::runway::Runway;
 use crate::trend::Trend;
 
@@ -119,19 +119,9 @@ fn status(i: &Instance) -> String {
     }
 }
 
-/// The cell of memory held by processes outside the container, from a probe: each GPU's
-/// (`16.1G`), or `-` when nothing notable is held or the box did not say.
-fn other_cell(probe: &Probe) -> String {
-    let cells: Vec<String> = probe
-        .gpus
-        .iter()
-        .map(|g| {
-            g.other_user_mib().map_or_else(
-                || String::from("-"),
-                |mib| format!("{:.1}G", mib_to_gib(mib)),
-            )
-        })
-        .collect();
+/// One cell per GPU of `probe`, built by `cell` and joined by spaces; `-` for a probe with none.
+fn per_gpu(probe: &Probe, cell: impl Fn(&GpuReading) -> String) -> String {
+    let cells: Vec<String> = probe.gpus.iter().map(cell).collect();
     if cells.is_empty() {
         String::from("-")
     } else {
@@ -139,52 +129,45 @@ fn other_cell(probe: &Probe) -> String {
     }
 }
 
+/// The cell of memory held by processes outside the container, from a probe: each GPU's
+/// (`16.1G`), or `-` when nothing notable is held or the box did not say.
+fn other_cell(probe: &Probe) -> String {
+    per_gpu(probe, |g| {
+        g.other_user_mib().map_or_else(
+            || String::from("-"),
+            |mib| format!("{:.1}G", mib_to_gib(mib)),
+        )
+    })
+}
+
 /// The power cell from a probe: the limit set on each GPU, with the default when it is lower
-/// (`400/575W`), and what holds its clocks down (`400/575W+power_cap`); `-` for a GPU whose limit
-/// the box did not give.
+/// (`400/575W`), and what holds its clocks down (`400/575W+power_cap`).
+///
+/// A GPU whose limit the box did not give shows `-` for it, and still shows what holds it down
+/// (`-+thermal`): a slowdown must not hide behind a missing limit.
 fn power_cell(probe: &Probe) -> String {
-    let cells: Vec<String> = probe
-        .gpus
-        .iter()
-        .map(|g| {
-            let Some(limit) = g.power_limit_w else {
-                return String::from("-");
-            };
-            let mut cell = match g.power_default_w {
-                Some(default) if default > limit => format!("{limit}/{default}W"),
-                _ => format!("{limit}W"),
-            };
-            for word in g.throttle_words().unwrap_or_default() {
-                cell.push('+');
-                cell.push_str(word);
-            }
-            cell
-        })
-        .collect();
-    if cells.is_empty() {
-        String::from("-")
-    } else {
-        cells.join(" ")
-    }
+    per_gpu(probe, |g| {
+        let mut cell = match (g.power_limit_w, g.power_default_w) {
+            (Some(limit), Some(default)) if default > limit => format!("{limit}/{default}W"),
+            (Some(limit), _) => format!("{limit}W"),
+            (None, _) => String::from("-"),
+        };
+        for word in g.throttle_words().unwrap_or_default() {
+            cell.push('+');
+            cell.push_str(word);
+        }
+        cell
+    })
 }
 
 /// The clock cell from a probe: each GPU's SM clock now over the highest it can reach, in MHz
 /// (`1702/3090`); `-` for a GPU whose clock the box did not give.
 fn clock_cell(probe: &Probe) -> String {
-    let cells: Vec<String> = probe
-        .gpus
-        .iter()
-        .map(|g| match (g.sm_mhz, g.sm_max_mhz) {
-            (Some(now), Some(max)) => format!("{now}/{max}"),
-            (Some(now), None) => now.to_string(),
-            (None, _) => String::from("-"),
-        })
-        .collect();
-    if cells.is_empty() {
-        String::from("-")
-    } else {
-        cells.join(" ")
-    }
+    per_gpu(probe, |g| match (g.sm_mhz, g.sm_max_mhz) {
+        (Some(now), Some(max)) => format!("{now}/{max}"),
+        (Some(now), None) => now.to_string(),
+        (None, _) => String::from("-"),
+    })
 }
 
 /// The GPU-utilisation and memory cells from a probe.

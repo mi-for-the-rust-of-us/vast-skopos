@@ -339,3 +339,30 @@ fn a_watch_table_shows_the_clock_history_beside_the_utilisation_history() {
     );
     assert!(row.contains(&"1700/3090"), "{text}");
 }
+
+#[test]
+fn a_throttle_mask_is_read_with_a_lower_or_upper_case_prefix_and_never_a_doubled_one() {
+    let mask = |text: &str| {
+        parse_output(&format!(
+            "0, 1, 1, 2\n---vas-power---\n0, 1, 400, 575, 1, 2, {text}\n"
+        ))
+        .gpus[0]
+            .throttle_mask
+    };
+    assert_eq!(mask("0x4"), Some(4));
+    assert_eq!(mask("0X4"), Some(4));
+    assert_eq!(mask("4"), Some(4));
+    assert_eq!(mask("0x0x4"), None, "a doubled prefix is not a mask");
+    assert_eq!(mask("0x"), None);
+}
+
+#[test]
+fn a_throttle_is_shown_even_when_the_limit_is_not_known() {
+    // `[N/A]` limit, thermal slowdown: the table must not hide what `--compact` reports.
+    let text = "0, 1, 1, 2\n---vas-power---\n0, 1, [N/A], [N/A], 1, 2, 0x20\n";
+    assert_eq!(power_cell(text), "-+thermal");
+    assert_eq!(
+        power_cell("0, 1, 1, 2\n---vas-power---\n0, 1, [N/A], 575, 1, 2, 0x0\n"),
+        "-"
+    );
+}

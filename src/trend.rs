@@ -126,9 +126,11 @@ pub struct Trend {
 
 /// The mean of the GPUs' utilisation, rounded; `None` without a GPU reading.
 fn mean_util(utils: &[u32]) -> Option<u32> {
-    let count = u32::try_from(utils.len()).ok().filter(|n| *n > 0)?;
-    let sum: u32 = utils.iter().sum();
-    Some((sum + count / 2) / count)
+    let count = u64::try_from(utils.len()).ok().filter(|n| *n > 0)?;
+    // A box is untrusted: readings are summed in `u64` (a `u32` sum of two saturated readings
+    // would overflow), and the rounded mean of `u32`s always fits back.
+    let sum: u64 = utils.iter().map(|&u| u64::from(u)).sum();
+    u32::try_from((sum + count / 2) / count).ok()
 }
 
 /// Compares `gpu` with what `known` holds of it and remembers the reading: the change, if the

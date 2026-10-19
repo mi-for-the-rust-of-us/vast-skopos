@@ -133,8 +133,8 @@ struct OffersArgs {
     /// The highest price, in $/h, storage included.
     #[arg(long, value_name = "DOLLARS", value_parser = positive)]
     max_price: Option<f64>,
-    /// The shortest acceptable maximum rental, in days.
-    #[arg(long, value_name = "DAYS", value_parser = positive)]
+    /// The shortest acceptable maximum rental, in days (at most 36500: a hundred years).
+    #[arg(long, value_name = "DAYS", value_parser = days)]
     min_days: Option<f64>,
     /// Only machines vast.ai has verified.
     #[arg(long, overrides_with = "no_verified")]
@@ -236,6 +236,17 @@ fn positive(text: &str) -> Result<f64, String> {
         Ok(v)
     } else {
         Err(String::from("must be above 0"))
+    }
+}
+
+/// A number of days above 0 and at most a hundred years: more would overflow the seconds sent to
+/// the server (`1e305` days is not a rental).
+fn days(text: &str) -> Result<f64, String> {
+    let v = positive(text)?;
+    if v <= 36_500.0 {
+        Ok(v)
+    } else {
+        Err(String::from("must be at most 36500 (a hundred years)"))
     }
 }
 

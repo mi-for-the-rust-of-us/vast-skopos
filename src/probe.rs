@@ -13,7 +13,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use crate::error::{Result, SkoposError};
-use crate::instance::{Instance, shortened};
+use crate::instance::{Instance, is_hidden, shortened};
 
 /// One GPU's reading.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -296,7 +296,7 @@ pub fn remote_command(log: Option<&str>) -> String {
 pub fn strip(text: &str) -> String {
     text.rsplit('\r')
         .map(|segment| {
-            let kept: String = segment.chars().filter(|c| !c.is_control()).collect();
+            let kept: String = segment.chars().filter(|&c| !is_hidden(c)).collect();
             // BORROW: explicit to_owned -- the trimmed segment is returned owned
             kept.trim().to_owned()
         })
@@ -357,8 +357,8 @@ fn bus_of(buses: &str, index: u32) -> Option<String> {
 
 /// Reads the apps section into each GPU's [`GpuReading::other_mem_mib`]: the device's memory in use
 /// minus the sum of what the compute processes hold on its bus id. Nothing is concluded unless the
-/// processes' query ended with its success line, the GPU's bus id is known, and every figure of
-/// that GPU's processes parses (`[N/A]` is not zero).
+/// processes' query ended with its success line, the GPU's bus id is known, at least one process
+/// is listed on it, and every figure of that GPU's processes parses (`[N/A]` is not zero).
 fn merge_apps(gpus: &mut [GpuReading], apps: &str) {
     let Some((buses, by_gpu)) = apps.split_once(APPS_BY_GPU) else {
         return;
@@ -372,6 +372,7 @@ fn merge_apps(gpus: &mut [GpuReading], apps: &str) {
         };
         let mut accounted: u64 = 0;
         let mut complete = true;
+        let mut listed = false;
         for line in by_gpu.lines() {
             let Some((on, memory)) = line.split_once(',') else {
                 continue;
@@ -379,12 +380,17 @@ fn merge_apps(gpus: &mut [GpuReading], apps: &str) {
             if on.trim().to_lowercase() != bus {
                 continue;
             }
+            listed = true;
             match memory.trim().parse::<u64>() {
                 Ok(mib) => accounted = accounted.saturating_add(mib),
                 Err(_) => complete = false,
             }
         }
-        gpu.other_mem_mib = complete.then(|| gpu.mem_used_mib.saturating_sub(accounted));
+        // A GPU with NO process listed is unknown, not "everyone else's": a run that has just
+        // restarted, or a box whose container cannot see its own processes, lists none while the
+        // memory is still its own.
+        gpu.other_mem_mib =
+            (complete && listed).then(|| gpu.mem_used_mib.saturating_sub(accounted));
     }
 }
 
@@ -419,9 +425,13 @@ fn merge_power(gpus: &mut [GpuReading], power: &str) {
         gpu.power_default_w = f.next().and_then(rounded_u32);
         gpu.sm_mhz = f.next().and_then(rounded_u32);
         gpu.sm_max_mhz = f.next().and_then(rounded_u32);
-        gpu.throttle_mask = f
-            .next()
-            .and_then(|mask| u64::from_str_radix(mask.trim_start_matches("0x"), 16).ok());
+        gpu.throttle_mask = f.next().and_then(|mask| {
+            let digits = mask
+                .strip_prefix("0x")
+                .or_else(|| mask.strip_prefix("0X"))
+                .unwrap_or(mask);
+            u64::from_str_radix(digits, 16).ok()
+        });
     }
 }
 

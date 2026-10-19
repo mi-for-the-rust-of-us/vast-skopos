@@ -119,7 +119,7 @@ All notable changes to this project are documented here. The format is based on
   during Me36, was left out of the burn although it may still bill, which overstated the runway.
   `Instance::is_meant_to_run`. A box being stopped (running, meant to stop) is still counted as
   running; a stopped one is not counted.
-- BREAKING for library users (0.x: a minor release), settled together while 0.1.0 is a day old:
+- BREAKING for library users (0.x: a minor release), settled together just after 0.1.0:
   - `render::table(instances, probes, account, options, now)`: 0.1.0's `with_ssh` boolean (the order was
     `instances, probes, with_ssh, account, now`) became `TableOptions::new().ssh(..).wide(..)`, placed
     after `account`, and the probes a `&[ProbeOutcome]` (new alias of `Option<Result<Probe>>`).
@@ -147,7 +147,8 @@ All notable changes to this project are documented here. The format is based on
 - The note under a watch's table counts the new and repriced offers that the table does not show:
   `1 new (1 below the table)`, where it used to count them with no mark on screen to match.
 - `--changes` lists every change; only the note under a table caps its gone offers at ten.
-- A `--watch` shorter than the 30 s floor is raised to it, and `vas` says so on stderr.
+- A `--watch` shorter than its floor is raised to it, and `vas` says so on stderr (the floor is 10 s for
+  `vas --watch` and 20 s for `vas offers --watch`, see Changed).
 - An offer id answered twice in one search is one offer (the row that sorts first), not two rows marked and
   counted twice.
 - A credit or burn that rounds to zero no longer prints as `$-0.00` or `-0.0`, and a burn too small to give a
@@ -160,6 +161,41 @@ All notable changes to this project are documented here. The format is based on
   Bash), `HOME` elsewhere.
 - A `VAST_URL` that names this machine is never sent through the proxy of the environment: the tests'
   mock server failed behind an HTTP proxy.
+
+(Found by a second, five-part audit of the whole crate, 2026-10-19.)
+
+- A garbled or hostile box can no longer panic a watch: the mean of the GPUs' utilisation or clock was summed
+  in `u32`, so two saturated readings (`4294967295`, or `1e30` W read as `u32::MAX`) overflowed it. It sums in
+  `u64` now.
+- Text from a box no longer carries characters that hide or reorder what is shown. The probe's log lines, the
+  log's file name and `ssh`'s error line were stripped of control characters only, where the API's text lost
+  the invisible ones too, so a log line with a right-to-left override could reorder a row. All of it now goes
+  through `is_hidden`, which also learned the soft hyphen, the combining grapheme joiner, the deprecated format
+  characters (U+206A-206F), variation selectors, interlinear annotations and the tag characters (U+E0000-E007F)
+  that can spell a hidden message.
+- `OTHER` no longer cries wolf: a GPU with NO process listed is unknown (`-`), not "all of its memory is
+  someone else's". A run that has just restarted, or a box whose container cannot see its own processes, lists
+  none while the memory is still its own, and a watch would have raised a false "memory held outside the
+  container" line.
+- The instances list no longer spends a request that its budget will refuse: before a second page it checks
+  the budget, and `Client::instances_with(between_pages)` lets the caller wait the window out (the library
+  still never sleeps). `Client::instances()` stops with `RateLimited` and the wait instead. An account with
+  more than 25 instances needs a second page, and one call per window allows no second page at once.
+- A `POWER` cell no longer hides what holds a card down when its limit is unknown: `-+thermal`, as `--compact`
+  says in `throttle`.
+- A throttle mask is read with `0x` or `0X` and never with a doubled prefix.
+- A key file is one word: a second line, or a space or control character in the key, is refused when it is
+  read, with a message that does not show the key (it used to fail at the first request with a message about
+  a header). A truncated UTF-16 key or config file (an odd number of bytes) is refused instead of read as a
+  shorter, valid one. A relative `XDG_CONFIG_HOME` is ignored, as the XDG specification says: it made the files
+  searched depend on the folder `vas` runs from.
+- An integer written as `123.0` or `"123.0"` is an integer (an `id` written that way used to drop the row
+  silently), within what an `f64` holds exactly.
+- `VAST_URL` host detection for the proxy bypass: the authority ends at the first `/`, `?` or `#`
+  (`http://evil.example?@127.0.0.1` is not this machine), and `LOCALHOST` is `localhost`.
+- `--min-days` is capped at 36500 (a hundred years): `1e305` days overflowed to infinity and was sent to the
+  server as `null`.
+- `RateLimit::from_headers` is `#[must_use]`.
 
 ## [0.1.0] - 2026-10-17
 

@@ -29,14 +29,30 @@ impl fmt::Debug for ApiKey {
     }
 }
 
+/// The key in `text`: trimmed (a byte-order mark is not part of it: Windows editors and `PowerShell`
+/// write one); `Ok(None)` when nothing is left; an error when what is left holds a space, a line
+/// break or a control character (a second line in the file, or a UTF-16 file read as UTF-8, would
+/// otherwise fail at the first request with a message about a header).
+fn clean_key(text: &str) -> std::result::Result<Option<String>, &'static str> {
+    let trimmed = text.trim().trim_start_matches('\u{feff}').trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    if trimmed.chars().any(|c| c.is_control() || c.is_whitespace()) {
+        return Err(
+            "it holds a space, a line break or a control character (one line, plain UTF-8 or UTF-16 text)",
+        );
+    }
+    // BORROW: explicit to_owned -- the key outlives the file buffer it was read from
+    Ok(Some(trimmed.to_owned()))
+}
+
 impl ApiKey {
-    /// A key from its text, trimmed; `None` when nothing is left.
+    /// A key from its text, trimmed; `None` when nothing is left, or when what is left holds a
+    /// space, a line break or a control character (a key is one word).
     #[must_use]
     pub fn new(text: &str) -> Option<Self> {
-        // A byte-order mark is not part of the key (Windows editors and PowerShell write one).
-        let trimmed = text.trim().trim_start_matches('\u{feff}').trim();
-        // BORROW: explicit to_owned -- the key outlives the file buffer it was read from
-        (!trimmed.is_empty()).then(|| Self(trimmed.to_owned()))
+        clean_key(text).ok().flatten().map(Self)
     }
 
     /// The key from `file`.
@@ -49,10 +65,20 @@ impl ApiKey {
             path: file.display().to_string(),
             source,
         })?;
-        Self::new(&text).ok_or_else(|| SkoposError::NoApiKey {
-            searched: file.display().to_string(),
-            hint: String::new(),
-        })
+        match clean_key(&text) {
+            Ok(Some(key)) => Ok(Self(key)),
+            Ok(None) => Err(SkoposError::NoApiKey {
+                searched: file.display().to_string(),
+                hint: String::new(),
+            }),
+            Err(why) => Err(SkoposError::KeyFile {
+                path: file.display().to_string(),
+                source: std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("the key is not usable: {why}"),
+                ),
+            }),
+        }
     }
 
     /// The key by the official CLI's search order (module docs).
@@ -122,19 +148,25 @@ pub(crate) fn decode(bytes: &[u8]) -> Option<String> {
             })
             .collect()
     };
+    // A UTF-16 file has an even number of bytes: an odd one is a truncated file, not text.
+    // (`& 1`, not `.is_multiple_of(2)`, which the MSRV lacks.)
+    let even = bytes.len() & 1 == 0;
     match bytes {
-        [0xFF, 0xFE, ..] => String::from_utf16(&units(false)).ok(),
-        [0xFE, 0xFF, ..] => String::from_utf16(&units(true)).ok(),
+        [0xFF, 0xFE, ..] if even => String::from_utf16(&units(false)).ok(),
+        [0xFE, 0xFF, ..] if even => String::from_utf16(&units(true)).ok(),
+        [0xFF, 0xFE, ..] | [0xFE, 0xFF, ..] => None,
         _ => String::from_utf8(bytes.to_vec()).ok(),
     }
 }
 
-/// The directories config files live in, in order: `$XDG_CONFIG_HOME` when it is set and not
-/// empty, then `~/.config`.
+/// The directories config files live in, in order: `$XDG_CONFIG_HOME` when it is set, not empty
+/// and absolute (the XDG specification says to ignore a relative one: it would make the files
+/// searched depend on the folder `vas` runs from), then `~/.config`.
 pub(crate) fn config_dirs() -> Vec<PathBuf> {
     let xdg = std::env::var_os("XDG_CONFIG_HOME")
         .filter(|v| !v.is_empty())
-        .map(PathBuf::from);
+        .map(PathBuf::from)
+        .filter(|dir| dir.is_absolute());
     xdg.into_iter()
         .chain(home().map(|h| h.join(".config")))
         .collect()

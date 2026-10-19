@@ -105,10 +105,18 @@ fn the_processes_of_a_gpu_are_summed_and_the_other_gpus_are_not_counted() {
 }
 
 #[test]
-fn a_box_with_no_process_at_all_holds_everything_as_someone_elses() {
-    // The query succeeded and listed nothing: the card's memory belongs to nobody here.
+fn a_gpu_with_no_process_listed_is_unknown_not_everyone_elses() {
+    // The query succeeded and listed nothing for this GPU: a run that has just restarted, or a box
+    // whose container cannot see its own processes, looks exactly like that while the memory is
+    // still its own. Claiming 16 GiB of "someone else" there would be a false alarm.
     let text = output(16_000, "0, 00000000:C1:00.0\n", "", true);
-    assert_eq!(other(&text), Some(16_000));
+    assert_eq!(other(&text), None);
+    // Another GPU's process does not make this one known.
+    let two = "0, 1, 16000, 2\n1, 1, 100, 2\n---vas-power---\n---vas-apps---\n0, a\n1, b\n\
+               ---vas-apps-by-gpu---\nb, 100\nvas-apps-ok\n";
+    let gpus = parse_output(two).gpus;
+    assert_eq!(gpus[0].other_mem_mib, None);
+    assert_eq!(gpus[1].other_mem_mib, Some(0));
 }
 
 #[test]
@@ -289,4 +297,16 @@ fn compact_prints_the_arrival_as_an_event_and_the_table_prints_the_line() {
             .starts_with("! 1 gpu 0: memory held outside the container"),
         "{text}"
     );
+}
+
+#[test]
+fn a_run_that_restarts_is_not_someone_else_arriving() {
+    let mut trend = Trend::default();
+    let ours = output(8_782, "0, b\n", "b, 8772\n", true);
+    // The run restarts: the card still holds its memory for a look, with no process listed.
+    let restarting = output(8_782, "0, b\n", "", true);
+    for text in [&ours, &restarting, &ours, &restarting, &restarting, &ours] {
+        trend.record(&[running()], &[outcome(text)]);
+        assert!(trend.changes().is_empty(), "{:?}", lines(&trend));
+    }
 }

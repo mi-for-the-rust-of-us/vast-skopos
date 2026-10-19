@@ -277,3 +277,21 @@ fn a_stopped_box_loses_its_clock_history() {
     trend.record(&[running(7)], &[clocked("1700")]);
     assert_eq!(trend.clock_text(7), "1700", "fresh, not 3000 1700");
 }
+
+#[test]
+fn readings_that_would_overflow_a_sum_are_averaged_not_a_panic() {
+    // A box is untrusted: two saturated readings add up past `u32::MAX`.
+    let boxes = [running(7)];
+    let mut trend = Trend::default();
+    let huge = format!(
+        "0, {m}, 1, 2\n1, {m}, 1, 2\n---vas-power---\n0, 1, 1, 1, {m}, 1, 0x0\n1, 1, 1, 1, {m}, 1, 0x0\n",
+        m = u32::MAX
+    );
+    trend.record(&boxes, &[Some(Ok(parse_output(&huge)))]);
+    assert_eq!(trend.samples(7), [u32::MAX]);
+    assert_eq!(trend.clock_samples(7), [u32::MAX]);
+    // 1e30 W or MHz saturates at the reading, not at a panic, and the next look goes on.
+    let silly = "0, 1, 1, 2\n---vas-power---\n0, 1e30, 1e30, 1e30, 1e30, 1e30, 0x0\n";
+    trend.record(&boxes, &[Some(Ok(parse_output(silly)))]);
+    assert_eq!(trend.samples(7).len(), 2);
+}

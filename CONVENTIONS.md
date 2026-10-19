@@ -333,10 +333,14 @@ Rows are read field by field from `serde_json::Value` (`instance.rs`, `offer.rs`
 never with a derived `Deserialize` over the whole row: the API adds, drops and
 retypes fields, and one unused field changing type must cost a dash in one cell, not
 the whole table. Numbers accept a JSON number or a numeric string and must be finite;
-text loses its control and invisible characters (`instance::is_hidden`: it comes from
-other people's hosts and reaches a terminal, where a bidirectional override can reorder
-a row), and a cell of it is capped (`render::TEXT_WIDTH`); a row without an integer `id`
-is skipped (and counted).
+an integer may be written `5`, `5.0` or `"5"`. Text loses its control and invisible
+characters (`instance::is_hidden`: it comes from other people's hosts and reaches a
+terminal, where a bidirectional override can reorder a row), and a cell of it is capped
+(`render::TEXT_WIDTH`). That covers EVERYTHING a box or a host sends: the API's text,
+and the probe's log lines, file names and `ssh` error line (`probe::strip`); a reading
+from a box is untrusted arithmetic too (sum in `u64`, saturate, never overflow).
+A row without an integer `id` is skipped; the offers search counts the rows it skipped
+(the footer says so), the instances list does not.
 
 The endpoints and their pagination follow the official `vastai` CLI's source (cite the
 function when changing one: `_fetch_all_instances_v1`, `show__user`, `search__offers`).

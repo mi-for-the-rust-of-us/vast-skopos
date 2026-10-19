@@ -1051,3 +1051,22 @@ fn a_watch_leaves_vast_ai_alone_until_its_budget_renews() {
         "the wait is said once, on stderr: {stderr}"
     );
 }
+
+#[test]
+fn min_days_is_capped_at_a_hundred_years_instead_of_overflowing_the_seconds_sent() {
+    let (base, seen) = serve(bundles);
+    let home = fresh_home("min-days");
+    let (out, _, stderr) = vas(&base, &home, true, &["offers", "--min-days", "1e305"]);
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    assert!(stderr.contains("at most 36500"), "{stderr}");
+    assert!(seen.lock().unwrap().is_empty(), "refused before any search");
+    // (`vas` removes the home it was given when it is done: a second run gets its own.)
+    let home = fresh_home("min-days-ok");
+    let (out, _, stderr) = vas(&base, &home, true, &["offers", "--min-days", "36500"]);
+    assert!(out.status.success(), "{stderr}");
+    let request = the_request(&seen);
+    assert_eq!(
+        decode_q(&request.target)["duration"],
+        serde_json::json!({"gte": 36_500.0 * 86_400.0})
+    );
+}

@@ -50,10 +50,13 @@ fn agent(base: &str) -> ureq::Agent {
     config.build().into()
 }
 
-/// Whether `base` (a URL) names this machine: `127.0.0.1`, `localhost` or `[::1]`.
+/// Whether `base` (a URL) names this machine: `127.0.0.1`, `localhost` or `[::1]`, in any case.
+///
+/// The authority ends at the first `/`, `?` or `#`: in `http://evil.example?@127.0.0.1` the host is
+/// `evil.example`, whatever follows the `?`.
 fn is_loopback(base: &str) -> bool {
     let host = base.split_once("://").map_or(base, |(_, rest)| rest);
-    let host = host.split('/').next().unwrap_or_default();
+    let host = host.split(['/', '?', '#']).next().unwrap_or_default();
     let host = host.rsplit_once('@').map_or(host, |(_, h)| h);
     let host = if host.starts_with('[') {
         host.split_once(']')
@@ -61,7 +64,10 @@ fn is_loopback(base: &str) -> bool {
     } else {
         host.split(':').next().unwrap_or_default()
     };
-    matches!(host, "127.0.0.1" | "localhost" | "::1")
+    matches!(
+        host.to_ascii_lowercase().as_str(),
+        "127.0.0.1" | "localhost" | "::1"
+    )
 }
 
 /// `VAST_URL` when set and not blank, else [`DEFAULT_BASE`]; without a trailing slash.
@@ -134,6 +140,7 @@ pub struct RateLimit {
 impl RateLimit {
     /// Reads the three headers through `header` (given a LOWER-CASE name, returns its value); a
     /// header that is absent or not a finite number is `None`.
+    #[must_use]
     pub fn from_headers(header: impl Fn(&str) -> Option<String>) -> Self {
         let number = |name: &str| {
             header(name)
@@ -317,6 +324,26 @@ impl Client {
     /// Returns [`SkoposError::Json`] if a page is not JSON, has no `instances` list, repeats a
     /// `next_token`, or the pages exceed the guard.
     pub fn instances(&self) -> Result<Vec<Instance>> {
+        self.instances_with(|_| false)
+    }
+
+    /// Every instance of the account, all pages, with a say in what happens when the budget is spent
+    /// BETWEEN two pages.
+    ///
+    /// vast.ai allows the instances list one call per window (about 3 s, seen 2026-10-18), and a
+    /// page holds 25 rows: an account with more instances needs a second call. When the budget of
+    /// the list is spent before a later page, `between_pages` is asked, with the seconds to wait:
+    /// `true` means the caller has waited that long (this library never sleeps) and the page is
+    /// requested; `false` ends the call with [`SkoposError::RateLimited`], naming the wait, instead
+    /// of spending a request that would be refused. [`Client::instances`] always answers `false`.
+    ///
+    /// # Errors
+    /// The same as [`Client::instances`], and [`SkoposError::RateLimited`] when `between_pages`
+    /// answers `false`.
+    pub fn instances_with(
+        &self,
+        mut between_pages: impl FnMut(f64) -> bool,
+    ) -> Result<Vec<Instance>> {
         let path = "/api/v1/instances/";
         let mut rows = Vec::new();
         let mut after: Option<String> = None;
@@ -329,6 +356,11 @@ impl Client {
             ];
             if let Some(token) = after.as_deref() {
                 query.push(("after_token", token));
+                if let Some(wait) = self.limits.wait_secs(unix_now())
+                    && !between_pages(wait)
+                {
+                    return Err(SkoposError::rate_limited(path, Some(wait)));
+                }
             }
             let page = self.get_json(path, &query)?;
             let list = page
@@ -468,6 +500,9 @@ mod tests {
             "https://user:pw@127.0.0.1:1/x",
             "http://[::1]:9",
             "127.0.0.1:9",
+            "http://LOCALHOST:9",
+            "http://127.0.0.1?x=1",
+            "http://localhost#frag",
         ] {
             assert!(is_loopback(local), "{local}");
         }
@@ -477,6 +512,8 @@ mod tests {
             "http://localhost.evil.example/",
             "http://evil.example/127.0.0.1",
             "http://evil.example@console.vast.ai",
+            "http://evil.example?@127.0.0.1",
+            "http://evil.example#@localhost",
             "",
         ] {
             assert!(!is_loopback(remote), "{remote}");

@@ -47,19 +47,30 @@ pub struct Instance {
 }
 
 /// Whether `c` must not reach a terminal from someone else's text: a control character, or an
-/// invisible one that can still reorder or hide what is shown (zero-width characters, the Arabic
-/// letter mark, bidirectional embeddings, overrides and isolates, the line and paragraph
-/// separators, word joiners, the byte-order mark).
+/// invisible one that can still reorder or hide what is shown (the soft hyphen and the combining
+/// grapheme joiner, the Arabic letter mark, zero-width characters, the line and paragraph
+/// separators, bidirectional embeddings, overrides and isolates, word joiners and the deprecated
+/// format characters, variation selectors, the byte-order mark, interlinear annotations, and the
+/// tag characters that can spell a hidden message).
+///
+/// Everything text from a box, a host or the API shows goes through this: the table cells, the
+/// JSON, the probe's log lines and file names, and `ssh`'s error line.
 pub(crate) fn is_hidden(c: char) -> bool {
     c.is_control()
         || matches!(
             c,
-            '\u{061C}'
+            '\u{00AD}'
+                | '\u{034F}'
+                | '\u{061C}'
+                | '\u{180E}'
                 | '\u{200B}'..='\u{200F}'
                 | '\u{2028}'..='\u{202E}'
-                | '\u{2060}'..='\u{2064}'
-                | '\u{2066}'..='\u{2069}'
+                | '\u{2060}'..='\u{206F}'
+                | '\u{FE00}'..='\u{FE0F}'
                 | '\u{FEFF}'
+                | '\u{FFF9}'..='\u{FFFB}'
+                | '\u{E0000}'..='\u{E007F}'
+                | '\u{E0100}'..='\u{E01EF}'
         )
 }
 
@@ -115,11 +126,23 @@ pub(crate) fn boolean(row: &Value, field: &str) -> Option<bool> {
     row.get(field).and_then(Value::as_bool)
 }
 
-/// A non-negative integer field, accepting a JSON integer or an integral numeric string.
+/// A whole, non-negative number below 2^53 (what an `f64` holds exactly), as an integer: `5.0` is 5.
+fn integral(value: f64) -> Option<u64> {
+    (value.is_finite() && value >= 0.0 && value.fract() == 0.0 && value < 9_007_199_254_740_992.0)
+        .then(|| whole_secs(value))
+}
+
+/// A non-negative integer field, accepting a JSON integer, an integral JSON number written as a
+/// float (`123.0`, which some serialisers produce) or an integral numeric string (`"123"`, `"123.0"`).
 pub(crate) fn integer(row: &Value, field: &str) -> Option<u64> {
     match row.get(field)? {
-        Value::Number(n) => n.as_u64(),
-        Value::String(s) => s.trim().parse().ok(),
+        Value::Number(n) => n.as_u64().or_else(|| n.as_f64().and_then(integral)),
+        Value::String(s) => {
+            let text = s.trim();
+            text.parse()
+                .ok()
+                .or_else(|| text.parse::<f64>().ok().and_then(integral))
+        }
         Value::Null | Value::Bool(_) | Value::Array(_) | Value::Object(_) => None,
     }
 }

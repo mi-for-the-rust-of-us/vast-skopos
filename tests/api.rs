@@ -489,3 +489,63 @@ fn the_budget_headers_are_read_leniently() {
         RateLimit::from_headers(|name| (name == "x-ratelimit-remaining").then(|| "0".to_owned()));
     assert_eq!(spent.wait_secs(0.0), None);
 }
+
+/// The first page of the list says its budget is spent for 2 s; there is a second page.
+fn two_pages_and_a_spent_budget(target: &str) -> (u16, Vec<(String, String)>, String) {
+    if target.contains("after_token=") {
+        (
+            200,
+            Vec::new(),
+            r#"{"instances": [{"id": 3, "actual_status": "exited"}], "next_token": null}"#
+                .to_owned(),
+        )
+    } else {
+        let reset = format!("{:.0}", unix_now() + 2.0);
+        (
+            200,
+            vec![
+                ("X-RateLimit-Limit".to_owned(), "1".to_owned()),
+                ("X-RateLimit-Remaining".to_owned(), "0".to_owned()),
+                ("X-RateLimit-Reset".to_owned(), reset),
+            ],
+            r#"{"instances": [{"id": 1, "actual_status": "running"}], "next_token": "tok-2"}"#
+                .to_owned(),
+        )
+    }
+}
+
+#[test]
+fn a_second_page_is_not_requested_into_a_spent_budget_unless_the_caller_waited() {
+    let client = |base: &str| Client::with_base(ApiKey::new("k3y").unwrap(), base);
+    // Without a say, the call stops with the wait instead of spending a request that would be refused.
+    let (base, seen) = common::serve_with(two_pages_and_a_spent_budget);
+    let err = client(&base).instances().unwrap_err();
+    let SkoposError::RateLimited {
+        retry_after: Some(wait),
+        ..
+    } = err
+    else {
+        panic!("{err}");
+    };
+    assert!((0.5..=2.5).contains(&wait), "{wait}");
+    assert_eq!(seen.lock().unwrap().len(), 1, "page 2 was never asked");
+    // With a say: asked once, with that wait; `true` means "I waited", and page 2 is requested.
+    let (base, seen) = common::serve_with(two_pages_and_a_spent_budget);
+    let mut asked = Vec::new();
+    let rows = client(&base)
+        .instances_with(|wait| {
+            asked.push(wait);
+            true
+        })
+        .unwrap();
+    assert_eq!(rows.iter().map(|i| i.id).collect::<Vec<_>>(), [1, 3]);
+    assert_eq!(asked.len(), 1);
+    assert!((0.5..=2.5).contains(&asked[0]), "{asked:?}");
+    assert_eq!(seen.lock().unwrap().len(), 2);
+    // A budget that is not spent is not asked about.
+    let (base, _) = serve(vast);
+    let rows = client(&base)
+        .instances_with(|_| panic!("the budget was not spent"))
+        .unwrap();
+    assert_eq!(rows.len(), 3);
+}

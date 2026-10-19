@@ -579,6 +579,24 @@ fn the_key_is_found_where_the_official_cli_saves_it_and_the_first_place_wins() {
         "the empty variable must not make a relative path: {}",
         run.stderr
     );
+    // A RELATIVE XDG_CONFIG_HOME is ignored too (the specification says so): read as a path it
+    // would depend on the folder `vas` runs from, so a bait file there tells the two apart.
+    let bait = empty_dir("keys-bait-relative");
+    write_key(&bait, "rel/vastai/vast_api_key", "baitkey1234567890");
+    let run = vas_in(
+        account,
+        &[],
+        &env_with(&home, &[("XDG_CONFIG_HOME", std::ffi::OsStr::new("rel"))]),
+        &[],
+        Some(&bait),
+    );
+    std::fs::remove_dir_all(&bait).unwrap();
+    assert_eq!(
+        bearer(&run).as_deref(),
+        Some("Bearer cfgkey1234567890"),
+        "a relative XDG_CONFIG_HOME must not be read: {}",
+        run.stderr
+    );
     // And the plain case: the home's file is found.
     let run = vas_with(
         account,
