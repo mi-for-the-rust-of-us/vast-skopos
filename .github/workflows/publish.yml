@@ -32,7 +32,7 @@ env:
 jobs:
   verify:
     name: Verify (Publish)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Only a `v*` tag may publish; a `workflow_dispatch` run must be started
     # from the tag, not a branch.
     if: startsWith(github.ref, 'refs/tags/v')
@@ -93,7 +93,7 @@ jobs:
   publish:
     name: Publish to crates.io
     needs: verify
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: release
     # `id-token: write` lets the job request the OIDC token that Trusted
     # Publishing exchanges for a short-lived crates.io token.
