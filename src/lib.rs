@@ -11,7 +11,7 @@
 //! dashboard's GPU utilisation is not trusted, because it has been seen to read 0 % on boxes at
 //! 97-99 %. `--compact` prints the same readings as JSON Lines, and `--watch` repeats the look.
 //!
-//! `vas offers`: the offers for rent that pass your constraints, cheapest first, with no key
+//! `vas offers`: the offers for rent that pass your constraints (cheapest first by default), with no key
 //! ([`api::SearchClient`]); with `--watch`, the list again every so often, marked with what moved.
 //!
 //! The library half is what `vas` is built from:

@@ -51,6 +51,14 @@ pub struct GpuReading {
 /// of someone else: the driver and its contexts hold tens to a few hundred MiB themselves.
 pub const OTHER_MIB_MIN: u64 = 1024;
 
+/// MiB → GiB, for display.
+pub(crate) fn mib_to_gib(mib: u64) -> f64 {
+    // CAST: u64 → f64, a MiB count far below 2^53, for a one-decimal display
+    #[allow(clippy::cast_precision_loss, clippy::as_conversions)]
+    let v = mib as f64 / 1024.0;
+    v
+}
+
 /// The clock event reasons that mean the card is held below what it could do, as `nvidia-smi`
 /// names their bits: the software power cap, the thermal slowdowns, the hardware slowdown and the
 /// power brake. An idle GPU, application clocks and sync boost are not in the list: they are not a

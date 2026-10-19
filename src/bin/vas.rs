@@ -39,8 +39,8 @@ struct Cli {
 /// The subcommands.
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// The offers for rent that pass your constraints, cheapest first. Needs no API key: the
-    /// search is public, and vas sends none.
+    /// The offers for rent that pass your constraints (cheapest first, unless you sort otherwise).
+    /// Needs no API key: the search is public, and vas sends none.
     Offers(OffersArgs),
 }
 
@@ -49,11 +49,13 @@ enum Command {
 #[allow(clippy::doc_markdown)]
 #[derive(Debug, clap::Args)]
 struct LookArgs {
-    /// Also ask every running box over ssh (once each): GPU utilisation and memory from nvidia-smi.
+    /// Also ask every running box over ssh (once each): from nvidia-smi, the GPUs' utilisation,
+    /// memory, power limit, clock and throttle reasons, and the memory held by anyone else.
     #[arg(long)]
     ssh: bool,
     /// With --ssh: for the newest file matching this path or glob on each box, print its last two
-    /// path components and its last non-blank line ("(empty)", "(not a file)", "(no file matches)").
+    /// path components and its last non-blank line ("(empty)", "(not a file)", "(no file matches)",
+    /// or "?" when the box's answer was cut short).
     #[arg(long, value_name = "PATH_OR_GLOB", requires = "ssh", value_parser = non_blank)]
     log: Option<String>,
     /// With --ssh: the private key to use (default: ssh's own choice, agent and ~/.ssh/config).
@@ -180,6 +182,7 @@ impl OffersArgs {
     /// The constraints, as the search's query.
     fn query(&self) -> OfferQuery {
         let mut q = OfferQuery::default();
+        // BORROW: explicit clones -- the query owns the flags it was built from
         q.gpu.clone_from(&self.gpu);
         q.num_gpus = self.num_gpus;
         q.disk = self.disk;
@@ -347,6 +350,22 @@ const PATIENCE_SECS: f64 = 15.0;
 /// Added to every wait for vast.ai's reset: its clock and this machine's differ by a little.
 const MARGIN_SECS: f64 = 1.0;
 
+/// The longest a watch waits for a request budget to renew. vast.ai's windows are seconds long
+/// (seen 2026-10-18); a reset further away than this is a mis-scaled header (milliseconds, say) or a
+/// server that wants the watch gone, and a watch that slept for it would look hung.
+const MAX_BUDGET_WAIT_SECS: f64 = 900.0;
+
+/// How long to wait for a budget that renews in `wait_secs`: that and a margin, never more than
+/// [`MAX_BUDGET_WAIT_SECS`] (nor a panic on an absurd or non-finite value).
+fn budget_pause(wait_secs: f64) -> Duration {
+    let wait = if wait_secs.is_finite() {
+        wait_secs
+    } else {
+        0.0
+    };
+    Duration::from_secs_f64((wait + MARGIN_SECS).clamp(0.0, MAX_BUDGET_WAIT_SECS))
+}
+
 /// The wait a rate-limit refusal asks for, when it is short enough to sit out.
 fn short_rate_wait(result: &Result<String, vast_skopos::SkoposError>) -> Option<f64> {
     if let Err(vast_skopos::SkoposError::RateLimited {
@@ -413,13 +432,20 @@ fn run_looks(
         };
         let mut pause = watch_pause(every, floor_secs);
         if let Some(wait) = budget() {
-            let wait = Duration::from_secs_f64(wait + MARGIN_SECS);
-            if wait > pause {
-                eprintln!(
-                    "{who}: vast.ai's request budget renews in {:.0} s: the next look waits for it",
-                    wait.as_secs_f64()
-                );
-                pause = wait;
+            let waited = budget_pause(wait);
+            if waited > pause {
+                if wait + MARGIN_SECS > MAX_BUDGET_WAIT_SECS {
+                    eprintln!(
+                        "{who}: vast.ai's request budget renews in {wait:.0} s, more than a watch waits: the next look waits {:.0} s",
+                        waited.as_secs_f64()
+                    );
+                } else {
+                    eprintln!(
+                        "{who}: vast.ai's request budget renews in {:.0} s: the next look waits for it",
+                        waited.as_secs_f64()
+                    );
+                }
+                pause = waited;
             }
         }
         std::thread::sleep(pause);
@@ -437,7 +463,20 @@ fn look(
     trend: Option<&mut Trend>,
     credit_log: Option<&mut CreditLog>,
 ) -> Result<String, vast_skopos::SkoposError> {
-    let instances = client.instances()?;
+    // The list pages by 25 and its budget is one call per window: between two pages a short wait is
+    // sat out (said aloud), a long one ends the look like any other rate limit.
+    let instances = client.instances_with(|wait| {
+        if wait <= PATIENCE_SECS {
+            eprintln!(
+                "vas: rate-limited: waiting {:.0} s before the next page of instances",
+                wait.ceil().max(1.0)
+            );
+            std::thread::sleep(Duration::from_secs_f64(wait + MARGIN_SECS));
+            true
+        } else {
+            false
+        }
+    })?;
     let (account, probes) = std::thread::scope(|scope| {
         let account = scope.spawn(|| client.account());
         let probes = if args.ssh {
@@ -578,6 +617,7 @@ fn resolve(args: OffersArgs) -> Result<(OffersArgs, Option<PathBuf>), ExitCode> 
     let file = if args.no_config {
         None
     } else {
+        // BORROW: explicit clone -- the file read is kept beside the merged arguments
         args.config.clone().or_else(default_offers_file)
     };
     let Some(path) = file.as_deref() else {
@@ -660,5 +700,110 @@ fn main() -> ExitCode {
     match cli.command {
         Some(Command::Offers(args)) => offers(args),
         None => lookout(&cli.look),
+    }
+}
+
+#[cfg(test)]
+// EXPLICIT: test code -- a failed unwrap IS the failed assertion.
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use clap::CommandFactory;
+    use vast_skopos::market::{ABSENT_FOR_GONE, LEARNING_LOOKS};
+
+    use super::{
+        Cli, LOOKOUT_FLOOR_SECS, MARGIN_SECS, MAX_BUDGET_WAIT_SECS, OFFERS_FLOOR_SECS, budget_pause,
+    };
+
+    #[test]
+    fn a_budget_is_waited_for_with_a_margin_and_never_longer_than_a_watch_waits() {
+        use std::time::Duration;
+        assert_eq!(
+            budget_pause(2.0),
+            Duration::from_secs_f64(2.0 + MARGIN_SECS)
+        );
+        assert_eq!(budget_pause(-5.0), Duration::ZERO, "a reset in the past");
+        let most = Duration::from_secs_f64(MAX_BUDGET_WAIT_SECS);
+        assert_eq!(budget_pause(MAX_BUDGET_WAIT_SECS), most);
+        assert_eq!(budget_pause(1.79e12), most, "a reset in milliseconds");
+        assert_eq!(budget_pause(f64::MAX), most, "no panic on an absurd value");
+        assert_eq!(
+            budget_pause(f64::INFINITY),
+            Duration::from_secs_f64(MARGIN_SECS)
+        );
+        assert_eq!(budget_pause(f64::NAN), Duration::from_secs_f64(MARGIN_SECS));
+    }
+
+    /// The `--help` of `--watch` of the lookout (`None`) or of `vas offers`.
+    fn watch_help(subcommand: Option<&str>) -> String {
+        let command = Cli::command();
+        let command = match subcommand {
+            Some(name) => command.find_subcommand(name).unwrap().clone(),
+            None => command,
+        };
+        command
+            .get_arguments()
+            .find(|a| a.get_id() == "watch")
+            .and_then(|a| a.get_help())
+            .unwrap()
+            .to_string()
+    }
+
+    fn word(n: usize) -> &'static str {
+        [
+            "zero", "one", "two", "three", "four", "five", "six", "seven",
+        ]
+        .get(n)
+        .copied()
+        .unwrap_or("many")
+    }
+
+    #[test]
+    fn the_help_of_each_watch_says_the_floor_and_the_looks_the_code_uses() {
+        assert!(
+            watch_help(None).contains(&format!("at least {LOOKOUT_FLOOR_SECS})")),
+            "{}",
+            watch_help(None)
+        );
+        let offers = watch_help(Some("offers"));
+        assert!(
+            offers.contains(&format!("at least {OFFERS_FLOOR_SECS})")),
+            "{offers}"
+        );
+        assert!(
+            offers.contains(&format!("first {} looks only learn", word(LEARNING_LOOKS))),
+            "{offers}"
+        );
+        assert!(
+            offers.contains(&format!("missing for {} looks", word(ABSENT_FOR_GONE))),
+            "{offers}"
+        );
+    }
+
+    #[test]
+    fn the_helps_name_what_the_ssh_probe_reads_and_the_states_of_a_log() {
+        let command = Cli::command();
+        let help = |name: &str| {
+            command
+                .get_arguments()
+                .find(|a| a.get_id() == name)
+                .and_then(|a| a.get_help())
+                .unwrap()
+                .to_string()
+        };
+        let ssh = help("ssh");
+        for what in [
+            "utilisation",
+            "memory",
+            "power",
+            "clock",
+            "throttle",
+            "anyone else",
+        ] {
+            assert!(ssh.contains(what), "--ssh help lacks {what}: {ssh}");
+        }
+        assert!(help("log").contains("\"?\""), "{}", help("log"));
+        let offers = command.find_subcommand("offers").unwrap();
+        let about = offers.get_about().unwrap().to_string();
+        assert!(about.contains("unless you sort otherwise"), "{about}");
     }
 }

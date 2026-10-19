@@ -168,13 +168,18 @@ fn compact_and_wide_are_refused_together() {
 /// with piped stdout and stderr; the caller reads it and the home is left for the OS (a temp dir).
 fn spawn_watch(respond: common::Respond, args: &[&str], floor_ms: Option<&str>) -> Watch {
     let (base, _) = serve(respond);
+    spawn_watch_at(&base, args, floor_ms)
+}
+
+/// [`spawn_watch`] against the mock at `base` (one that answers with headers, say).
+fn spawn_watch_at(base: &str, args: &[&str], floor_ms: Option<&str>) -> Watch {
     let call = CALLS.fetch_add(1, Ordering::Relaxed);
     let home = std::env::temp_dir().join(format!("vas-look-watch-{call}-{}", std::process::id()));
     std::fs::create_dir_all(&home).unwrap();
     let mut command = Command::new(env!("CARGO_BIN_EXE_vas"));
     command
         .args(args)
-        .env("VAST_URL", &base)
+        .env("VAST_URL", base)
         .env("VAST_API_KEY", "k3y")
         .env("HOME", &home)
         .env("USERPROFILE", &home)
@@ -1036,4 +1041,112 @@ fn a_blank_credit_log_name_is_refused_before_any_request() {
     assert_eq!(out.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("the file name is blank"), "{stderr}");
+}
+
+/// The list in two pages, the first saying its budget is spent for a second; then the account.
+fn two_pages_spent(target: &str) -> (u16, Vec<(String, String)>, String) {
+    if target.starts_with("/api/v1/instances/") && target.contains("after_token=") {
+        (
+            200,
+            Vec::new(),
+            r#"{"instances": [{"id": 777, "actual_status": "exited"}], "next_token": null}"#
+                .to_owned(),
+        )
+    } else if target.starts_with("/api/v1/instances/") {
+        let reset = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 1;
+        (
+            200,
+            vec![
+                ("X-RateLimit-Limit".to_owned(), "1".to_owned()),
+                ("X-RateLimit-Remaining".to_owned(), "0".to_owned()),
+                ("X-RateLimit-Reset".to_owned(), reset.to_string()),
+            ],
+            r#"{"instances": [{"id": 666, "actual_status": "exited"}], "next_token": "tok-2"}"#
+                .to_owned(),
+        )
+    } else {
+        let (status, body) = account(target);
+        (status, Vec::new(), body)
+    }
+}
+
+#[test]
+fn the_lookout_sits_out_a_short_budget_between_two_pages_of_the_list_and_says_so() {
+    let (base, seen) = common::serve_with(two_pages_spent);
+    let home = empty_dir("pages");
+    let _cleanup = common::RemoveOnDrop(home.clone());
+    let mut child = Command::new(env!("CARGO_BIN_EXE_vas"))
+        .env("VAST_URL", &base)
+        .env("VAST_API_KEY", ENV_KEY)
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .env_remove("XDG_CONFIG_HOME")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let status = exit_within_deadline(&mut child);
+    let mut stderr = String::new();
+    std::io::Read::read_to_string(&mut child.stderr.take().unwrap(), &mut stderr).unwrap();
+    let mut stdout = String::new();
+    std::io::Read::read_to_string(&mut child.stdout.take().unwrap(), &mut stdout).unwrap();
+    assert_eq!(status.code(), Some(0), "{stderr}");
+    assert!(
+        stderr.contains("before the next page of instances"),
+        "{stderr}"
+    );
+    assert!(
+        stdout.contains("666") && stdout.contains("777"),
+        "both pages: {stdout}"
+    );
+    let pages: Vec<_> = seen
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|r| r.target.starts_with("/api/v1/instances/"))
+        .map(|r| r.at)
+        .collect();
+    assert_eq!(pages.len(), 2, "two pages, no refused third request");
+    assert!(
+        pages[1].duration_since(pages[0]) >= std::time::Duration::from_millis(1000),
+        "the second page waited for the budget"
+    );
+}
+
+/// Every answer says the budget is spent until a time absurdly far away (a reset in milliseconds).
+fn absurd_budget(target: &str) -> (u16, Vec<(String, String)>, String) {
+    let (status, body) = account(target);
+    (
+        status,
+        vec![
+            ("X-RateLimit-Limit".to_owned(), "1".to_owned()),
+            ("X-RateLimit-Remaining".to_owned(), "0".to_owned()),
+            ("X-RateLimit-Reset".to_owned(), "1792000000000".to_owned()),
+        ],
+        body,
+    )
+}
+
+#[test]
+fn a_watch_does_not_sleep_for_an_absurd_budget_and_says_how_long_it_waits_instead() {
+    let (base, _) = common::serve_with(absurd_budget);
+    let mut watch = spawn_watch_at(&base, &["--watch", "0"], Some("50"));
+    let mut stderr = std::io::BufReader::new(watch.stderr.take().unwrap());
+    let mut said = String::new();
+    let mut line = String::new();
+    while stderr.read_line(&mut line).unwrap_or(0) > 0 {
+        said.push_str(&line);
+        if line.contains("budget renews") {
+            break;
+        }
+        line.clear();
+    }
+    assert!(
+        said.contains("more than a watch waits: the next look waits 900 s"),
+        "{said}"
+    );
 }

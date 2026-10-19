@@ -15,7 +15,7 @@
 use std::collections::{HashMap, VecDeque};
 
 use crate::instance::Instance;
-use crate::probe::{GpuReading, OTHER_MIB_MIN, ProbeOutcome, outcome_at};
+use crate::probe::{GpuReading, OTHER_MIB_MIN, ProbeOutcome, mib_to_gib, outcome_at};
 
 /// How many samples a box keeps.
 pub const TREND_LEN: usize = 6;
@@ -63,8 +63,8 @@ impl GpuChange {
         if let Some((was, now)) = self.other_mib {
             parts.push(format!(
                 "memory held outside the container {:.1} -> {:.1} GiB",
-                gib(was),
-                gib(now)
+                mib_to_gib(was),
+                mib_to_gib(now)
             ));
         }
         parts.extend(self.began.iter().map(|word| format!("{word} began")));
@@ -82,14 +82,6 @@ struct PowerState {
     throttle: Option<Vec<&'static str>>,
     /// The memory no process of the box accounts for, in MiB.
     other_mib: Option<u64>,
-}
-
-/// MiB → GiB, for display.
-fn gib(mib: u64) -> f64 {
-    // CAST: u64 → f64, a MiB count far below 2^53, for a one-decimal display
-    #[allow(clippy::cast_precision_loss, clippy::as_conversions)]
-    let v = mib as f64 / 1024.0;
-    v
 }
 
 /// The last utilisation samples of each box, by instance id.

@@ -518,19 +518,36 @@ fn the_note_counts_the_new_and_repriced_offers_the_table_does_not_show() {
 }
 
 #[test]
-fn the_offers_below_the_table_are_counted_by_machine_not_by_offer_id() {
+fn a_new_machine_is_below_the_table_by_machine_and_a_moved_price_by_the_row_that_moved() {
     use vast_skopos::render::offers_changes_note;
+    // A new machine is marked on every row of it: it is below the table only when no row of it shows.
+    let before = [on_machine(10, 1, 0.5)];
+    let now = [
+        on_machine(10, 1, 0.5),
+        on_machine(21, 2, 0.6),
+        on_machine(22, 2, 0.7),
+    ];
+    let (_, c) = moved(&before, &now);
+    assert_eq!(
+        offers_changes_note(&page(false), &c, &[on_machine(22, 2, 0.7)], false),
+        "since the last look: 1 new\n",
+        "its other row is on screen, and marked"
+    );
+    assert_eq!(
+        offers_changes_note(&page(false), &c, &[on_machine(10, 1, 0.5)], false),
+        "since the last look: 1 new (1 below the table)\n"
+    );
+    // A moved price shows `(was ..)` on the ONE row that moved (its offer id): when the table shows
+    // the same machine under another id, that row carries no old price, so it is counted below.
     let before = [on_machine(10, 1, 0.5)];
     let now = [on_machine(11, 1, 0.55)];
     let (_, c) = moved(&before, &now);
-    // The table shows the same machine under yet another id: its row is on screen.
-    let on_screen = [on_machine(12, 1, 0.55)];
     assert_eq!(
-        offers_changes_note(&page(false), &c, &on_screen, false),
+        offers_changes_note(&page(false), &c, &now, false),
         "since the last look: 1 repriced\n"
     );
     assert_eq!(
-        offers_changes_note(&page(false), &c, &[on_machine(20, 2, 0.9)], false),
+        offers_changes_note(&page(false), &c, &[on_machine(12, 1, 0.55)], false),
         "since the last look: 1 repriced (1 below the table)\n"
     );
 }
@@ -714,4 +731,28 @@ fn the_trend_is_a_column_after_the_vram_and_only_when_a_watch_has_one() {
         !quiet.contains("TREND") && !quiet.contains("VRAM"),
         "{quiet}"
     );
+}
+
+#[test]
+fn a_label_a_status_and_a_host_from_the_api_are_capped_and_the_port_survives() {
+    let long = "x".repeat(300);
+    let row = instance(&serde_json::json!({
+        "id": 1, "actual_status": long, "intended_status": "running", "label": long,
+        "ssh_host": "h".repeat(300), "ssh_port": 22,
+    }));
+    let text = table(&[row], &[], None, TableOptions::new(), 0.0);
+    for line in text.lines().take(2) {
+        assert!(
+            line.chars().count() < 250,
+            "no 300-character cell widens the row: {line}"
+        );
+    }
+    let row = text.lines().nth(1).unwrap();
+    assert!(
+        !row.contains(&"x".repeat(41)),
+        "label and status are capped: {row}"
+    );
+    assert!(!row.contains(&"h".repeat(41)), "the host is capped: {row}");
+    assert!(row.contains("…"), "{row}");
+    assert!(row.contains(":22"), "the port is never cut: {row}");
 }

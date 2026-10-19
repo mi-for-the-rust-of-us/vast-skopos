@@ -6,7 +6,7 @@ use std::fmt::Write as _;
 use crate::instance::{Account, Instance, shortened, whole_secs};
 use crate::market::{LEARNING_LOOKS, MarketWatch, OfferKey};
 use crate::offer::{OFFER_CAP, Offer, OfferChanges, OfferPage, OfferQuery, OfferSort};
-use crate::probe::{GpuReading, LogReading, Probe, ProbeOutcome, outcome_at};
+use crate::probe::{GpuReading, LogReading, Probe, ProbeOutcome, mib_to_gib, outcome_at};
 use crate::runway::Runway;
 use crate::trend::Trend;
 
@@ -110,13 +110,15 @@ fn push_line<'a>(
 
 /// The status cell: the actual status, with the intended one when they differ.
 fn status(i: &Instance) -> String {
-    match (i.actual_status.as_deref(), i.intended_status.as_deref()) {
+    let text = match (i.actual_status.as_deref(), i.intended_status.as_deref()) {
         (Some(a), Some(want)) if a != want => format!("{a} -> {want}"),
         // BORROW: explicit to_owned -- the cell is owned by the row
         (Some(a), _) => a.to_owned(),
         (None, Some(want)) => format!("? -> {want}"),
         (None, None) => String::from("-"),
-    }
+    };
+    // A status comes from the API: a 300-character one must not widen every row.
+    capped(&text)
 }
 
 /// One cell per GPU of `probe`, built by `cell` and joined by spaces; `-` for a probe with none.
@@ -261,14 +263,6 @@ pub fn log_cell(log: Option<&LogReading>) -> String {
     }
 }
 
-/// MiB → GiB, for display.
-fn mib_to_gib(mib: u64) -> f64 {
-    // CAST: u64 → f64, a MiB count far below 2^53, for a one-decimal display
-    #[allow(clippy::cast_precision_loss, clippy::as_conversions)]
-    let v = mib as f64 / 1024.0;
-    v
-}
-
 /// Which optional columns [`table`] shows. `TableOptions::new()` is the plain table; the other
 /// columns are asked for by name, so no call site reads as two bare booleans.
 ///
@@ -374,14 +368,15 @@ pub fn table(
     for (n, i) in instances.iter().enumerate() {
         let mut row = vec![
             i.id.to_string(),
-            or_dash(i.label.clone()),
+            text_cell(i.label.as_deref()),
             gpu_cell(i.num_gpus, i.gpu_name.as_deref()),
             text_cell(i.geolocation.as_deref()),
             status(i),
             price_cell(i.dph_total),
             or_dash(i.age_secs(now).map(age)),
             or_dash(i.cost_so_far(now).map(|c| format!("{c:.2}"))),
-            or_dash(i.ssh_endpoint().map(|(h, p)| format!("{h}:{p}"))),
+            // The host is capped, never the port after it.
+            or_dash(i.ssh_endpoint().map(|(h, p)| format!("{}:{p}", capped(h)))),
         ];
         if wide {
             row.extend([
@@ -469,7 +464,10 @@ fn offer_row(o: &Offer, was: Option<f64>) -> Vec<String> {
         (up, down) => format!("{}/{}", whole(up), whole(down)),
     };
     let price = price_cell(o.dph_total);
-    let price = was.map_or_else(|| price.clone(), |old| format!("{price} (was {old:.3})"));
+    let price = match was {
+        Some(old) => format!("{price} (was {old:.3})"),
+        None => price,
+    };
     vec![
         o.id.to_string(),
         gpu_cell(o.num_gpus, o.gpu_name.as_deref()),
@@ -631,17 +629,26 @@ fn change_counts(changes: &OfferChanges, shown: Option<&[Offer]>) -> String {
     if changes.is_empty() {
         return String::from("no change");
     }
-    let below = |offer: &Offer| {
+    // A new machine is marked on EVERY row of it, so it is below the table only when none shows;
+    // a moved price is shown on the one row that moved (its offer id), so it is below the table
+    // when that row is not shown: the counts say what the rows can and cannot show.
+    let machine_below = |offer: &Offer| {
         let key = OfferKey::of(offer);
         shown.is_some_and(|rows| !rows.iter().any(|o| OfferKey::of(o) == key))
     };
+    let offer_below =
+        |offer: &Offer| shown.is_some_and(|rows| !rows.iter().any(|o| o.id == offer.id));
     let mut parts: Vec<String> = Vec::new();
     if !changes.appeared.is_empty() {
-        let hidden = changes.appeared.iter().filter(|o| below(o)).count();
+        let hidden = changes.appeared.iter().filter(|o| machine_below(o)).count();
         parts.push(counted(changes.appeared.len(), "new", hidden));
     }
     if !changes.repriced.is_empty() {
-        let hidden = changes.repriced.iter().filter(|r| below(&r.offer)).count();
+        let hidden = changes
+            .repriced
+            .iter()
+            .filter(|r| offer_below(&r.offer))
+            .count();
         parts.push(counted(changes.repriced.len(), "repriced", hidden));
     }
     if !changes.gone.is_empty() {
@@ -668,16 +675,16 @@ fn change_lines<T>(
     }
 }
 
-/// vast.ai answers at most 64 rows per search: an offer may only have entered or left them.
-const CUT_NOTE: &str = "(vast.ai caps a search at 64 rows: an offer may only have entered or left them; narrow the search)\n";
-
-/// The note about vast.ai's 64-row cap, when the answer may have been cut AND something entered or
-/// left (the only changes the cap can explain); empty otherwise.
-fn cut_note(changes: &OfferChanges, page: &OfferPage) -> &'static str {
+/// The note about vast.ai's row cap, when the answer may have been cut AND something entered or
+/// left (the only changes the cap can explain); empty otherwise. vast.ai answers at most
+/// [`OFFER_CAP`] rows per search: an offer may only have entered or left them.
+fn cut_note(changes: &OfferChanges, page: &OfferPage) -> String {
     if page.maybe_cut() && !(changes.appeared.is_empty() && changes.gone.is_empty()) {
-        CUT_NOTE
+        format!(
+            "(vast.ai caps a search at {OFFER_CAP} rows: an offer may only have entered or left them; narrow the search)\n"
+        )
     } else {
-        ""
+        String::new()
     }
 }
 
@@ -725,7 +732,7 @@ pub fn offers_changes_note(
     };
     let mut out = format!("{since}: {}\n", change_counts(changes, Some(shown)));
     change_lines(&mut out, '-', &changes.gone, Some(NOTE_LINES), brief);
-    out.push_str(cut_note(changes, page));
+    out.push_str(&cut_note(changes, page));
     out
 }
 
@@ -793,7 +800,7 @@ pub fn offers_changes_only(
         offer_brief(&r.offer, &price)
     });
     change_lines(&mut out, '-', &changes.gone, None, brief);
-    out.push_str(cut_note(changes, page));
+    out.push_str(&cut_note(changes, page));
     out
 }
 

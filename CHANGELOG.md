@@ -196,6 +196,23 @@ All notable changes to this project are documented here. The format is based on
 - `--min-days` is capped at 36500 (a hundred years): `1e305` days overflowed to infinity and was sent to the
   server as `null`.
 - `RateLimit::from_headers` is `#[must_use]`.
+- `vas` waits out a short budget between two pages of the instances list (said on stderr:
+  `waiting 1 s before the next page of instances`), where it used to fail the look with a 429 on the second
+  page; a longer one ends the look like any other rate limit.
+- A watch no longer sleeps for an absurd request budget. A reset in milliseconds (`1.79e12`) made it print
+  "renews in 1790000000000 s" and sleep effectively forever (or panic above about `1.8e19`); it now waits at
+  most 900 s and says "more than a watch waits".
+- The note under an offers table counts a moved price as below the table when its ROW is (that is where
+  `(was ..)` is shown), and a new machine when no row of it is (every row of it is marked `+`); the two
+  rules used to disagree for a machine shown under another offer id.
+- A label, a status and an `ssh` host from the API are capped like the other cells of remote text (the port
+  after a host is never cut), so a 300-character one no longer widens every row.
+- The 64-row cap note reads the cap from `OFFER_CAP`; `mib_to_gib` is one function, not two; the three
+  per-GPU cells share `per_gpu`.
+- `--help` is right: `--ssh` names what the probe reads (utilisation, memory, power limit, clock, throttle
+  reasons, memory held by anyone else), `--log` names its `?` state, `vas offers` no longer says "cheapest
+  first" as if `--sort` did not exist, and a test ties the `--watch` helps to the floors and the learning
+  looks the code uses.
 
 ## [0.1.0] - 2026-10-17
 
