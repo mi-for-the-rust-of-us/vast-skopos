@@ -310,3 +310,22 @@ fn a_run_that_restarts_is_not_someone_else_arriving() {
         assert!(trend.changes().is_empty(), "{:?}", lines(&trend));
     }
 }
+
+#[test]
+fn a_gap_that_hovers_around_the_threshold_is_news_each_time_it_crosses_it() {
+    // There is no hysteresis, on purpose and said so (README): 1 GiB is the line, and a box whose
+    // other user hovers around it says so at every crossing, which is the truth of what it sees.
+    let mut trend = Trend::default();
+    let at = |gap: u64| output(8_772 + gap, "0, b\n", "b, 8772\n", true);
+    trend.record(&[running()], &[outcome(&at(0))]);
+    let mut said = 0;
+    for gap in [2_000, 100, 2_000, 100] {
+        trend.record(&[running()], &[outcome(&at(gap))]);
+        said += trend.changes().len();
+    }
+    assert_eq!(said, 4, "up, down, up, down");
+    // Moving within a side of the line is not news.
+    trend.record(&[running()], &[outcome(&at(2_000))]);
+    trend.record(&[running()], &[outcome(&at(3_000))]);
+    assert_eq!(trend.changes().len(), 0);
+}

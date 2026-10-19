@@ -71,16 +71,23 @@ where
     std::thread::spawn(move || {
         for stream in listener.incoming() {
             let Ok(mut stream) = stream else { continue };
-            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            // A client that went away mid-request (a killed `vas`) must not kill the mock, which
+            // every later request of the test depends on.
+            let Ok(clone) = stream.try_clone() else {
+                continue;
+            };
+            let mut reader = BufReader::new(clone);
             let mut first = String::new();
-            reader.read_line(&mut first).unwrap();
+            if reader.read_line(&mut first).is_err() {
+                continue;
+            }
             let mut words = first.split_whitespace();
             let method = words.next().unwrap_or("").to_owned();
             let target = words.next().unwrap_or("").to_owned();
             let mut authorization = None;
             loop {
                 let mut line = String::new();
-                if reader.read_line(&mut line).unwrap() == 0 || line == "\r\n" {
+                if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
                     break;
                 }
                 if let Some((name, value)) = line.split_once(':')
@@ -104,7 +111,7 @@ where
                 "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\n{extra}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
                 body.len()
             );
-            stream.write_all(reply.as_bytes()).unwrap();
+            let _ = stream.write_all(reply.as_bytes());
         }
     });
     (base, seen)
@@ -218,5 +225,31 @@ pub struct RemoveOnDrop(pub std::path::PathBuf);
 impl Drop for RemoveOnDrop {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+/// A child process that is killed and waited for when dropped: a watch a test spawned does not
+/// outlive it, even when an assertion panics first.
+pub struct KillOnDrop(pub Option<std::process::Child>);
+
+impl std::ops::Deref for KillOnDrop {
+    type Target = std::process::Child;
+    fn deref(&self) -> &std::process::Child {
+        self.0.as_ref().unwrap()
+    }
+}
+
+impl std::ops::DerefMut for KillOnDrop {
+    fn deref_mut(&mut self) -> &mut std::process::Child {
+        self.0.as_mut().unwrap()
+    }
+}
+
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.0.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
     }
 }

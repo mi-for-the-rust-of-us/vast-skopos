@@ -296,3 +296,27 @@ fn readings_that_would_overflow_a_sum_are_averaged_not_a_panic() {
     assert_eq!(trend.clock_samples(7), [u32::MAX, u32::MAX]);
     assert_eq!(trend.samples(7).len(), 2);
 }
+
+#[test]
+fn a_gpu_missing_from_a_look_is_remembered_and_compared_when_it_is_back() {
+    let boxes = [running(7)];
+    let mut trend = Trend::default();
+    let two = |a: &str, b: &str| -> ProbeOutcome {
+        Some(Ok(parse_output(&format!(
+            "0, 1, 1, 2\n1, 1, 1, 2\n---vas-power---\n0, 1, {a}, 575, 1, 2, 0x0\n1, 1, {b}, 575, 1, 2, 0x0\n"
+        ))))
+    };
+    let one = Some(Ok(parse_output(
+        "0, 1, 1, 2\n---vas-power---\n0, 1, 575, 575, 1, 2, 0x0\n",
+    )));
+    trend.record(&boxes, &[two("575", "575")]);
+    // GPU 1 is not in this look at all (a dropped line, a GPU that fell off the bus).
+    trend.record(&boxes, &[one]);
+    assert!(
+        trend.changes().is_empty(),
+        "a GPU that is absent is not a change"
+    );
+    // Back with another limit: compared with what it was before it went.
+    trend.record(&boxes, &[two("575", "400")]);
+    assert_eq!(lines(&trend), ["! 7 gpu 1: power limit 575 -> 400 W"]);
+}

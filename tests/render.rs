@@ -713,10 +713,21 @@ fn the_trend_is_a_column_after_the_vram_and_only_when_a_watch_has_one() {
         running.windows(4).any(|w| w == ["97", "99", "0", "98"]),
         "the four samples, oldest first: {with}"
     );
-    assert!(
-        words(&with, "2").contains(&"-".to_owned()),
-        "a box with none: {with}"
+    // The cells under the two trend headers, by position: a box with no sample has a dash in each.
+    let header = with.lines().next().unwrap();
+    let (trend_at, clock_at) = (
+        header.find("TREND").unwrap(),
+        header.find("CLOCK TREND").unwrap(),
     );
+    let last_at = header.find("LAST LOG").unwrap();
+    let cell = |id: &str, from: usize, to: usize| {
+        with.lines().find(|l| l.starts_with(id)).unwrap()[from..to]
+            .trim()
+            .to_owned()
+    };
+    assert_eq!(cell("1", trend_at, clock_at), "97 99 0 98", "{with}");
+    assert_eq!(cell("2", trend_at, clock_at), "-", "{with}");
+    assert_eq!(cell("2", clock_at, last_at), "-", "{with}");
     // Without a trend, or without the probe columns, there is no such column.
     let plain = table(
         &rows,

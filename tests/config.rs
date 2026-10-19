@@ -8,6 +8,8 @@
 )]
 // EXPLICIT: test code -- a failed unwrap IS the failed assertion.
 
+mod common;
+
 use vast_skopos::SkoposError;
 use vast_skopos::config::read_flag_file;
 
@@ -15,6 +17,7 @@ use vast_skopos::config::read_flag_file;
 fn a_config_file_reads_the_same_in_utf8_with_a_bom_and_in_utf16() {
     let dir = std::env::temp_dir().join(format!("vas-config-test-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
+    let _cleanup = common::RemoveOnDrop(dir.clone());
     let text = "# filters\r\n--gpu RTX_5090\r\n--exclude-host 362355\r\n";
     let bom = dir.join("bom");
     std::fs::write(&bom, format!("\u{feff}{text}")).unwrap();
@@ -36,7 +39,6 @@ fn a_config_file_reads_the_same_in_utf8_with_a_bom_and_in_utf16() {
     ];
     let not_text = read_flag_file(&binary);
     let missing = read_flag_file(&dir.join("missing"));
-    std::fs::remove_dir_all(&dir).unwrap();
     for w in words {
         assert_eq!(w.unwrap(), ["--gpu=RTX_5090", "--exclude-host=362355"]);
     }
@@ -48,10 +50,10 @@ fn a_config_file_reads_the_same_in_utf8_with_a_bom_and_in_utf16() {
 fn a_malformed_line_names_the_file_and_the_line() {
     let dir = std::env::temp_dir().join(format!("vas-config-bad-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
+    let _cleanup = common::RemoveOnDrop(dir.clone());
     let file = dir.join("offers");
     std::fs::write(&file, "--gpu RTX_5090\n\ngpu RTX_4090\n").unwrap();
     let err = read_flag_file(&file).unwrap_err();
-    std::fs::remove_dir_all(&dir).unwrap();
     assert!(
         matches!(err, SkoposError::ConfigLine { line: 3, .. }),
         "{err}"
@@ -69,18 +71,11 @@ fn a_file_of_filters_cannot_turn_the_run_into_a_loop() {
     for (flag, line) in [("watch", "--watch 60"), ("changes", "--changes")] {
         let dir = std::env::temp_dir().join(format!("vas-config-{flag}-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
+        let _cleanup = common::RemoveOnDrop(dir.clone());
+        let _cleanup = common::RemoveOnDrop(dir.clone());
         let file = dir.join("offers");
-        std::fs::write(
-            &file,
-            format!(
-                "--gpu RTX_5090
-{line}
-"
-            ),
-        )
-        .unwrap();
+        std::fs::write(&file, format!("--gpu RTX_5090\n{line}\n")).unwrap();
         let err = read_flag_file(&file).unwrap_err();
-        std::fs::remove_dir_all(&dir).unwrap();
         assert!(
             matches!(err, SkoposError::ConfigLine { line: 2, .. }),
             "{err}"

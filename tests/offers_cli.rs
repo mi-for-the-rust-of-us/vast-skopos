@@ -684,6 +684,7 @@ fn counted_bundles(_: &str) -> (u16, String) {
 fn a_watch_whose_first_search_fails_gives_up_instead_of_looping_on_stderr() {
     let (base, seen) = serve(refusing);
     let home = fresh_home("watch-refused");
+    let _cleanup = RemoveOnDrop(home.clone());
     let mut child = Command::new(env!("CARGO_BIN_EXE_vas"))
         .args(["offers", "--no-config", "--watch", "0"])
         .env("VAST_URL", &base)
@@ -699,7 +700,6 @@ fn a_watch_whose_first_search_fails_gives_up_instead_of_looping_on_stderr() {
     let status = common::exit_within_deadline(&mut child);
     let mut stderr = String::new();
     std::io::Read::read_to_string(&mut child.stderr.take().unwrap(), &mut stderr).unwrap();
-    std::fs::remove_dir_all(&home).unwrap();
     assert_eq!(status.code(), Some(1), "{stderr}");
     assert!(stderr.contains("status 500"), "{stderr}");
     assert_eq!(seen.lock().unwrap().len(), 1, "one search, no retry loop");
@@ -787,6 +787,7 @@ fn a_config_file_cannot_hold_a_watch() {
 fn the_pause_between_two_looks_is_at_least_twenty_seconds_unless_a_test_says_otherwise() {
     let (base, seen) = serve(counted_bundles);
     let home = fresh_home("floor");
+    let _cleanup = RemoveOnDrop(home.clone());
     let mut child = Command::new(env!("CARGO_BIN_EXE_vas"))
         .args(["offers", "--no-config", "--watch", "1"])
         .env("VAST_URL", &base)
@@ -812,7 +813,6 @@ fn the_pause_between_two_looks_is_at_least_twenty_seconds_unless_a_test_says_oth
     std::thread::sleep(std::time::Duration::from_millis(1500));
     let _ = child.kill();
     let out = child.wait_with_output().unwrap();
-    let _ = std::fs::remove_dir_all(&home);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(
         FLOOR_CALLS.load(Ordering::SeqCst),
@@ -902,7 +902,7 @@ fn offers_child(
     args: &[&str],
     floor_ms: Option<&str>,
     stdout: Stdio,
-) -> (std::process::Child, RemoveOnDrop) {
+) -> (common::KillOnDrop, RemoveOnDrop) {
     let home = fresh_home(name);
     let mut command = Command::new(env!("CARGO_BIN_EXE_vas"));
     command
@@ -919,7 +919,10 @@ fn offers_child(
         Some(ms) => command.env("VAS_WATCH_FLOOR_MS", ms),
         None => command.env_remove("VAS_WATCH_FLOOR_MS"),
     };
-    (command.spawn().unwrap(), RemoveOnDrop(home))
+    (
+        common::KillOnDrop(Some(command.spawn().unwrap())),
+        RemoveOnDrop(home),
+    )
 }
 
 /// The first search is refused for a rate limit that clears in 1 s; the next ones answer.
@@ -1060,5 +1063,49 @@ fn min_days_is_capped_at_a_hundred_years_instead_of_overflowing_the_seconds_sent
     assert_eq!(
         decode_q(&request.target)["duration"],
         serde_json::json!({"gte": 36_500.0 * 86_400.0})
+    );
+}
+
+#[test]
+fn every_numeric_flag_reaches_the_search_in_its_own_field_and_unit() {
+    // One value per flag, all different, so that a swap or a dropped assignment between the flag and
+    // the query shows: the six that no other test drives (`--disk`, `--cuda`, `--inet-up`,
+    // `--inet-down`, `--max-price`, `--min-days`).
+    let (base, seen) = serve(bundles);
+    let home = fresh_home("numeric-flags");
+    let (out, _, stderr) = vas(
+        &base,
+        &home,
+        true,
+        &[
+            "offers",
+            "--disk",
+            "100",
+            "--cuda",
+            "12.8",
+            "--inet-up",
+            "200",
+            "--inet-down",
+            "300",
+            "--max-price",
+            "1.5",
+            "--min-days",
+            "2",
+        ],
+    );
+    assert!(out.status.success(), "{stderr}");
+    assert_eq!(
+        decode_q(&the_request(&seen).target),
+        serde_json::json!({
+            "rentable": {"eq": true}, "rented": {"eq": false}, "type": "on-demand", "limit": 200,
+            "allocated_storage": 100, "order": [["dph_total", "asc"]],
+            "disk_space": {"gte": 100},
+            "cuda_max_good": {"gte": 12.8},
+            "inet_up": {"gte": 200.0},
+            "inet_down": {"gte": 300.0},
+            "dph_total": {"lte": 1.5},
+            "duration": {"gte": 172_800.0},
+        }),
+        "days are sent as seconds, a price as an upper bound, the rest as lower bounds"
     );
 }

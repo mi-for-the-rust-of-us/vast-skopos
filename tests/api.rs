@@ -116,31 +116,62 @@ fn a_repeated_next_token_is_an_error_not_a_loop() {
 
 #[test]
 fn neither_the_client_nor_a_connection_error_shows_the_key() {
-    // Nothing listens on port 9 here: the request fails before any answer.
-    let client = Client::with_base(ApiKey::new("s3cret").unwrap(), "http://127.0.0.1:9");
+    // A port that was free a moment ago and has no listener now: the request is refused before any
+    // answer (port 9 would do on most machines, but not on one that runs a discard service).
+    let port = {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.local_addr().unwrap().port()
+    };
+    let client = Client::with_base(
+        ApiKey::new("s3cret").unwrap(),
+        &format!("http://127.0.0.1:{port}"),
+    );
     assert!(!format!("{client:?}").contains("s3cret"));
     let err = client.account().unwrap_err();
     assert!(matches!(err, SkoposError::Http { .. }));
     assert!(!err.to_string().contains("s3cret"), "{err}");
 }
 
+/// Where the redirecting mock sends the client: a second mock, which must never be asked.
+static REDIRECT_TO: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+fn redirecting(_: &str) -> (u16, Vec<(String, String)>, String) {
+    (
+        302,
+        vec![("Location".to_owned(), REDIRECT_TO.get().unwrap().clone())],
+        "{}".to_owned(),
+    )
+}
+
 #[test]
-fn a_redirect_is_reported_not_followed() {
-    let (base, seen) = serve(|_| (302, "{}".to_owned()));
+fn a_redirect_is_reported_not_followed_and_the_key_goes_nowhere_else() {
+    // A second server, that a followed redirect (with the key's header) would reach.
+    let (elsewhere, asked) = serve(|_| (200, r#"{"credit": 1.0}"#.to_owned()));
+    REDIRECT_TO.set(format!("{elsewhere}/stolen")).unwrap();
+    let (base, seen) = common::serve_with(redirecting);
     let client = Client::with_base(ApiKey::new("k").unwrap(), &base);
     let err = client.account().unwrap_err();
-    assert!(matches!(err, SkoposError::Status { status: 302, .. }));
+    assert!(
+        matches!(err, SkoposError::Status { status: 302, .. }),
+        "{err}"
+    );
     assert!(
         err.to_string().contains("a redirect: vas follows none"),
         "{err}"
     );
     assert_eq!(seen.lock().unwrap().len(), 1);
+    assert!(
+        asked.lock().unwrap().is_empty(),
+        "the redirect target was never asked: {:?}",
+        asked.lock().unwrap()
+    );
 }
 
 #[test]
 fn a_key_file_with_a_bom_or_in_utf16_reads_the_same_key() {
     let dir = std::env::temp_dir().join(format!("vas-key-test-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
+    let _cleanup = common::RemoveOnDrop(dir.clone());
     let bom = dir.join("bom");
     std::fs::write(&bom, "\u{feff}abc123\r\n").unwrap();
     let utf16 = dir.join("utf16");
@@ -152,7 +183,6 @@ fn a_key_file_with_a_bom_or_in_utf16_reads_the_same_key() {
         let client = Client::with_base(ApiKey::from_file(file).unwrap(), &base);
         client.account().unwrap();
     }
-    std::fs::remove_dir_all(&dir).unwrap();
     assert!(
         seen.lock()
             .unwrap()
@@ -540,4 +570,53 @@ fn a_second_page_is_not_requested_into_a_spent_budget_unless_the_caller_waited()
         .instances_with(|_| panic!("the budget was not spent"))
         .unwrap();
     assert_eq!(rows.len(), 3);
+}
+
+/// The Retry-After the next 429 carries (empty: none); always with a budget that renews in 4 s.
+static RETRY_AFTER: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
+fn limited_with_retry_after(_: &str) -> (u16, Vec<(String, String)>, String) {
+    let mut headers = vec![
+        ("X-RateLimit-Limit".to_owned(), "1".to_owned()),
+        ("X-RateLimit-Remaining".to_owned(), "0".to_owned()),
+        (
+            "X-RateLimit-Reset".to_owned(),
+            format!("{:.0}", unix_now() + 4.0),
+        ),
+    ];
+    let value = RETRY_AFTER.lock().unwrap().clone();
+    if !value.is_empty() {
+        headers.push(("Retry-After".to_owned(), value));
+    }
+    (429, headers, "{}".to_owned())
+}
+
+#[test]
+fn a_retry_after_that_is_a_wait_beats_the_budget_headers_and_anything_else_falls_back_to_them() {
+    let (base, _) = common::serve_with(limited_with_retry_after);
+    let client = Client::with_base(ApiKey::new("k3y").unwrap(), &base);
+    let wait = |value: &str| -> Option<f64> {
+        *RETRY_AFTER.lock().unwrap() = value.to_owned();
+        let err = client.instances().unwrap_err();
+        let SkoposError::RateLimited { retry_after, .. } = err else {
+            panic!("{err}");
+        };
+        retry_after
+    };
+    // A number of seconds is the wait, whatever the budget says (4 s).
+    assert_eq!(wait("7"), Some(7.0));
+    assert_eq!(wait(" 12.5 "), Some(12.5));
+    assert_eq!(wait("0"), Some(0.0), "zero is a wait of zero");
+    // Not a usable number of seconds: the budget's own reset (about 4 s) is the wait.
+    for unusable in [
+        "",
+        "-3",
+        "NaN",
+        "inf",
+        "soon",
+        "Wed, 21 Oct 2026 07:28:00 GMT",
+    ] {
+        let w = wait(unusable).unwrap_or_else(|| panic!("{unusable:?}: no wait at all"));
+        assert!((2.0..=4.5).contains(&w), "{unusable:?}: {w}");
+    }
 }

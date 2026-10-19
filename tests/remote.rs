@@ -10,6 +10,7 @@
 )]
 // EXPLICIT: test code -- a failed unwrap IS the failed assertion.
 
+use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -151,5 +152,69 @@ fn a_backslash_in_a_file_name_is_kept() {
         run_in(&d, &format!("{root}/*.log")),
         line(&format!("{root}/a\\tb.log"), "ok")
     );
+    let _ = fs::remove_dir_all(&d);
+}
+
+/// Sets the modification time of `file` to `ago` before now.
+fn made_older(file: &Path, ago: std::time::Duration) {
+    let when = std::time::SystemTime::now() - ago;
+    fs::File::options()
+        .write(true)
+        .open(file)
+        .unwrap()
+        .set_modified(when)
+        .unwrap();
+}
+
+#[test]
+fn the_newest_match_wins_by_modification_time_not_by_name() {
+    let d = scratch("newest");
+    let root = d.display().to_string();
+    fs::write(d.join("a.log"), "from a\n").unwrap();
+    fs::write(d.join("b.log"), "from b\n").unwrap();
+    // `a.log` sorts first and is the newer: a listing by name would pick `b.log` (or `a.log`, by luck).
+    made_older(&d.join("b.log"), std::time::Duration::from_secs(7_200));
+    assert_eq!(
+        run_in(&d, &format!("{root}/*.log")),
+        line(&format!("{root}/a.log"), "from a")
+    );
+    // And the other way round, so that the answer follows the clock and not the names.
+    made_older(&d.join("a.log"), std::time::Duration::from_secs(14_400));
+    assert_eq!(
+        run_in(&d, &format!("{root}/*.log")),
+        line(&format!("{root}/b.log"), "from b")
+    );
+    let _ = fs::remove_dir_all(&d);
+}
+
+#[test]
+fn only_the_end_of_a_long_file_is_read_and_a_last_line_needs_no_newline() {
+    let d = scratch("long");
+    let root = d.display().to_string();
+    // Fifty lines, then blank ones, then a last line with no newline at all.
+    let mut text = String::new();
+    for n in 1..=50 {
+        writeln!(text, "line {n}").unwrap();
+    }
+    text.push_str("\n\n   \nline 51");
+    fs::write(d.join("train.log"), text).unwrap();
+    assert_eq!(
+        run_in(&d, &format!("{root}/*.log")),
+        line(&format!("{root}/train.log"), "line 51")
+    );
+    let _ = fs::remove_dir_all(&d);
+}
+
+#[test]
+fn a_last_line_longer_than_the_byte_cap_shows_its_end_cut_to_the_width() {
+    let d = scratch("wide");
+    let root = d.display().to_string();
+    // 5000 bytes on ONE line, ending in a newline: the box keeps the last 4096 of them.
+    fs::write(d.join("train.log"), format!("{}\n", "x".repeat(5_000))).unwrap();
+    let LogReading::Line { line: shown, .. } = run_in(&d, &format!("{root}/*.log")) else {
+        panic!("a line was expected");
+    };
+    assert!(shown.starts_with("xxxx") && shown.ends_with('…'), "{shown}");
+    assert_eq!(shown.chars().count(), 121, "120 characters and an ellipsis");
     let _ = fs::remove_dir_all(&d);
 }

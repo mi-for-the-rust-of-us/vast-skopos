@@ -1165,3 +1165,150 @@ fn a_watch_does_not_sleep_for_an_absurd_budget_and_says_how_long_it_waits_instea
         "{said}"
     );
 }
+
+/// The instances list refused for a rate limit of two minutes; the account would answer.
+fn limited_long(target: &str) -> (u16, Vec<(String, String)>, String) {
+    if target.starts_with("/api/v1/instances/") {
+        return (
+            429,
+            vec![("Retry-After".to_owned(), "120".to_owned())],
+            "{}".to_owned(),
+        );
+    }
+    let (status, body) = account(target);
+    (status, Vec::new(), body)
+}
+
+#[test]
+fn a_rate_limit_longer_than_the_patience_ends_the_lookout_with_the_wait_named_and_no_retry() {
+    let (base, seen) = common::serve_with(limited_long);
+    let home = empty_dir("limited-long");
+    let _cleanup = common::RemoveOnDrop(home.clone());
+    let mut child = Command::new(env!("CARGO_BIN_EXE_vas"))
+        .env("VAST_URL", &base)
+        .env("VAST_API_KEY", ENV_KEY)
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .env_remove("XDG_CONFIG_HOME")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    // It must not sit out two minutes: the deadline of the harness is 20 s.
+    let status = exit_within_deadline(&mut child);
+    let mut stderr = String::new();
+    std::io::Read::read_to_string(&mut child.stderr.take().unwrap(), &mut stderr).unwrap();
+    assert_eq!(status.code(), Some(1), "{stderr}");
+    assert!(
+        stderr.contains("vast.ai rate-limited /api/v1/instances/: try again in 120 s"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("waiting"), "it did not wait: {stderr}");
+    let instances = seen
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|r| r.target.starts_with("/api/v1/instances/"))
+        .count();
+    assert_eq!(instances, 1, "no retry");
+}
+
+/// Every answer says the budget (ONE call) is spent and renews in 3 s.
+fn spent_budget_lookout(target: &str) -> (u16, Vec<(String, String)>, String) {
+    let reset = format!("{:.0}", common::unix_now() + 3.0);
+    let (status, body) = account(target);
+    (
+        status,
+        vec![
+            ("X-RateLimit-Limit".to_owned(), "1".to_owned()),
+            ("X-RateLimit-Remaining".to_owned(), "0".to_owned()),
+            ("X-RateLimit-Reset".to_owned(), reset),
+        ],
+        body,
+    )
+}
+
+#[test]
+fn a_lookout_watch_leaves_vast_ai_alone_until_its_budget_renews() {
+    let (base, seen) = common::serve_with(spent_budget_lookout);
+    // `--watch 0` with the test floor of 50 ms would look again at once, were it not for the budget.
+    let mut watch = spawn_watch_at(&base, &["--compact", "--watch", "0"], Some("50"));
+    let _ = read_lines_until(&mut watch, "\"kind\":\"money\"", 2);
+    let instances: Vec<_> = seen
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|r| r.target.starts_with("/api/v1/instances/"))
+        .map(|r| r.at)
+        .collect();
+    assert!(instances.len() >= 2, "two looks");
+    assert!(
+        instances[1].duration_since(instances[0]) >= std::time::Duration::from_millis(2000),
+        "the second look waited for the budget (3 s asked, 2 s margin of the clock's fraction)"
+    );
+}
+
+/// The list answers, then is refused with a 500, then answers again.
+static FLAKY_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+fn flaky_instances(target: &str) -> (u16, String) {
+    if target.starts_with("/api/v1/instances/") && FLAKY_CALLS.fetch_add(1, Ordering::SeqCst) == 1 {
+        return (500, "{}".to_owned());
+    }
+    account(target)
+}
+
+#[test]
+fn a_lookout_watch_goes_on_after_a_failure_once_a_look_has_succeeded() {
+    let mut watch = spawn_watch(flaky_instances, &["--compact", "--watch", "0"], Some("50"));
+    // The first look, then (after the refused one) the third.
+    let lines = read_lines_until(&mut watch, "\"kind\":\"money\"", 2);
+    assert!(
+        lines
+            .iter()
+            .filter(|l| l.contains("\"kind\":\"money\""))
+            .count()
+            >= 2
+    );
+    // (`read_lines_until` has killed the child by now: two looks printed around a refused one are
+    // the proof that the watch went on.)
+    let mut stderr = String::new();
+    std::io::Read::read_to_string(&mut watch.stderr.take().unwrap(), &mut stderr).unwrap();
+    assert!(
+        stderr.contains("status 500"),
+        "the failure is said: {stderr}"
+    );
+    assert_eq!(
+        stderr.matches("status 500").count(),
+        1,
+        "said once: {stderr}"
+    );
+}
+
+#[test]
+fn identity_without_ssh_is_refused_before_any_request() {
+    let out = vas_output(&[OsStr::new("--identity"), OsStr::new("some-key")]);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("--ssh"), "{stderr}");
+}
+
+#[test]
+fn the_credit_log_works_with_the_ssh_probe_and_a_probe_that_failed() {
+    let dir = log_dir("ssh");
+    let _cleanup = common::RemoveOnDrop(dir.clone());
+    let file = dir.join("credit.csv");
+    // The only box runs, and its probe is refused at once: the row is written all the same.
+    let out = vas_output_with(
+        box_on_loopback,
+        &[
+            OsStr::new("--ssh"),
+            OsStr::new("--credit-log"),
+            file.as_os_str(),
+        ],
+    );
+    assert!(out.status.success());
+    let rows = csv_rows(&file);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0][1..], ["12.9300", "0.5000", "1", "0"], "{rows:?}");
+}
