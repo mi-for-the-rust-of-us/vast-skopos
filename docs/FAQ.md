@@ -221,7 +221,7 @@ rewritten in place for hours shows its final state.
 
 Two things can hold a busy card back, and `vas --ssh` (0.2.0) shows both.
 
-**A power cap.** A card's power limit can be set below what it ships with. Seen on 2026-10-18 on two
+**A power limit below the default.** A card's power limit can be set below what it ships with. Seen on 2026-10-18 on two
 rented RTX 5090s: a limit of 400 W against the default 575 W (set on the box; by whom, and why, is not
 known), `SW Power Cap: Active`, and the SM clock held at about 1,700 MHz out of a possible 3,090, while the
 card read 100 %. In the table:
@@ -232,7 +232,7 @@ POWER               CLOCK
 ```
 
 `POWER` is the limit set on the card, followed by the default when the limit is lower, and by what holds the
-clocks down. The words are `power_cap`, `thermal`, `slowdown` and `power_brake` (an idle card, application
+clocks down at this moment. The words are `power_cap`, `thermal`, `slowdown` and `power_brake` (an idle card, application
 clocks and sync boost are not restraints and are not shown). `CLOCK` is the SM clock now over the highest
 the card reaches. Under `--watch`, `CLOCK TREND` keeps the last six samples, and a line under the money
 says when a limit or a reason changes between two looks:
@@ -241,8 +241,13 @@ says when a limit or a reason changes between two looks:
 ! 56533728 gpu 0: power limit 575 -> 400 W, power_cap began
 ```
 
-Two things to know. A cap that comes and goes makes the watch say `began` and `ended` at each flip: that is
-what the card did. And the **same cap does not mean the same speed**: on those two boxes both were at
+Three things to know. First, **`+power_cap` alone is normal under full load**: it says the card is at its power
+limit, which every card reaches. On 2026-10-19 a default-limit RTX 4060 Ti (`165W`) read `165W+power_cap` and
+about 2,565 of 3,105 MHz while a matrix-multiply loop ran on it, and `165W` again afterwards, with the lines
+`! ... power_cap began` and `power_cap ended` under the money. What was unusual on 2026-10-18 was the limit
+**below the default** (`400/575W`) together with a clock far under the maximum: compare the limit with the
+default, and the clock with its maximum, not the word alone. Second, a load that starts and stops, or a cap that
+is intermittent, makes the watch say `began` and `ended` at each flip: that is what the card did. And the **same cap does not mean the same speed**: on those two boxes both were at
 `400/575W`, one ran at about 1,700 MHz and the other at about 2,100 (different silicon, cooling and
 workload: the cause was not determined). The limit alone does not tell the speed; the clock history does.
 

@@ -214,7 +214,9 @@ GPU% (ssh)  VRAM       OTHER  POWER  CLOCK      LAST LOG / SSH ERROR
 - **`GPU% (ssh)`, `VRAM`**: utilisation and memory, as `nvidia-smi` reports them on the box.
 - **`OTHER`**: GPU memory held by processes **outside your container**; `-` is the healthy answer.
 - **`POWER`**: the power limit set on the card (`575W` is an RTX 5090 at its default). When the limit is
-  lower, the default follows (`400/575W`), and `+power_cap` says that the cap is what holds the clocks down.
+  lower than the default, the default follows (`400/575W`). `+power_cap` says the card is at its power limit
+  right now, which every card is under full load: it is a limit **below the default** and a clock far under
+  its maximum that point at a setting on the box.
 - **`CLOCK`**: the speed of the GPU's compute cores (the SM clock) now, over the highest it reaches, in MHz.
 - **`LAST LOG`**: the newest file matching `--log`, named by its last two path components, and its last
   non-blank line (`(no file matches)`, `(not a file)`, `(empty)` or `?` otherwise).
@@ -246,9 +248,9 @@ readings as JSON Lines: see the [README](../../README.md#vas---compact-json-line
 
 ## 10. When something looks wrong
 
-- **The GPU reads 100 % but the run is slow.** Look at `POWER` and `CLOCK`: a power cap or a thermal reason is
-  set on the box (by whom, and why, is not something `vas` can tell), and the clock history shows how much it
-  costs you. Real example, power-capped boxes: [FAQ](../FAQ.md#the-gpu-reads-100--but-the-run-is-slower-than-it-should-be).
+- **The GPU reads 100 % but the run is slow.** Look at `POWER` and `CLOCK`: a limit below the default, or a
+  thermal reason, with a clock far under its maximum (by whom, and why, is not something `vas` can tell), and
+  the clock history shows how much it costs you. Real example, power-capped boxes: [FAQ](../FAQ.md#the-gpu-reads-100--but-the-run-is-slower-than-it-should-be).
 - **`OTHER` shows gigabytes.** Something outside your container is using the card (probably another user of
   the machine); `vas` cannot name it. The [FAQ](../FAQ.md#what-should-i-do-about-it) says what to gather and
   who to ask.

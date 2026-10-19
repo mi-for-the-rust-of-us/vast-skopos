@@ -51,7 +51,10 @@ All notable changes to this project are documented here. The format is based on
   the card, the default when it is higher, and what holds the clocks down: `power_cap`, `thermal`, `slowdown`,
   `power_brake`) and, in `--compact`, per GPU `power_w`, `power_limit_w`, `power_default_w`, `sm_mhz`,
   `sm_max_mhz` and `throttle`. Seen on two rented RTX 5090s: 400 W against the 575 W default, SM clock held
-  at ~1,700 of 3,090 MHz by the software power cap, with 100 % utilisation. A second `nvidia-smi` query, so
+  at ~1,700 of 3,090 MHz by the software power cap, with 100 % utilisation. (`+power_cap` alone is normal
+  under full load: a default-limit RTX 4060 Ti read `165W+power_cap` at ~2,565 of 3,105 MHz under a matmul
+  loop, seen live on 2026-10-19. A limit below the default with a clock far under the maximum is what marks
+  a limit set on the box.) A second `nvidia-smi` query, so
   an old driver costs only these cells. `probe::GpuReading` gains the six fields (it is `#[non_exhaustive]`),
   `GpuReading::throttle_words`.
 - Someone else on the GPU, under `vas --ssh`: an `OTHER` column after `VRAM` with the memory held by processes

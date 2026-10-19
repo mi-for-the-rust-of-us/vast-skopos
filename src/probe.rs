@@ -38,7 +38,8 @@ pub struct GpuReading {
     /// The highest SM clock the card can reach, in MHz.
     pub sm_max_mhz: Option<u32>,
     /// Why the clocks are held down: `nvidia-smi`'s bit mask of clock event reasons (`0x4` is the
-    /// software power cap); `None` when the box did not say.
+    /// software power cap, active whenever the card is at its power limit: compare
+    /// [`GpuReading::power_limit_w`] with [`GpuReading::power_default_w`]); `None` when the box did not say.
     pub throttle_mask: Option<u64>,
     /// The memory in use that no compute process of the box accounts for, in MiB: what the device
     /// holds (`mem_used_mib`) minus what the processes `nvidia-smi` lists on it hold. `None` when
@@ -60,8 +61,9 @@ pub(crate) fn mib_to_gib(mib: u64) -> f64 {
 }
 
 /// The clock event reasons that mean the card is held below what it could do, as `nvidia-smi`
-/// names their bits: the software power cap, the thermal slowdowns, the hardware slowdown and the
-/// power brake. An idle GPU, application clocks and sync boost are not in the list: they are not a
+/// names their bits: the software power cap (active whenever the card is at its power limit, which
+/// every card reaches under full load), the thermal slowdowns, the hardware slowdown and the power
+/// brake. An idle GPU, application clocks and sync boost are not in the list: they are not a
 /// restraint on a run.
 const THROTTLE_WORDS: [(u64, &str); 5] = [
     (0x4, "power_cap"),

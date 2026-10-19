@@ -199,13 +199,20 @@ that stops or leaves is forgotten. A single look has no history, and no such col
 
 <a id="the-power-cap-and-the-clock"></a>
 
-**The power cap.** A host can set a card's power limit below what it ships with. Seen on 2026-10-18 on two
+**The power cap.** A card's power limit can be set below what it ships with. Seen on 2026-10-18 on two
 rented RTX 5090s: a limit of 400 W against the 575 W default, `SW Power Cap: Active`, and the SM clock held
 at about 1,700 MHz of a possible 3,090: the run goes slower than the model suggests, and the dashboard's
-utilisation (100 %) does not show it. Under `--ssh`, the `POWER` column (after `OTHER`) says the limit and
-the default when the limit is lower, and what holds the clocks down: `400/575W+power_cap`; `575W` is a card
-at its default and free. The words are `power_cap`, `thermal`, `slowdown` and `power_brake`; an idle GPU,
-application clocks and sync boost are not restraints and are not shown. `--compact` carries, per GPU,
+utilisation (100 %) does not show it. Under `--ssh`, the `POWER` column (after `OTHER`) says the limit, the
+default when the limit is lower, and what holds the clocks down: `400/575W+power_cap`; `575W` is a card at
+its default. The words are `power_cap`, `thermal`, `slowdown` and `power_brake`; an idle GPU, application
+clocks and sync boost are not restraints and are not shown.
+
+**What `+power_cap` does and does not say.** It says the card is at its power limit, which **every card
+reaches under full load**: on 2026-10-19 a default-limit RTX 4060 Ti (`165W`) read `165W+power_cap` and about
+2,565 of 3,105 MHz as soon as a matrix-multiply loop ran on it, and went back to `165W` when the loop ended.
+That is normal. What marked the 2026-10-18 boxes as unusual was the limit **below the default**
+(`400/575W`) together with a clock far under the maximum: compare the two numbers and the clock, not the
+word alone. `--compact` carries, per GPU,
 `power_w` (the draw now), `power_limit_w`, `power_default_w`, `sm_mhz`, `sm_max_mhz` and `throttle` (a list
 of those words: empty when nothing holds the card, `null` when the box did not say). The power is asked in a
 second `nvidia-smi` query, so a driver that lacks a field costs the power cells (`-`) and nothing else; the
@@ -236,8 +243,9 @@ MHz), and under `--watch` a `CLOCK TREND` column after `TREND` keeps its last si
 GPUs: a card that fell from 3000 to 1700 MHz reads `3000 2900 1700 1700 1700 1700`, while its utilisation
 still reads `100`. `--compact` carries them as `probe.clock_trend` (`null` in a one-shot).
 
-A cap that comes and goes (a power cap is often intermittent) makes a watch say `power_cap began` and
-`power_cap ended` at every look it flips: that is what the card did, not noise to filter.
+A card that reaches its limit and leaves it (a load that starts and stops, a cap that is intermittent) makes a
+watch say `power_cap began` and `power_cap ended` at every look it flips: that is what the card did, and
+the line is information, not an accusation (see above).
 
 A cap can also arrive mid-run. Under `vas --ssh --watch N`, a line under the money says when a GPU's limit,
 its throttle reasons or its other users change from one look to the next: `! 56533728 gpu 0: power limit 575 -> 400 W, power_cap
