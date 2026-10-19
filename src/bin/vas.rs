@@ -74,7 +74,7 @@ struct LookArgs {
     /// header when the file is new or empty). The credit as a curve; never the API key.
     #[arg(long, value_name = "FILE", value_parser = non_blank_path)]
     credit_log: Option<PathBuf>,
-    /// Refresh every N seconds (at least 30) until Ctrl+C.
+    /// Refresh every N seconds (at least 10) until Ctrl+C.
     #[arg(long, value_name = "SECONDS")]
     watch: Option<u64>,
 }
@@ -152,7 +152,7 @@ struct OffersArgs {
     /// to the config file's.
     #[arg(long, value_name = "MACHINE_ID")]
     exclude_machine: Vec<u64>,
-    /// Search again every N seconds (at least 30) until Ctrl+C: each look is the whole table with a
+    /// Search again every N seconds (at least 20) until Ctrl+C: each look is the whole table with a
     /// SEEN column (in how many looks each machine appeared). vast.ai's answers vary, so the first
     /// three looks only learn; after them a new machine is marked with a plus sign, a moved price is
     /// shown beside its old one, and a machine missing for five looks is listed under the table.
@@ -281,20 +281,31 @@ fn emit(text: &str) -> bool {
         .is_ok()
 }
 
-/// The pause between two looks of a `--watch`: the N asked, but at least 30 s, so no loop of looks
-/// hammers a public service. `VAS_WATCH_FLOOR_MS` replaces that floor (the tests' seam: a test of a
-/// second look cannot wait half a minute); unset or not a number, the floor is 30 s.
-fn watch_pause(every: u64) -> Duration {
+/// The shortest pause, in seconds, between two looks of the lookout's `--watch`: at 10 s a watch
+/// that probes boxes still opens one `ssh` session per box about every 14 s. (vast.ai's own limits
+/// are read and obeyed whatever this says: the instances list allows one call per window of about
+/// 3 s, seen 2026-10-18.)
+const LOOKOUT_FLOOR_SECS: u64 = 10;
+
+/// The shortest pause, in seconds, between two looks of `vas offers --watch`. A table every few
+/// seconds scrolls past unread in a terminal (`--changes` reads better); under 20 s waits for a
+/// screen that redraws in place.
+const OFFERS_FLOOR_SECS: u64 = 20;
+
+/// The pause between two looks of a `--watch`: the N asked, but at least `floor_secs`, so no loop
+/// of looks hammers a public service. `VAS_WATCH_FLOOR_MS` replaces that floor (the tests' seam: a
+/// test of a second look cannot wait that long); unset or not a number, the floor stands.
+fn watch_pause(every: u64, floor_secs: u64) -> Duration {
     let floor = std::env::var("VAS_WATCH_FLOOR_MS")
         .ok()
         .and_then(|ms| ms.trim().parse::<u64>().ok())
-        .map_or(Duration::from_secs(30), Duration::from_millis);
+        .map_or_else(|| Duration::from_secs(floor_secs), Duration::from_millis);
     Duration::from_secs(every).max(floor)
 }
 
 /// The notice that a `--watch` shorter than the floor was raised to it; `who` names the command.
-fn floor_notice(who: &str, every: u64) -> Option<String> {
-    let pause = watch_pause(every);
+fn floor_notice(who: &str, every: u64, floor_secs: u64) -> Option<String> {
+    let pause = watch_pause(every, floor_secs);
     (pause > Duration::from_secs(every)).then(|| {
         format!(
             "{who}: --watch {every} is raised to {} s, the shortest pause between two looks (no loop hammers vast.ai)",
@@ -341,7 +352,8 @@ fn short_rate_wait(result: &Result<String, vast_skopos::SkoposError>) -> Option<
 
 /// Runs `look` once, or every `--watch` seconds until Ctrl+C; the exit code.
 ///
-/// `who` names the command in what it says on stderr. `look(missed)` is one look: its text, or why
+/// `who` names the command in what it says on stderr; `floor_secs` is the shortest pause the watch
+/// accepts between two looks. `look(missed)` is one look: its text, or why
 /// it failed, `missed` being whether a look failed since the last one that was printed. `budget()`
 /// is how many seconds vast.ai's answers say to leave it alone (see `Client::budget_wait_secs`): a
 /// look refused for a short rate limit waits it out ONCE, aloud, and a watch leaves at least that
@@ -350,11 +362,12 @@ fn short_rate_wait(result: &Result<String, vast_skopos::SkoposError>) -> Option<
 fn run_looks(
     who: &str,
     watch: Option<u64>,
+    floor_secs: u64,
     budget: impl Fn() -> Option<f64>,
     mut look: impl FnMut(bool) -> Result<String, vast_skopos::SkoposError>,
 ) -> ExitCode {
     if let Some(every) = watch
-        && let Some(note) = floor_notice(who, every)
+        && let Some(note) = floor_notice(who, every, floor_secs)
     {
         eprintln!("{note}");
     }
@@ -387,7 +400,7 @@ fn run_looks(
         let Some(every) = watch else {
             return ExitCode::SUCCESS;
         };
-        let mut pause = watch_pause(every);
+        let mut pause = watch_pause(every, floor_secs);
         if let Some(wait) = budget() {
             let wait = Duration::from_secs_f64(wait + MARGIN_SECS);
             if wait > pause {
@@ -488,6 +501,7 @@ fn lookout(args: &LookArgs) -> ExitCode {
     run_looks(
         "vas",
         args.watch,
+        LOOKOUT_FLOOR_SECS,
         || client.budget_wait_secs(),
         |_| {
             let text = look(
@@ -593,6 +607,7 @@ fn offers(args: OffersArgs) -> ExitCode {
     run_looks(
         "vas offers",
         args.watch,
+        OFFERS_FLOOR_SECS,
         || client.budget_wait_secs(),
         |missed| {
             let page = client.offers(&query, sort)?;

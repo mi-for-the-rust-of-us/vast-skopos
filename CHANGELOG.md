@@ -25,7 +25,7 @@ All notable changes to this project are documented here. The format is based on
   sends them with float noise (`0.4907407407407407`).
   Not with `--wide`. `compact::json_lines`, `runway::Runway` (the credit, the burn and the hours they
   last: the money line and the `money` object are both read from one).
-- `vas offers --watch SECONDS` (at least 30) searches again until Ctrl+C: each look is the whole table
+- `vas offers --watch SECONDS` (at least 20) searches again until Ctrl+C: each look is the whole table
   with `+` on the new machines, `0.594 (was 0.575)` on a moved price, a `SEEN` column (before `WHERE`: in
   how many looks the machine appeared, `15/15` or `3/9`), and under the footer the counts and the
   machines that are gone. vast.ai's search answers a flickering SAMPLE of the offers (measured
@@ -39,7 +39,7 @@ All notable changes to this project are documented here. The format is based on
   row is not gone), and a note says when vast.ai's 64-row cap may explain an entry or an exit.
   `OfferChanges` (and its `Repriced`), `render::offers_table_marked` (it takes the `MarketWatch`),
   `render::offers_changes_note`, `render::offers_changes_only` (the page first, like
-  `render::offers_footer`). `VAS_WATCH_FLOOR_MS` lowers the 30 s floor of both watches, for tests only.
+  `render::offers_footer`). `VAS_WATCH_FLOOR_MS` lowers the floor of both watches, for tests only.
 - `vas --credit-log FILE`: appends one CSV row per look (`unix_time,credit,burn_per_hour,running,unsure`,
   a header when the file is new or empty) so the credit becomes a curve and a box that bills while it reads
   `offline` shows as a credit that falls slower than the burn. Append-only, only when asked, never the key;
@@ -90,6 +90,13 @@ All notable changes to this project are documented here. The format is based on
   sleeps or retries.
 
 ### Changed
+
+- The `--watch` floor, 30 s for both watches until now (a guess made before vast.ai's limits were measured), is
+  10 s for `vas --watch` and 20 s for `vas offers --watch`: a `--watch` under it is still raised to it, and
+  said on stderr. vast.ai's own limits are read and obeyed whatever the floor says (the instances list allows
+  one call per window of about 3 s), so the floor is a courtesy to the service. 10 s tells a power cap, a
+  clock drop or another user of the GPU sooner; 20 s keeps a table from scrolling past unread (a terminal
+  that redraws in place, and 5 s for the offers, wait for a TUI).
 
 - BREAKING for library users: a 429 is no longer `SkoposError::Status { status: 429, .. }` but
   `SkoposError::RateLimited { .. }` (the enum is `#[non_exhaustive]`, so a `match` already had a wildcard).

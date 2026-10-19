@@ -164,7 +164,7 @@ fn compact_and_wide_are_refused_together() {
     assert!(stderr.contains("cannot be used with"), "{stderr}");
 }
 
-/// `vas args` as a WATCH against `respond`, the 30 s floor set to `floor_ms` (none: the real one),
+/// `vas args` as a WATCH against `respond`, the 10 s floor set to `floor_ms` (none: the real one),
 /// with piped stdout and stderr; the caller reads it and the home is left for the OS (a temp dir).
 fn spawn_watch(respond: common::Respond, args: &[&str], floor_ms: Option<&str>) -> Watch {
     let (base, _) = serve(respond);
@@ -279,13 +279,13 @@ fn a_watch_whose_first_look_is_refused_gives_up_instead_of_looping_on_stderr() {
 
 #[test]
 fn a_watch_shorter_than_the_floor_is_raised_and_says_so() {
-    // The real floor (30 s): the first look is immediate, and the raise is said on stderr.
+    // The real floor (10 s): the first look is immediate, and the raise is said on stderr.
     let mut child = spawn_watch(account, &["--compact", "--watch", "1"], None);
     let _ = read_lines_until(&mut child, "\"kind\":\"money\"", 1);
     let mut stderr = String::new();
     std::io::Read::read_to_string(&mut child.stderr.take().unwrap(), &mut stderr).unwrap();
     assert!(
-        stderr.contains("vas: --watch 1 is raised to 30 s"),
+        stderr.contains("vas: --watch 1 is raised to 10 s"),
         "{stderr}"
     );
     // And with the floor of the tests (50 ms, below the 1 s asked) nothing is raised.

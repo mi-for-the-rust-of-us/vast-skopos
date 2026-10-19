@@ -485,7 +485,7 @@ fn evolving_changes(_: &str) -> (u16, String) {
     (200, evolved(CHANGES_LOOKS.fetch_add(1, Ordering::SeqCst)))
 }
 
-/// `vas offers --no-config --watch 0 ARGS` against `base`, with the 30 s floor of `--watch` lowered
+/// `vas offers --no-config --watch 0 ARGS` against `base`, with the 20 s floor of `--watch` lowered
 /// to 50 ms; its stdout lines until one containing `marker` has been seen `times` times; then the
 /// process is killed.
 fn watch_lines(base: &str, name: &str, args: &[&str], marker: &str, times: usize) -> Vec<String> {
@@ -784,7 +784,7 @@ fn a_config_file_cannot_hold_a_watch() {
 }
 
 #[test]
-fn the_pause_between_two_looks_is_at_least_thirty_seconds_unless_a_test_says_otherwise() {
+fn the_pause_between_two_looks_is_at_least_twenty_seconds_unless_a_test_says_otherwise() {
     let (base, seen) = serve(counted_bundles);
     let home = fresh_home("floor");
     let mut child = Command::new(env!("CARGO_BIN_EXE_vas"))
@@ -800,7 +800,7 @@ fn the_pause_between_two_looks_is_at_least_thirty_seconds_unless_a_test_says_oth
         .spawn()
         .unwrap();
     // Wait for the first search however long the process takes to start (a scanned fresh exe, a
-    // loaded runner), THEN 1.5 s: past the 1 s asked, far short of the 30 s floor.
+    // loaded runner), THEN 1.5 s: past the 1 s asked, far short of the 20 s floor.
     let started = std::time::Instant::now();
     while FLOOR_CALLS.load(Ordering::SeqCst) == 0 {
         assert!(
@@ -821,7 +821,7 @@ fn the_pause_between_two_looks_is_at_least_thirty_seconds_unless_a_test_says_oth
     );
     assert_eq!(seen.lock().unwrap().len(), 1);
     assert!(
-        stderr.contains("--watch 1 is raised to 30 s"),
+        stderr.contains("--watch 1 is raised to 20 s"),
         "the raise is said once, on stderr: {stderr}"
     );
 }

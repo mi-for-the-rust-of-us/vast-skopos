@@ -165,7 +165,7 @@ ID        GPU          VRAM  $/H    CUDA  DISK   UP/DOWN Mb/s  REL %  MAX DAYS  
 | `vas --ssh -i ~/.ssh/id_ed25519` | use this private key (default: `ssh`'s own choice, agent and `~/.ssh/config`) |
 | `vas --wide` | also show each box's machine id and host id (what a rentals log, `--exclude-machine` and `--exclude-host` need) |
 | `vas --compact` | JSON Lines instead of the table, for scripts and monitors ([below](#vas---compact-json-lines)); not with `--wide` |
-| `vas --watch 60` | refresh every 60 s (at least 30) until Ctrl+C |
+| `vas --watch 60` | refresh every 60 s (at least 10) until Ctrl+C |
 | `vas --credit-log FILE` | append one CSV row per look to `FILE`: the credit as a curve ([below](#the-credit-history)) |
 | `vas --key-file FILE` | read the key from `FILE` |
 | `vas offers [FLAGS]` | the offers for rent that pass the flags, cheapest first; no key needed ([below](#vas-offers)) |
@@ -293,7 +293,7 @@ tells looks apart. `jq` does the rest, for example `vas --compact | jq -r 'selec
 | `--verified`, `--no-verified` | only machines vast.ai has verified; `--no-verified` cancels a config file's `--verified` |
 | `--exclude-country CC`, `--exclude-host ID`, `--exclude-machine ID` | leave out a country (two letters), a host or a machine (a host may own several; `vas --wide` shows yours); repeatable |
 | `--top N` (20), `--sort price\|reliability\|up` | how many rows, in which order |
-| `--watch SECONDS`, `--changes` | search again every N seconds (at least 30) until Ctrl+C, each look the whole table marked with what moved; `--changes` prints only what moved ([below](#watching-the-offers)) |
+| `--watch SECONDS`, `--changes` | search again every N seconds (at least 20) until Ctrl+C, each look the whole table marked with what moved; `--changes` prints only what moved ([below](#watching-the-offers)) |
 | `--config FILE`, `--no-config` | read the flags of `FILE` first, or of no file |
 
 **The config file** holds the same flags, one per line (`#` lines are comments, one pair of quotes
@@ -337,7 +337,7 @@ could answer under two or three offer ids. A single search is a sample of the ma
 answer with the next, offer by offer, would report that sampling as a market in turmoil, so a watch
 reads the machines over several looks instead.
 
-`vas offers --watch 60` searches again every minute (at least 30 s) until Ctrl+C. Each look is the whole
+`vas offers --watch 60` searches again every minute (at least 20 s) until Ctrl+C. Each look is the whole
 table and its footer. A machine is its machine id and its GPU count, not its offer id, and the table gains
 a `SEEN` column, before `WHERE`: in how many looks each machine appeared, out of the looks since it was
 first seen (`15/15` is a dependable listing, `3/9` one that flickers; why it flickers is not known).
@@ -368,7 +368,10 @@ A few details keep the notes honest:
 - A search that fails ends a watch whose FIRST look failed (a wrong `VAST_URL` or key would otherwise loop on
   stderr forever); after one look has succeeded, a failure is only said on stderr, and the next look reads
   `since the last successful look`. The lookout's `vas --watch` does the same.
-- A `--watch` under 30 s is raised to 30 s, and `vas` says so on stderr.
+- A `--watch` under the floor (10 s for `vas`, 20 s for `vas offers`) is raised to it, and `vas` says so on
+  stderr. The floor is a courtesy to the service: vast.ai's own limits are read and obeyed whatever it says.
+- A table every few seconds scrolls past unread in a terminal: for a person, `--changes` (one line per look and
+  per change) reads best; `vas --compact --watch N` is for scripts.
 - A config file cannot hold `--watch` or `--changes`: a file of filters must not turn a run into a loop.
 
 ### The API key
