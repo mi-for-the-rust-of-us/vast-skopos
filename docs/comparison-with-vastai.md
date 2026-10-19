@@ -31,7 +31,7 @@ complements, not alternatives: rent with `vastai` (or the dashboard), watch with
 | **Key hygiene** | the key is printed by nothing that we saw, but the CLI accepts it on the command line | redacted `Debug`, no `Display`, never in an error; the `users/current` answer, which contains the key, is never parsed beyond `credit` and `balance` |
 | **HTTP redirects** | followed (`requests`' default) | **never** followed, so the key is never re-sent elsewhere. This is why `vas` requests the canonical `/api/v0/users/current/`: the bare path answers 301 |
 | **Least-privilege key** | needs Write scopes for its write commands | works with **User Read + Instances Read** only |
-| **Maturity** | Vast.ai's own, actively released (1.8.3) | 0.1.0 released (2026-10-17), dogfooded on two rentals (Me35, Me36); 0.2.0 in preparation |
+| **Maturity** | Vast.ai's own, actively released (1.8.3) | 0.2.0 (0.1.0 was released on 2026-10-17), dogfooded on real rentals (Me35, Me36, and the RTX 3090 and RTX 5090 rentals of 2026-10-17 and 18) |
 
 ## When to use which
 

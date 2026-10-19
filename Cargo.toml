@@ -1,6 +1,6 @@
 [package]
 name = "vast-skopos"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 authors = ["Eric Jacopin"]
 description = "A lookout over your rented vast.ai boxes: status, cost, credit, and what the GPU is actually doing (over ssh). Not affiliated with vast.ai."

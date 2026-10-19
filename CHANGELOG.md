@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-19
+
 ### Added
 
 - `vas --wide`: two more columns, `MACHINE` and `HOST`, the ids the API gives (`Instance::machine_id`,
@@ -105,6 +107,8 @@ All notable changes to this project are documented here. The format is based on
 
 - BREAKING for library users: a 429 is no longer `SkoposError::Status { status: 429, .. }` but
   `SkoposError::RateLimited { .. }` (the enum is `#[non_exhaustive]`, so a `match` already had a wildcard).
+  The new variant also shifts the position (discriminant) of the variants after it; nothing should depend on
+  that, the enum having no `repr`.
 - `vas --ssh` asks the account for its credit WHILE the probes run, instead of before them: the
   request needs nothing from them, and they take seconds (`probe::probe_all`, which the binary used to
   hold, now takes the instances and returns one outcome per instance). `probe::ssh_command` (hidden
