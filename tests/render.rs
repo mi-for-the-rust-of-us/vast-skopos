@@ -749,7 +749,7 @@ fn a_label_a_status_and_a_host_from_the_api_are_capped_and_the_port_survives() {
     }
     let row = text.lines().nth(1).unwrap();
     assert!(
-        !row.contains(&"x".repeat(41)),
+        !row.contains(&"x".repeat(41)), // (the cell cap, `TEXT_WIDTH`, is 40)
         "label and status are capped: {row}"
     );
     assert!(!row.contains(&"h".repeat(41)), "the host is capped: {row}");

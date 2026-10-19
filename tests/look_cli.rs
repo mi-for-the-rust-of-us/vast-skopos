@@ -1053,17 +1053,15 @@ fn two_pages_spent(target: &str) -> (u16, Vec<(String, String)>, String) {
                 .to_owned(),
         )
     } else if target.starts_with("/api/v1/instances/") {
-        let reset = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs()
-            + 1;
+        // Two seconds ahead, whole: whatever the fraction of the second, the reset is still in the
+        // future when `vas` reads the header.
+        let reset = format!("{:.0}", common::unix_now() + 2.0);
         (
             200,
             vec![
                 ("X-RateLimit-Limit".to_owned(), "1".to_owned()),
                 ("X-RateLimit-Remaining".to_owned(), "0".to_owned()),
-                ("X-RateLimit-Reset".to_owned(), reset.to_string()),
+                ("X-RateLimit-Reset".to_owned(), reset),
             ],
             r#"{"instances": [{"id": 666, "actual_status": "exited"}], "next_token": "tok-2"}"#
                 .to_owned(),
@@ -1135,16 +1133,33 @@ fn absurd_budget(target: &str) -> (u16, Vec<(String, String)>, String) {
 fn a_watch_does_not_sleep_for_an_absurd_budget_and_says_how_long_it_waits_instead() {
     let (base, _) = common::serve_with(absurd_budget);
     let mut watch = spawn_watch_at(&base, &["--watch", "0"], Some("50"));
-    let mut stderr = std::io::BufReader::new(watch.stderr.take().unwrap());
+    // Read stderr on a thread, so a message that never comes is a failure at the deadline, not a hang.
+    let stderr = watch.stderr.take().unwrap();
+    let (lines, heard) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for line in std::io::BufReader::new(stderr)
+            .lines()
+            .map_while(Result::ok)
+        {
+            if lines.send(line).is_err() {
+                break;
+            }
+        }
+    });
     let mut said = String::new();
-    let mut line = String::new();
-    while stderr.read_line(&mut line).unwrap_or(0) > 0 {
+    let until = std::time::Instant::now() + common::PROCESS_DEADLINE;
+    while let Some(left) = until.checked_duration_since(std::time::Instant::now()) {
+        let Ok(line) = heard.recv_timeout(left) else {
+            break;
+        };
         said.push_str(&line);
+        said.push('\n');
         if line.contains("budget renews") {
             break;
         }
-        line.clear();
     }
+    // The text says what the watch will do: it waits 900 s at most (the bound itself is tested on
+    // `budget_pause`), and it says so at once rather than sleeping for the raw reset.
     assert!(
         said.contains("more than a watch waits: the next look waits 900 s"),
         "{said}"

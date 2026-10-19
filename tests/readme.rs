@@ -75,6 +75,8 @@ fn the_probe_columns_are_named_in_the_order_the_table_prints_them() {
     );
     let header = columns(real.lines().next().unwrap());
     let from = header.iter().position(|c| c == "GPU% (ssh)").unwrap();
+    // The README names the columns up to the last one, `LAST LOG / SSH ERROR`, which it describes
+    // apart (it is the log's, not a reading of the GPU).
     let probe_columns = &header[from..];
     let said = format!(
         "in order: `{}`",
@@ -112,7 +114,8 @@ fn the_compact_example_has_the_keys_the_json_has() {
         keys(&real["probe"]["log"]),
         "the log object"
     );
-    // The `kind`s the README names are the ones the code prints.
+    // The README names the three kinds (the code prints `box` and `money` here, and `event` under
+    // `--ssh --watch`, which tests/power.rs and tests/other.rs check).
     for kind in ["box", "event", "money"] {
         assert!(readme.contains(&format!("`{kind}`")), "{kind}");
     }

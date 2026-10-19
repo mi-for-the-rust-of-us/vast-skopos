@@ -1,12 +1,9 @@
 //! The missing-key error, with and without the `.txt` hint.
 
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::indexing_slicing,
-    clippy::panic
-)]
+#![allow(clippy::unwrap_used)]
 // EXPLICIT: test code -- a failed unwrap IS the failed assertion.
+
+mod common;
 
 use std::path::{Path, PathBuf};
 
@@ -41,13 +38,14 @@ fn no_api_key_reads_well_with_and_without_the_hint() {
     assert!(!with.ends_with('.'), "no trailing period: {with}");
 }
 
-/// A scratch file under the temp dir with these bytes.
-fn file_with(name: &str, bytes: &[u8]) -> PathBuf {
+/// A scratch file under the temp dir with these bytes, and the guard that removes its folder when
+/// the test ends, even when an assertion panics first.
+fn file_with(name: &str, bytes: &[u8]) -> (PathBuf, common::RemoveOnDrop) {
     let dir = std::env::temp_dir().join(format!("vas-keytest-{name}-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("vast_api_key");
     std::fs::write(&file, bytes).unwrap();
-    file
+    (file, common::RemoveOnDrop(dir))
 }
 
 #[test]
@@ -69,7 +67,7 @@ fn a_key_is_one_word_and_anything_else_is_refused_with_a_message_that_does_not_s
     assert!(ApiKey::new("   ").is_none());
     // From a file: a second line is an error that says what is wrong, not a missing key and not a
     // failure about a header at the first request, and that never prints the key.
-    let file = file_with("twolines", b"SECRETKEY123\nsecond line\n");
+    let (file, _file_dir) = file_with("twolines", b"SECRETKEY123\nsecond line\n");
     let err = ApiKey::from_file(&file).unwrap_err();
     let text = err.to_string();
     assert!(matches!(err, SkoposError::KeyFile { .. }), "{text}");
@@ -79,17 +77,14 @@ fn a_key_is_one_word_and_anything_else_is_refused_with_a_message_that_does_not_s
     );
     assert!(!text.contains("SECRETKEY123"), "{text}");
     // A blank file is still a missing key.
-    let blank = file_with("blank", b"  \r\n");
+    let (blank, _blank_dir) = file_with("blank", b"  \r\n");
     assert!(matches!(
         ApiKey::from_file(&blank).unwrap_err(),
         SkoposError::NoApiKey { .. }
     ));
     // A good one.
-    let good = file_with("good", b"k3y123\r\n");
+    let (good, _good_dir) = file_with("good", b"k3y123\r\n");
     assert!(ApiKey::from_file(&good).is_ok());
-    for f in [file, blank, good] {
-        let _ = std::fs::remove_dir_all(f.parent().unwrap());
-    }
 }
 
 #[test]
@@ -102,17 +97,14 @@ fn a_utf16_key_file_is_read_whole_or_refused_never_half_read() {
         bytes.extend_from_slice(extra);
         bytes
     };
-    let whole = file_with("utf16", &utf16("k3y123\r\n", &[]));
+    let (whole, _whole_dir) = file_with("utf16", &utf16("k3y123\r\n", &[]));
     assert!(
         ApiKey::from_file(&whole).is_ok(),
         "what PowerShell 5.1's > writes"
     );
-    // A truncated file: one byte of the last unit. It was read as a shorter, valid key.
-    let cut = file_with("utf16cut", &utf16("k3y123", &[0x41]));
+    // A truncated file: one byte of the last unit is refused, not read as a shorter key.
+    let (cut, _cut_dir) = file_with("utf16cut", &utf16("k3y123", &[0x41]));
     let err = ApiKey::from_file(&cut).unwrap_err();
     assert!(matches!(err, SkoposError::KeyFile { .. }), "{err}");
     assert!(err.to_string().contains("UTF-16"), "{err}");
-    for f in [whole, cut] {
-        let _ = std::fs::remove_dir_all(f.parent().unwrap());
-    }
 }

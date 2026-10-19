@@ -182,7 +182,7 @@ impl OffersArgs {
     /// The constraints, as the search's query.
     fn query(&self) -> OfferQuery {
         let mut q = OfferQuery::default();
-        // BORROW: explicit clones -- the query owns the flags it was built from
+        // The query owns the flags it was built from.
         q.gpu.clone_from(&self.gpu);
         q.num_gpus = self.num_gpus;
         q.disk = self.disk;
@@ -355,6 +355,16 @@ const MARGIN_SECS: f64 = 1.0;
 /// server that wants the watch gone, and a watch that slept for it would look hung.
 const MAX_BUDGET_WAIT_SECS: f64 = 900.0;
 
+/// Sits out `wait` seconds of a rate limit, and the margin, after saying so on stderr:
+/// `{who}: rate-limited: waiting N s{then}`. The callers bound `wait` by [`PATIENCE_SECS`].
+fn sit_out(who: &str, wait: f64, then: &str) {
+    eprintln!(
+        "{who}: rate-limited: waiting {:.0} s{then}",
+        wait.ceil().max(1.0)
+    );
+    std::thread::sleep(Duration::from_secs_f64(wait + MARGIN_SECS));
+}
+
 /// How long to wait for a budget that renews in `wait_secs`: that and a margin, never more than
 /// [`MAX_BUDGET_WAIT_SECS`] (nor a panic on an absurd or non-finite value).
 fn budget_pause(wait_secs: f64) -> Duration {
@@ -405,11 +415,7 @@ fn run_looks(
     loop {
         let mut result = look(missed);
         if let Some(wait) = short_rate_wait(&result) {
-            eprintln!(
-                "{who}: rate-limited: waiting {:.0} s, then trying again",
-                wait.ceil().max(1.0)
-            );
-            std::thread::sleep(Duration::from_secs_f64(wait + MARGIN_SECS));
+            sit_out(who, wait, ", then trying again");
             result = look(missed);
         }
         match result {
@@ -466,16 +472,11 @@ fn look(
     // The list pages by 25 and its budget is one call per window: between two pages a short wait is
     // sat out (said aloud), a long one ends the look like any other rate limit.
     let instances = client.instances_with(|wait| {
-        if wait <= PATIENCE_SECS {
-            eprintln!(
-                "vas: rate-limited: waiting {:.0} s before the next page of instances",
-                wait.ceil().max(1.0)
-            );
-            std::thread::sleep(Duration::from_secs_f64(wait + MARGIN_SECS));
-            true
-        } else {
-            false
+        let sit = wait <= PATIENCE_SECS;
+        if sit {
+            sit_out("vas", wait, " before the next page of instances");
         }
+        sit
     })?;
     let (account, probes) = std::thread::scope(|scope| {
         let account = scope.spawn(|| client.account());
@@ -707,6 +708,8 @@ fn main() -> ExitCode {
 // EXPLICIT: test code -- a failed unwrap IS the failed assertion.
 #[allow(clippy::unwrap_used)]
 mod tests {
+    use std::time::Duration;
+
     use clap::CommandFactory;
     use vast_skopos::market::{ABSENT_FOR_GONE, LEARNING_LOOKS};
 
@@ -716,7 +719,6 @@ mod tests {
 
     #[test]
     fn a_budget_is_waited_for_with_a_margin_and_never_longer_than_a_watch_waits() {
-        use std::time::Duration;
         assert_eq!(
             budget_pause(2.0),
             Duration::from_secs_f64(2.0 + MARGIN_SECS)

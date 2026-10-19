@@ -1,11 +1,7 @@
 //! What the readers do with text and numbers they do not trust: characters that hide or reorder what
 //! is shown, and numbers written in the other way a serialiser may write them.
 
-#![allow(
-    clippy::unwrap_used,
-    clippy::indexing_slicing,
-    clippy::unnecessary_wraps
-)]
+#![allow(clippy::unwrap_used, clippy::unnecessary_wraps)]
 // EXPLICIT: test code -- a failed unwrap IS the failed assertion; and `outcome` returns the
 // `ProbeOutcome` (an `Option`) that the API takes.
 

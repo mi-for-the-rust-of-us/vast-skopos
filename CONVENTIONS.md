@@ -322,10 +322,15 @@ is a change of rule, with its own review, not a silent fallback.
 vast.ai budgets the calls of each endpoint per window and says so in `X-RateLimit-Limit`, `-Remaining`
 and `-Reset` (seen 2026-10-18: 30 for the offer search, ONE for the instances list). The library
 REPORTS: the clients keep what each answer said (`api::RateLimit`, `budget_wait_secs`), and a 429 is
-`SkoposError::RateLimited` with the wait; it never sleeps and never retries. The binary decides:
-one wait of at most `PATIENCE_SECS` per look, said on stderr, then one retry; a longer wait is named
-and ends the run; a watch leaves at least the budget's reset between two looks. No loop of retries,
-ever: a refused call is a person's decision, as for a refused `ssh`.
+`SkoposError::RateLimited` with the wait; it never sleeps and never retries (`Client::instances_with`
+asks the caller what to do when the budget is spent BETWEEN two pages, and the caller sleeps, if it
+does). The binary decides: a wait of at most `PATIENCE_SECS`, said on stderr, before each further page
+of the instances list and once before the one retry of a look a 429 refused; a longer wait is named
+and ends the run; a watch leaves at least the budget's reset between two looks, and never more than
+`MAX_BUDGET_WAIT_SECS` (900 s: a longer reset is a mis-scaled header, said on stderr), and never less
+than its floor (10 s for the lookout, 20 s for `vas offers`: a courtesy, since the limits above are
+obeyed anyway). No loop of retries, ever: a refused call is a person's decision, as for a refused
+`ssh`.
 
 ### Lenient Reading
 

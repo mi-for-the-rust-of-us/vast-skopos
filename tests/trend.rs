@@ -290,8 +290,9 @@ fn readings_that_would_overflow_a_sum_are_averaged_not_a_panic() {
     trend.record(&boxes, &[Some(Ok(parse_output(&huge)))]);
     assert_eq!(trend.samples(7), [u32::MAX]);
     assert_eq!(trend.clock_samples(7), [u32::MAX]);
-    // 1e30 W or MHz saturates at the reading, not at a panic, and the next look goes on.
+    // 1e30 MHz saturates at `u32::MAX` as a reading, not at a panic, and the next look goes on.
     let silly = "0, 1, 1, 2\n---vas-power---\n0, 1e30, 1e30, 1e30, 1e30, 1e30, 0x0\n";
     trend.record(&boxes, &[Some(Ok(parse_output(silly)))]);
+    assert_eq!(trend.clock_samples(7), [u32::MAX, u32::MAX]);
     assert_eq!(trend.samples(7).len(), 2);
 }

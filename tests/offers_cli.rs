@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use common::{RemoveOnDrop, Request, decode_q, fixture, read_lines_until, serve};
+use common::{RemoveOnDrop, Request, decode_q, fixture, read_lines_until, serve, unix_now};
 use vast_skopos::market::{ABSENT_FOR_GONE, LEARNING_LOOKS};
 
 /// Every target answered with the fixture's real rows.
@@ -892,14 +892,6 @@ fn a_closed_stdout_ends_an_offers_watch_quietly_instead_of_looping_on() {
     // The reader is dropped at the end of the statement above: the pipe is closed.
     let status = common::exit_within_deadline(&mut child);
     assert_eq!(status.code(), Some(0), "a closed pipe is not a failure");
-}
-
-/// Unix seconds now.
-fn unix_now() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs_f64()
 }
 
 /// A `vas offers` child (no config, no key) with its stderr piped, its stdout `stdout`, and a home

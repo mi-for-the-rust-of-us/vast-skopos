@@ -127,6 +127,9 @@ pub(crate) fn boolean(row: &Value, field: &str) -> Option<bool> {
 }
 
 /// A whole, non-negative number below 2^53 (what an `f64` holds exactly), as an integer: `5.0` is 5.
+///
+/// ([`whole_secs`] is the crate's one `f64` → `u64` truncation, named for the seconds it was first
+/// written for; here the value is already whole.)
 fn integral(value: f64) -> Option<u64> {
     (value.is_finite() && value >= 0.0 && value.fract() == 0.0 && value < 9_007_199_254_740_992.0)
         .then(|| whole_secs(value))

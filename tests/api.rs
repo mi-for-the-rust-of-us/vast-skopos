@@ -11,7 +11,7 @@
 
 mod common;
 
-use common::{Respond, RespondWith, decode_q, fixture, serve};
+use common::{Respond, RespondWith, decode_q, fixture, serve, unix_now};
 use vast_skopos::SkoposError;
 use vast_skopos::api::{Client, RateLimit, SearchClient};
 use vast_skopos::key::ApiKey;
@@ -343,14 +343,6 @@ fn a_numeric_next_token_is_followed_like_a_string_one() {
     let rows = client.instances().unwrap();
     assert_eq!(rows.iter().map(|i| i.id).collect::<Vec<_>>(), [1, 2]);
     assert!(seen.lock().unwrap()[1].target.contains("after_token=7"));
-}
-
-/// Unix seconds now, as a header value.
-fn unix_now() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs_f64()
 }
 
 /// The instances list with a budget of ONE call spent and renewed in 5 s; the account and the offer

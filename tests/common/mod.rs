@@ -15,6 +15,14 @@ use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
 
+/// Unix seconds now.
+pub fn unix_now() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs_f64()
+}
+
 /// One request as the mock saw it.
 #[derive(Debug, Clone)]
 pub struct Request {

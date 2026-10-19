@@ -64,6 +64,7 @@ fn is_loopback(base: &str) -> bool {
     } else {
         host.split(':').next().unwrap_or_default()
     };
+    // BORROW: explicit as_str -- the lower-cased host is matched against string literals
     matches!(
         host.to_ascii_lowercase().as_str(),
         "127.0.0.1" | "localhost" | "::1"
