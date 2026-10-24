@@ -2,9 +2,11 @@
 
 **Not affiliated with vast.ai.** This page compares `vas` (this crate) with
 [`vastai`](https://pypi.org/project/vastai/), the CLI and SDK published by Vast.ai. Facts about
-`vastai` come from its PyPI page (read 2026-10-16: version 1.8.3, released 2026-10-02) and from the
-source of its `vast.py` (the `vast-ai/vast-cli` repository, read 2026-10-15/16). Where a cell says
-"not verified", we did not check it.
+`vastai` come from its PyPI page (read 2026-10-16: version 1.8.3, released 2026-10-02; read again
+2026-10-24: **version 1.9.1, released 2026-10-23**) and from the source of its `vast.py` (the
+`vast-ai/vast-cli` repository, read 2026-10-15/16; the cells marked *(2026-10-24)* come from its master
+at `42c3a47`, read that day, not checked against the 1.9.1 wheel). Where a cell says "not verified", we
+did not check it.
 
 **In one sentence:** `vastai` is the full tool to rent and manage boxes; `vas` is a read-only
 lookout that tells you what your rented boxes are actually doing and what they cost. They are
@@ -16,13 +18,18 @@ complements, not alternatives: rent with `vastai` (or the dashboard), watch with
 | **Language, install** | Python ≥ 3.10, `pip install vastai` | Rust, one static binary, `cargo install vast-skopos` |
 | **License** | MIT | MIT OR Apache-2.0 |
 | **Search offers** | yes (`vastai search offers`: a query language over every offer field, sent as a `POST` to `/api/v0/bundles/`, with the key) | yes, narrower and keyless: `vas offers` with the flags a rental is chosen by (GPU, CUDA, disk, reliability, bandwidth, price, duration, verified, countries and hosts left out), from a config file of flags and the command line. The legacy `GET` form, no `Authorization` header. Every constraint is re-checked on each row, and the footer says when vast.ai's 64-row cap was reached (it answers `truncated: false` all the same) |
+| **DLPerf in the offers** *(2026-10-24)* | yes: `DLP` (vast.ai's deep-learning performance score) and `DLP/$` are default columns of `search offers` | **not yet** (dogfooding 2026-10-23, notes 7 and 8). On 2026-10-24 an RTX 5090 with a DLPerf 17 % below another's turned out capped at 475 W against 575 W: one pair, to confirm |
+| **Identifying a machine in the offers** *(2026-10-24)* | yes: `mach_id`, `host_id`, `NV Driver`, `PCIE`, `cpu_ghz` and `vCPUs` are default columns; every field with `--raw` | the host id only, and `--exclude-host` / `--exclude-machine` filters. Telling "the machine we had" from a sibling on the same host took the raw API (dogfooding 2026-10-23, note 7) |
+| **Verification statuses** *(2026-10-24)* | three, `verified`, `unverified` and `deverified`, coloured in `show instances-v1`, which filters on them (`--verification`); offers by query (`verified=False`) | the offer search's `VERIFICATION` column shows all three; the filter is `--verified` / `--no-verified`, which cannot keep unverified offers while hiding deverified ones (dogfooding 2026-10-23, note 9, proposes `--no-deverified`) |
 | **Create / stop / destroy instances** | yes | **no, by design**: `vas` only ever issues `GET` |
 | **Serverless endpoints** | yes (a serverless client) | no |
 | **SDK (library use)** | yes, Python | yes, a small Rust library (`key`, `api`, `instance`, `offer`, `probe`, `render`, `runway`, `compact`) |
-| **List instances** | yes (`show instances`, paginated `/api/v1/instances/`) | yes, the same endpoint and pagination, read field by field so an API change costs one cell, not the table |
+| **List instances** | yes (`show instances`, paginated `/api/v1/instances/`); *(2026-10-24)* also `show instances-v1`, with filters (`--status`, `--label`, `--gpu-name`, `--verification`), `--order-by` and `--cols` | yes, the same endpoint and pagination, read field by field so an API change costs one cell, not the table |
+| **vast.ai's status message** *(2026-10-24)* | yes: `status_msg`, in `show instances-v1 -v`'s columns, cut to 40 characters | **not yet** (dogfooding 2026-10-23, note 5). On 2026-10-24 it told two starting boxes ("Pull complete") from stuck ones, which `STATUS` alone (`loading`, `rebooting`, `?`) could not |
 | **Account credit** | yes (`show user`) | yes, plus the **burn rate** of the running boxes and the **hours of runway** it buys |
 | **Cost so far per box** | the dashboard and invoices | an estimate per row (today's `$/h` × age), labelled `COST~` |
 | **GPU utilisation** | the API's `gpu_util` field | **read on the box** over `ssh` (`nvidia-smi`), with VRAM. The API's field is not shown: it read 0 % on boxes running at 97-99 % (2026-10-15) |
+| **GPU power limit** *(2026-10-24)* | a field of the offer query language, `gpu_max_power` ("GPU power limit (watts)"): filterable (`'gpu_max_power>=575'`), not a default column. It comes from the listing, not from the card: whether it shows an ENFORCED cap is untested (the instance rows of two rented RTX 5090s left it empty on 2026-10-24) | **read on the box** over `ssh` (`nvidia-smi`): the enforced limit against the board's maximum, the throttle reasons, the clocks (`POWER`, `CLOCK`). It caught a 500 W cap (2026-10-23) and a 475/600 W one (2026-10-24); such a cap cost 12-15 % per step and was not priced in (dogfooding 2026-10-23) |
 | **What the run is doing** | `vastai logs` exists for container logs (not verified in detail) | `--log <glob>`: the newest matching file on each box, named by its last two path components (so a glob over sequential runs says which run), and its last non-blank line, cleaned (no control characters, at most 120 characters); `(empty)`, `(not a file)` or `(no file matches)` otherwise |
 | **Watching** | one-shot commands | `--watch N`: the table every N seconds (at least 10, `vas offers`: 20) |
 | **ssh address** | `ssh-url`: a mapped `22/tcp` port when present, else the proxy at `ssh_port`, or `ssh_port + 1` for Jupyter-launched instances | the proxy rule (`+1` for Jupyter), matching the dashboard's command |
@@ -31,12 +38,16 @@ complements, not alternatives: rent with `vastai` (or the dashboard), watch with
 | **Key hygiene** | the key is printed by nothing that we saw, but the CLI accepts it on the command line | redacted `Debug`, no `Display`, never in an error; the `users/current` answer, which contains the key, is never parsed beyond `credit` and `balance` |
 | **HTTP redirects** | followed (`requests`' default) | **never** followed, so the key is never re-sent elsewhere. This is why `vas` requests the canonical `/api/v0/users/current/`: the bare path answers 301 |
 | **Least-privilege key** | needs Write scopes for its write commands | works with **User Read + Instances Read** only |
-| **Maturity** | Vast.ai's own, actively released (1.8.3) | 0.2.0 (0.1.0 was released on 2026-10-17), dogfooded on real rentals (Me35, Me36, and the RTX 3090 and RTX 5090 rentals of 2026-10-17 and 18) |
+| **Maturity** | Vast.ai's own, actively released (1.9.1 on 2026-10-23; 1.8.3 on 2026-10-02) | 0.2.0 (0.1.0 was released on 2026-10-17), dogfooded on real rentals (Me35, Me36, the RTX 3090 and RTX 5090 rentals of 2026-10-17 and 18, and askesis's Me38 rentals of 2026-10-22, 23 and 24) |
 
 ## When to use which
 
 - **Choosing what to rent:** `vas offers`, with your filters in its config file, then rent the `ID`
   you chose with `vastai create instance` or the dashboard.
+- **"Is the card I just rented capped?"** `vas --ssh` as soon as the box runs, before deploying:
+  `POWER` reads the enforced limit against the board's maximum. On 2026-10-24 it chose between two
+  RTX 5090s the listing showed as identical (575 W against 475/600 W), and the uncapped one then
+  matched the fastest step time measured so far.
 - **Renting, resizing, stopping, destroying:** `vastai` or the dashboard. `vas` cannot, and will not.
 - **"Are my runs actually training, and how long does my credit last?"** `vas --ssh --log ... --watch 300`:
   one table, measured on the boxes, with the runway.
