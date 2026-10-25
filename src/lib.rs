@@ -9,7 +9,8 @@
 //! that rate. With `--ssh`, each running box is also asked directly, once, what its GPUs are doing
 //! (`nvidia-smi`) and, with `--log`, which log it read and that log's last non-blank line: the
 //! dashboard's GPU utilisation is not trusted, because it has been seen to read 0 % on boxes at
-//! 97-99 %. `--compact` prints the same readings as JSON Lines, and `--watch` repeats the look.
+//! 97-99 %. `--compact` prints the same readings as JSON Lines, and `--watch` repeats the look
+//! (until a log line matches, with `--until`).
 //!
 //! `vas offers`: the offers for rent that pass your constraints (cheapest first by default), with no key
 //! ([`api::SearchClient`]); with `--watch`, the list again every so often, marked with what moved.
@@ -27,6 +28,7 @@
 //! - [`runway`]: the credit, the burn and the hours they last, as the money line and `--compact` read them;
 //! - [`compact`]: the same readings as JSON Lines, for scripts and monitors;
 //! - [`trend`]: the last GPU utilisation and clock samples of each box, and what changed in their power, kept by a watch;
+//! - [`until`]: whether a look found the line `vas --until` waits for;
 //! - [`creditlog`]: the credit history, one CSV row per look, in the file `--credit-log` names;
 //! - [`error`]: [`SkoposError`] and the [`Result`] alias every fallible call returns.
 
@@ -44,6 +46,7 @@ pub mod probe;
 pub mod render;
 pub mod runway;
 pub mod trend;
+pub mod until;
 
 pub use error::{Result, SkoposError};
 

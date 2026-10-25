@@ -1,0 +1,123 @@
+//! `vas --until`, end to end: a fake `ssh` first on the `PATH` runs the remote command with the local
+//! `sh` (and a fake `nvidia-smi`), against a scratch log. Linux only, as `tests/remote.rs`: the boxes
+//! are Linux, and the remote command needs `timeout`.
+
+#![cfg(target_os = "linux")]
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+// EXPLICIT: test code -- a failed unwrap IS the failed assertion.
+
+mod common;
+
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+
+use common::{KillOnDrop, RemoveOnDrop, exit_within_deadline, serve};
+
+/// One running box, at an address the fake `ssh` never resolves; and the account.
+fn one_box(target: &str) -> (u16, String) {
+    if target.starts_with("/api/v1/instances/") {
+        (
+            200,
+            r#"{"instances": [{"id": 77, "actual_status": "running", "intended_status": "running",
+                "dph_total": 0.5, "start_date": 1.0, "ssh_host": "box.invalid", "ssh_port": 22}],
+                "next_token": null}"#
+                .to_owned(),
+        )
+    } else {
+        (200, r#"{"credit": 5.0, "balance": 0}"#.to_owned())
+    }
+}
+
+/// A scratch directory with a `bin` holding a fake `ssh` (it runs its last argument, the remote
+/// command, with `sh`) and a fake `nvidia-smi` (one busy GPU), and a `runs/s0` for the log.
+fn scratch(name: &str) -> RemoveOnDrop {
+    let dir = std::env::temp_dir().join(format!("vas-until-{}-{name}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    let bin = dir.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    fs::create_dir_all(dir.join("runs/s0")).unwrap();
+    let script = |file: &str, text: &str| {
+        let path = bin.join(file);
+        fs::write(&path, text).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    };
+    script(
+        "ssh",
+        "#!/bin/sh\nfor last; do :; done\nexec sh -c \"$last\"\n",
+    );
+    script(
+        "nvidia-smi",
+        "#!/bin/sh\ncase \"$*\" in *utilization.gpu*) echo \"0, 99, 1000, 32607\" ;; esac\n",
+    );
+    RemoveOnDrop(dir)
+}
+
+/// `vas --ssh --log <dir>/runs/*/run.log --watch 0 --until <pattern>`, the fake `ssh` first on the
+/// `PATH`, against the mock at `base`.
+fn wait_for(base: &str, dir: &Path, pattern: &str) -> KillOnDrop {
+    let path = format!(
+        "{}:{}",
+        dir.join("bin").display(),
+        std::env::var("PATH").unwrap()
+    );
+    let glob = format!("{}/runs/*/run.log", dir.display());
+    let child = Command::new(env!("CARGO_BIN_EXE_vas"))
+        .args(["--ssh", "--log", &glob, "--watch", "0", "--until", pattern])
+        .env("VAST_URL", base)
+        .env("VAST_API_KEY", "k3y")
+        .env("HOME", dir)
+        .env("PATH", path)
+        .env("VAS_WATCH_FLOOR_MS", "50")
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    KillOnDrop(Some(child))
+}
+
+fn stderr_of(child: &mut KillOnDrop) -> String {
+    let mut text = String::new();
+    std::io::Read::read_to_string(&mut child.stderr.take().unwrap(), &mut text).unwrap();
+    text
+}
+
+fn log(dir: &Path) -> PathBuf {
+    dir.join("runs/s0/run.log")
+}
+
+#[test]
+fn a_line_already_there_ends_the_wait_at_the_first_look() {
+    let dir = scratch("there");
+    fs::write(log(&dir.0), "initial loss 4.21\neval 1\neval 2\n").unwrap();
+    let (base, _) = serve(one_box);
+    let mut child = wait_for(&base, &dir.0, "initial loss|Traceback");
+    let status = exit_within_deadline(&mut child);
+    let stderr = stderr_of(&mut child);
+    assert_eq!(status.code(), Some(0), "{stderr}");
+    assert!(
+        stderr.contains("vas: --until: box 77 matched: initial loss 4.21"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn the_wait_goes_on_until_the_line_is_written() {
+    let dir = scratch("later");
+    fs::write(log(&dir.0), "step 1\n").unwrap();
+    let (base, _) = serve(one_box);
+    let mut child = wait_for(&base, &dir.0, "initial loss");
+    // Several looks find nothing: the box is read, so the wait goes on.
+    std::thread::sleep(std::time::Duration::from_millis(600));
+    assert!(
+        child.try_wait().unwrap().is_none(),
+        "{}",
+        stderr_of(&mut child)
+    );
+    fs::write(log(&dir.0), "step 1\ninitial loss 3.9\nstep 2\n").unwrap();
+    let status = exit_within_deadline(&mut child);
+    let stderr = stderr_of(&mut child);
+    assert_eq!(status.code(), Some(0), "{stderr}");
+    assert!(stderr.contains("matched: initial loss 3.9"), "{stderr}");
+}

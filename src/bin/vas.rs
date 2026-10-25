@@ -22,6 +22,7 @@ use vast_skopos::render::{
 };
 use vast_skopos::runway::Runway;
 use vast_skopos::trend::Trend;
+use vast_skopos::until::{UNREAD_LOOKS, Verdict, verdict};
 
 /// The command line: the lookout's flags, or the `offers` subcommand. (`--help` opens with `about`,
 /// which is Cargo.toml's `description`: one place to say what `vas` is.)
@@ -64,6 +65,18 @@ struct LookArgs {
     /// pattern)" when it is not one. Quoted for the box's shell: nothing in it is expanded.
     #[arg(long, value_name = "PATTERN", requires = "log", value_parser = grep_pattern)]
     grep: Option<String>,
+    /// With --log and --watch: wait for a line matching this pattern (as --grep reads it, which it
+    /// replaces) on any box, then exit 0 with that line on stderr. Exits 3 when no box could be read
+    /// for 2 looks in a row (every probe failed, or no box is running or starting); a box still
+    /// starting keeps the wait going.
+    #[arg(
+        long,
+        value_name = "PATTERN",
+        requires_all = ["log", "watch"],
+        conflicts_with = "grep",
+        value_parser = grep_pattern
+    )]
+    until: Option<String>,
     /// With --ssh: the private key to use (default: ssh's own choice, agent and ~/.ssh/config).
     #[arg(long, short = 'i', value_name = "FILE", requires = "ssh")]
     identity: Option<PathBuf>,
@@ -424,7 +437,7 @@ fn budget_pause(wait_secs: f64) -> Duration {
 }
 
 /// The wait a rate-limit refusal asks for, when it is short enough to sit out.
-fn short_rate_wait(result: &Result<String, vast_skopos::SkoposError>) -> Option<f64> {
+fn short_rate_wait<T>(result: &Result<T, vast_skopos::SkoposError>) -> Option<f64> {
     if let Err(vast_skopos::SkoposError::RateLimited {
         retry_after: Some(wait),
         ..
@@ -437,11 +450,23 @@ fn short_rate_wait(result: &Result<String, vast_skopos::SkoposError>) -> Option<
     }
 }
 
-/// Runs `look` once, or every `--watch` seconds until Ctrl+C; the exit code.
+/// How a look ends the run, when it does (`vas --until`): the exit code, and the line said on stderr
+/// after the look's text.
+struct Stop {
+    /// The exit code.
+    code: ExitCode,
+    /// What is said, after `who: `.
+    said: String,
+}
+
+/// The exit code of a wait that gave up: no box could be read for [`UNREAD_LOOKS`] looks in a row.
+const GAVE_UP: u8 = 3;
+
+/// Runs `look` once, or every `--watch` seconds until Ctrl+C or a look's [`Stop`]; the exit code.
 ///
 /// `who` names the command in what it says on stderr; `floor_secs` is the shortest pause the watch
-/// accepts between two looks. `look(missed)` is one look: its text, or why
-/// it failed, `missed` being whether a look failed since the last one that was printed. `budget()`
+/// accepts between two looks. `look(missed)` is one look: its text and, when it ends the run, its
+/// stop; or why it failed, `missed` being whether a look failed since the last one that was printed. `budget()`
 /// is how many seconds vast.ai's answers say to leave it alone (see `Client::budget_wait_secs`): a
 /// look refused for a short rate limit waits it out ONCE, aloud, and a watch leaves at least that
 /// long between two looks. A closed pipe (`vas --watch 60 | head`) ends the run quietly: the reader
@@ -451,7 +476,7 @@ fn run_looks(
     watch: Option<u64>,
     floor_secs: u64,
     budget: impl Fn() -> Option<f64>,
-    mut look: impl FnMut(bool) -> Result<String, vast_skopos::SkoposError>,
+    mut look: impl FnMut(bool) -> Result<(String, Option<Stop>), vast_skopos::SkoposError>,
 ) -> ExitCode {
     if let Some(every) = watch
         && let Some(note) = floor_notice(who, every, floor_secs)
@@ -466,9 +491,13 @@ fn run_looks(
             result = look(missed);
         }
         match result {
-            Ok(text) => {
+            Ok((text, stop)) => {
                 if !emit(&text) {
                     return ExitCode::SUCCESS;
+                }
+                if let Some(Stop { code, said }) = stop {
+                    eprintln!("{who}: {said}");
+                    return code;
                 }
                 (succeeded, missed) = (true, false);
             }
@@ -506,7 +535,7 @@ fn run_looks(
 }
 
 /// One look: the instances, then the account while the probes run (asking `log` of each box, when
-/// given), then the table.
+/// given), then the table; and, under `--until`, what the look says to the wait.
 ///
 /// The account request needs nothing from the probes, which take seconds: the two overlap. With a
 /// `trend` (a watch that probes), this look's GPU samples join the history, and the table and the
@@ -517,7 +546,7 @@ fn look(
     log: Option<&LogQuery>,
     trend: Option<&mut Trend>,
     credit_log: Option<&mut CreditLog>,
-) -> Result<String, vast_skopos::SkoposError> {
+) -> Result<(String, Option<Verdict>), vast_skopos::SkoposError> {
     // The list pages by 25 and its budget is one call per window: between two pages a short wait is
     // sat out (said aloud), a long one ends the look like any other rate limit.
     let instances = client.instances_with(|wait| {
@@ -558,7 +587,8 @@ fn look(
         history.record(&instances, &probes);
         &*history
     });
-    Ok(if args.compact {
+    let waited = args.until.is_some().then(|| verdict(&instances, &probes));
+    let text = if args.compact {
         json_lines(&instances, &probes, trend, account.as_ref(), at)
     } else {
         let mut options = TableOptions::new().ssh(args.ssh).wide(args.wide);
@@ -566,7 +596,34 @@ fn look(
             options = options.trend(history);
         }
         table(&instances, &probes, account.as_ref(), options, at)
-    })
+    };
+    Ok((text, waited))
+}
+
+/// What a wait makes of a look's verdict, `unread` being the looks in a row with nothing to wait on
+/// (this one counted): a stop on a match (exit 0) or after [`UNREAD_LOOKS`] of them (exit 3).
+fn wait_stop(verdict: Verdict, unread: &mut u32) -> Option<Stop> {
+    match verdict {
+        Verdict::Matched { id, line } => Some(Stop {
+            code: ExitCode::SUCCESS,
+            said: format!("--until: box {id} matched: {line}"),
+        }),
+        Verdict::Waiting => {
+            *unread = 0;
+            None
+        }
+        // `Verdict` is `#[non_exhaustive]` and the binary is another crate: a verdict it does not
+        // know is read as nothing to wait on, which a wait gives up on in the end.
+        Verdict::Unread | _ => {
+            *unread = unread.saturating_add(1);
+            (*unread >= UNREAD_LOOKS).then(|| Stop {
+                code: ExitCode::from(GAVE_UP),
+                said: format!(
+                    "--until: no box could be read for {UNREAD_LOOKS} looks in a row (every probe failed, or no box is running or starting): giving up"
+                ),
+            })
+        }
+    }
 }
 
 /// `vas` without a subcommand: the lookout, once or every `--watch` seconds.
@@ -598,36 +655,40 @@ fn lookout(args: &LookArgs) -> ExitCode {
     let mut trend = Trend::default();
     let tracking = args.ssh && args.watch.is_some();
     let mut credit_log = args.credit_log.as_deref().map(CreditLog::new);
+    // `--until` asks for the line it waits for as `--grep` would (the two are refused together).
     let log = args.log.as_deref().map(|path| {
         let query = LogQuery::new(path);
         // BORROW: explicit clone -- the query owns its pattern
-        match args.grep.clone() {
+        match args.grep.clone().or_else(|| args.until.clone()) {
             Some(pattern) => query.grep(pattern),
             None => query,
         }
     });
+    let mut unread: u32 = 0;
     run_looks(
         "vas",
         args.watch,
         LOOKOUT_FLOOR_SECS,
         || client.budget_wait_secs(),
         |_| {
-            let text = look(
+            let (text, waited) = look(
                 &client,
                 args,
                 log.as_ref(),
                 tracking.then_some(&mut trend),
                 credit_log.as_mut(),
             )?;
+            let stop = waited.and_then(|v| wait_stop(v, &mut unread));
             // JSON Lines carry their own `at`: a stamp line would not parse.
-            Ok(if args.watch.is_some() && !args.compact {
+            let text = if args.watch.is_some() && !args.compact {
                 let secs = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .map_or(0, |d| d.as_secs());
                 format!("== vas, unix time {secs}\n{text}")
             } else {
                 text
-            })
+            };
+            Ok((text, stop))
         },
     )
 }
@@ -760,7 +821,7 @@ fn offers(args: OffersArgs) -> ExitCode {
                     .unwrap_or_default();
                 format!("{gap}{table}{footer}{variance}{note}")
             };
-            Ok(text)
+            Ok((text, None))
         },
     )
 }
@@ -781,9 +842,11 @@ mod tests {
 
     use clap::CommandFactory;
     use vast_skopos::market::{ABSENT_FOR_GONE, LEARNING_LOOKS};
+    use vast_skopos::until::UNREAD_LOOKS;
 
     use super::{
-        Cli, LOOKOUT_FLOOR_SECS, MARGIN_SECS, MAX_BUDGET_WAIT_SECS, OFFERS_FLOOR_SECS, budget_pause,
+        Cli, GAVE_UP, LOOKOUT_FLOOR_SECS, MARGIN_SECS, MAX_BUDGET_WAIT_SECS, OFFERS_FLOOR_SECS,
+        budget_pause,
     };
 
     #[test]
@@ -847,6 +910,22 @@ mod tests {
         assert!(
             offers.contains(&format!("missing for {} looks", word(ABSENT_FOR_GONE))),
             "{offers}"
+        );
+    }
+
+    #[test]
+    fn the_help_of_until_says_the_looks_and_the_exit_code_the_code_uses() {
+        let help = Cli::command()
+            .get_arguments()
+            .find(|a| a.get_id() == "until")
+            .and_then(|a| a.get_help())
+            .unwrap()
+            .to_string();
+        assert!(
+            help.contains(&format!(
+                "Exits {GAVE_UP} when no box could be read for {UNREAD_LOOKS} looks in a row"
+            )),
+            "{help}"
         );
     }
 

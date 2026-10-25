@@ -702,6 +702,79 @@ fn flags_that_make_no_sense_alone_are_refused_before_any_request() {
 }
 
 #[test]
+fn until_needs_a_log_and_a_watch_and_replaces_grep() {
+    let home = empty_dir("until");
+    let env = key_env(&home, ENV_KEY);
+    let once = vas_with(
+        account,
+        &["--ssh", "--log", "/r/*.log", "--until", "loss"],
+        &env,
+        &[],
+    );
+    assert_eq!(once.code, Some(2), "--until needs --watch: {}", once.stderr);
+    assert!(once.stderr.contains("--watch"), "{}", once.stderr);
+    let no_log = vas_with(
+        account,
+        &["--ssh", "--watch", "10", "--until", "loss"],
+        &env,
+        &[],
+    );
+    assert_eq!(no_log.code, Some(2), "{}", no_log.stderr);
+    assert!(no_log.stderr.contains("--log"), "{}", no_log.stderr);
+    let both = vas_with(
+        account,
+        &[
+            "--ssh", "--log", "/r/*.log", "--watch", "10", "--grep", "a", "--until", "b",
+        ],
+        &env,
+        &[],
+    );
+    std::fs::remove_dir_all(&home).unwrap();
+    assert_eq!(both.code, Some(2), "{}", both.stderr);
+    assert!(
+        both.stderr.contains("cannot be used with"),
+        "{}",
+        both.stderr
+    );
+    for run in [&once, &no_log, &both] {
+        assert!(run.seen.lock().unwrap().is_empty(), "no request was made");
+    }
+}
+
+#[test]
+fn a_wait_with_no_box_to_read_gives_up_after_two_looks_with_exit_code_3() {
+    // The only box refuses every probe (nothing listens on the discard port): two looks, then 3.
+    let mut child = spawn_watch(
+        box_on_loopback,
+        &[
+            "--ssh",
+            "--log",
+            "/root/runs/*/train.log",
+            "--watch",
+            "0",
+            "--until",
+            "initial loss",
+        ],
+        Some("50"),
+    );
+    let status = exit_within_deadline(&mut child);
+    let (mut stdout, mut stderr) = (String::new(), String::new());
+    std::io::Read::read_to_string(&mut child.stdout.take().unwrap(), &mut stdout).unwrap();
+    std::io::Read::read_to_string(&mut child.stderr.take().unwrap(), &mut stderr).unwrap();
+    assert_eq!(status.code(), Some(3), "{stderr}");
+    assert_eq!(
+        stdout.matches("== vas, unix time").count(),
+        2,
+        "two looks, each printed: {stdout}"
+    );
+    assert!(stdout.contains("UNREACHABLE"), "{stdout}");
+    assert!(
+        stderr.contains("vas: --until: no box could be read for 2 looks in a row"),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn grep_needs_a_log_and_a_pattern_of_one_line() {
     let home = empty_dir("grep");
     let env = key_env(&home, ENV_KEY);

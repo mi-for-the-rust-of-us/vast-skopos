@@ -80,10 +80,11 @@ refuses would be another, and the message names the status.
 
 ### What exit codes does `vas` use?
 
-`0` for success (a closed pipe, such as `vas --watch 30 | head`, ends quietly with `0`), `1` when a look
-fails or a key file or config file cannot be read or is malformed, and `2` when a flag or a value is
-refused, on the command line or in a config file (an unknown flag, a value out of range, flags that
-conflict).
+`0` for success (a closed pipe, such as `vas --watch 30 | head`, ends quietly with `0`; so does a
+`--until` wait that found its line), `1` when a look fails or a key file or config file cannot be read or is
+malformed, `2` when a flag or a value is refused, on the command line or in a config file (an unknown flag,
+a value out of range, flags that conflict), and `3` when a `--until` wait gave up: no box could be read for
+2 looks in a row.
 
 ## Searching for offers
 

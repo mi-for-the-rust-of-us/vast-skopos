@@ -49,6 +49,12 @@ All notable changes to this project are documented here. The format is based on
   `pattern_refused`). The pattern is single-quoted for the box's shell, never expanded (a rule in
   CONVENTIONS.md), and `grep`'s status is the answer's last line, so no log line can stand in for it.
   `probe::LogQuery`, `LogReading::NoMatchingLine`, `LogReading::PatternRefused`.
+- `vas --ssh --log PATH --watch N --until PATTERN`: wait for a line matching `PATTERN` (as `--grep` reads it,
+  which it replaces) on any box, then exit 0 with the line on stderr; exit 3 when no box could be read for
+  2 looks in a row (every probe failed, or no box is running or starting). A box still starting keeps the
+  wait going, and a look whose instances request failed does not count (note 2: the rule of the
+  hand-written `ssh` loops it replaces, in one place). `until::verdict`, `until::Verdict`,
+  `until::UNREAD_LOOKS`.
 
 ### Changed
 
