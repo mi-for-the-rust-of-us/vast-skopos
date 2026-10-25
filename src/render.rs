@@ -315,7 +315,8 @@ pub struct TableOptions<'a> {
     /// Show the probe columns (`GPU% (ssh)`, `VRAM`, `OTHER`, `POWER`, `CLOCK`, `LAST LOG / SSH
     /// ERROR`), even when no box was probed.
     pub ssh: bool,
-    /// Show each box's machine id and host id.
+    /// Show each box's machine id and host id, then its CPU, driver, `DLPerf` and `PCIe` bandwidth: what
+    /// tells one machine from another, and a rented box from an offer (`vas offers --wide`).
     pub wide: bool,
     /// The samples a watch has kept: adds `TREND` and `CLOCK TREND` columns after `CLOCK` (with the
     /// probe columns), and prints what changed in the boxes' power under the money line.
@@ -349,7 +350,8 @@ impl<'a> TableOptions<'a> {
         self
     }
 
-    /// With the machine and host ids (`on`), or without.
+    /// With the machine and host ids, the CPU, the driver, `DLPerf` and the `PCIe` bandwidth (`on`), or
+    /// without.
     #[must_use]
     pub const fn wide(mut self, on: bool) -> Self {
         self.wide = on;
@@ -372,7 +374,7 @@ impl<'a> TableOptions<'a> {
 /// let account = Account::from_json(&serde_json::json!({"credit": 5.0}));
 /// let text = table(&[i], &[], Some(&account), TableOptions::new().wide(true), 3600.0);
 /// let header: Vec<&str> = text.lines().next().unwrap().split_whitespace().collect();
-/// assert_eq!(&header[8..], ["SSH", "MACHINE", "HOST"]);
+/// assert_eq!(&header[8..], ["SSH", "MACHINE", "HOST", "CPU", "DRIVER", "DLPERF", "PCIE", "GB/s"]);
 /// assert!(text.ends_with("credit $5.00 | burn $0.500/h over 1 running | ~10.0 h left at this rate\n"));
 /// ```
 #[must_use]
@@ -393,7 +395,7 @@ pub fn table(
         "ID", "LABEL", "GPU", "WHERE", "STATUS", "$/H", "AGE", "COST~", "SSH",
     ];
     if wide {
-        header.extend(["MACHINE", "HOST"]);
+        header.extend(["MACHINE", "HOST", "CPU", "DRIVER", "DLPERF", "PCIE GB/s"]);
     }
     if with_ssh {
         header.extend(["GPU% (ssh)", "VRAM", "OTHER", "POWER", "CLOCK"]);
@@ -420,6 +422,10 @@ pub fn table(
             row.extend([
                 or_dash(i.machine_id.map(|m| m.to_string())),
                 or_dash(i.host_id.map(|h| h.to_string())),
+                text_cell(i.cpu_name.as_deref()),
+                text_cell(i.driver_version.as_deref()),
+                number_cell(i.dlperf, 1),
+                number_cell(i.pcie_bw, 1),
             ]);
         }
         if with_ssh {
@@ -515,25 +521,53 @@ pub fn money_line(instances: &[Instance], account: Option<&Account>) -> String {
     Runway::of(instances, account).line()
 }
 
-/// The offers table's header.
-const OFFER_HEADER: [&str; 12] = [
-    "ID",
-    "GPU",
-    "VRAM",
-    "$/H",
-    "CUDA",
-    "DISK",
-    "UP/DOWN Mb/s",
-    "REL %",
-    "MAX DAYS",
-    "HOST",
-    "VERIFICATION",
-    "WHERE",
-];
+/// Which columns the offers table shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum OfferColumns {
+    /// The plain table.
+    #[default]
+    Plain,
+    /// With what tells one machine from another (`vas offers --wide`): `MACHINE` after `HOST`, then
+    /// `CPU`, `DRIVER`, `DLPERF`, `DLPERF/$`, `PCIE GB/s` and `MAX W` after `VERIFICATION`. `WHERE`
+    /// stays last.
+    Wide,
+}
 
-/// One offer's cells, in [`OFFER_HEADER`]'s order; `was` is the price it had when last seen,
-/// when it moved, shown beside the current one.
-fn offer_row(o: &Offer, was: Option<f64>) -> Vec<String> {
+/// The offers table's header, for `columns`.
+fn offer_header(columns: OfferColumns) -> Vec<&'static str> {
+    let wide = matches!(columns, OfferColumns::Wide);
+    let mut header = vec![
+        "ID",
+        "GPU",
+        "VRAM",
+        "$/H",
+        "CUDA",
+        "DISK",
+        "UP/DOWN Mb/s",
+        "REL %",
+        "MAX DAYS",
+        "HOST",
+    ];
+    if wide {
+        header.push("MACHINE");
+    }
+    header.push("VERIFICATION");
+    if wide {
+        header.extend(["CPU", "DRIVER", "DLPERF", "DLPERF/$", "PCIE GB/s", "MAX W"]);
+    }
+    header.push("WHERE");
+    header
+}
+
+/// A number cell with `decimals` places, or a dash.
+fn number_cell(value: Option<f64>, decimals: usize) -> String {
+    or_dash(value.map(|v| format!("{v:.decimals$}")))
+}
+
+/// One offer's cells, in [`offer_header`]'s order for `columns`; `was` is the price it had when
+/// last seen, when it moved, shown beside the current one.
+fn offer_row(o: &Offer, was: Option<f64>, columns: OfferColumns) -> Vec<String> {
     let whole = |v: Option<f64>| or_dash(v.map(|x| format!("{x:.0}")));
     let bandwidth = match (o.inet_up, o.inet_down) {
         (None, None) => String::from("-"),
@@ -544,7 +578,8 @@ fn offer_row(o: &Offer, was: Option<f64>) -> Vec<String> {
         Some(old) => format!("{price} (was {old:.3})"),
         None => price,
     };
-    vec![
+    let wide = matches!(columns, OfferColumns::Wide);
+    let mut cells = vec![
         o.id.to_string(),
         gpu_cell(o.num_gpus, o.gpu_name.as_deref()),
         or_dash(o.gpu_ram.map(|mb| format!("{:.0}G", mb / 1024.0))),
@@ -555,30 +590,44 @@ fn offer_row(o: &Offer, was: Option<f64>) -> Vec<String> {
         or_dash(o.reliability.map(|r| format!("{:.2}", r * 100.0))),
         or_dash(o.duration.map(|s| format!("{:.1}", s / 86_400.0))),
         or_dash(o.host_id.map(|h| h.to_string())),
-        text_cell(o.verification.as_deref()),
-        text_cell(o.geolocation.as_deref()),
-    ]
+    ];
+    if wide {
+        cells.push(or_dash(o.machine_id.map(|m| m.to_string())));
+    }
+    cells.push(text_cell(o.verification.as_deref()));
+    if wide {
+        cells.extend([
+            text_cell(o.cpu_name.as_deref()),
+            text_cell(o.driver_version.as_deref()),
+            number_cell(o.dlperf, 1),
+            number_cell(o.dlperf_per_dollar(), 0),
+            number_cell(o.pcie_bw, 1),
+            number_cell(o.gpu_max_power, 0),
+        ]);
+    }
+    cells.push(text_cell(o.geolocation.as_deref()));
+    cells
 }
 
-/// The offers table: the first `top` of `offers`, in their order; `(no offers)` when there are
-/// none.
+/// The offers table: the first `top` of `offers`, in their order, with the `columns` asked for;
+/// `(no offers)` when there are none.
 ///
 /// ```
-/// use vast_skopos::{offer::Offer, render::offers_table};
+/// use vast_skopos::{offer::Offer, render::{OfferColumns, offers_table}};
 /// let o = Offer::from_json(&serde_json::json!({"id": 44614424, "gpu_name": "RTX 5090",
 ///   "num_gpus": 1, "gpu_ram": 32607, "dph_total": 0.54018, "cuda_max_good": 13.0,
 ///   "disk_space": 691.0, "inet_up": 38.4, "reliability2": 0.9961118, "duration": 6442672.9,
 ///   "host_id": 410852, "verification": "verified", "geolocation": "United States, US"})).unwrap();
-/// let text = offers_table(&[o.clone(), o], 1);
+/// let text = offers_table(&[o.clone(), o], 1, OfferColumns::Plain);
 /// assert_eq!(text.lines().count(), 2, "the header and the one row asked for");
 /// let row: Vec<&str> = text.lines().nth(1).unwrap().split_whitespace().collect();
 /// assert_eq!(row, ["44614424", "1x", "RTX", "5090", "32G", "0.540", "13.0", "691G", "38/-",
 ///   "99.61", "74.6", "410852", "verified", "United", "States,", "US"]);
-/// assert!(offers_table(&[], 20).ends_with("(no offers)\n"));
+/// assert!(offers_table(&[], 20, OfferColumns::Plain).ends_with("(no offers)\n"));
 /// ```
 #[must_use]
-pub fn offers_table(offers: &[Offer], top: usize) -> String {
-    offers_view(offers, top, None)
+pub fn offers_table(offers: &[Offer], top: usize, columns: OfferColumns) -> String {
+    offers_view(offers, top, columns, None)
 }
 
 /// The offers table, with a first column of marks, the old price of the offers that moved, and
@@ -589,13 +638,14 @@ pub fn offers_table(offers: &[Offer], top: usize) -> String {
 fn offers_view(
     offers: &[Offer],
     top: usize,
+    columns: OfferColumns,
     marks: Option<(&OfferChanges, &MarketWatch)>,
 ) -> String {
     let mut header: Vec<&str> = Vec::new();
     if marks.is_some() {
         header.push("");
     }
-    header.extend(OFFER_HEADER);
+    header.extend(offer_header(columns));
     if marks.is_some() {
         let place = header.pop();
         header.push("SEEN");
@@ -609,7 +659,7 @@ fn offers_view(
             let was = marks
                 .and_then(|(m, _)| m.repriced.iter().find(|r| r.offer.id == o.id))
                 .map(|r| r.was);
-            let mut cells = offer_row(o, was);
+            let mut cells = offer_row(o, was, columns);
             if let Some((m, market)) = marks {
                 let mark = if m.appeared.iter().any(|a| OfferKey::of(a) == key) {
                     "+"
@@ -634,14 +684,15 @@ fn offers_view(
     out
 }
 
-/// The offers table of a watch: [`offers_table`] with marks, a was and a SEEN column.
+/// The offers table of a watch: [`offers_table`] with marks, a was and a SEEN column (with the
+/// `columns` asked for).
 ///
 /// A first column marks `+` an offer whose machine is new (see [`MarketWatch`]), a price that moved
 /// reads `0.594 (was 0.575)`, and a SEEN column, before WHERE, says in how many looks the machine
 /// appeared (`3/9`).
 ///
 /// ```
-/// use vast_skopos::{market::MarketWatch, offer::Offer, render::offers_table_marked};
+/// use vast_skopos::{market::MarketWatch, offer::Offer, render::{OfferColumns, offers_table_marked}};
 /// let offer = |id: u64, p: f64| Offer::from_json(&serde_json::json!({"id": id, "dph_total": p})).unwrap();
 /// let before = [offer(1, 0.5), offer(2, 0.6)];
 /// let now = [offer(3, 0.4), offer(1, 0.55), offer(2, 0.6)];
@@ -650,7 +701,7 @@ fn offers_view(
 ///     watch.record(&before);
 /// }
 /// let moved = watch.record(&now).unwrap();
-/// let text = offers_table_marked(&now, 20, &moved, &watch);
+/// let text = offers_table_marked(&now, 20, OfferColumns::Plain, &moved, &watch);
 /// let rows: Vec<Vec<&str>> = text.lines().skip(1).map(|l| l.split_whitespace().collect()).collect();
 /// assert_eq!((rows[0][0], rows[0][1], rows[0][4]), ("+", "3", "0.400"));
 /// assert_eq!(&rows[1][..5], ["1", "-", "-", "0.550", "(was"]);
@@ -663,10 +714,11 @@ fn offers_view(
 pub fn offers_table_marked(
     offers: &[Offer],
     top: usize,
+    columns: OfferColumns,
     changes: &OfferChanges,
     market: &MarketWatch,
 ) -> String {
-    offers_view(offers, top, Some((changes, market)))
+    offers_view(offers, top, columns, Some((changes, market)))
 }
 
 /// In the table mode, at most this many gone offers are listed under the table; the rest are

@@ -103,6 +103,10 @@ fn box_json(i: &Instance, probe: Option<&Result<Probe>>, trend: Option<&Trend>, 
         "ssh_port": endpoint.map(|(_, port)| port),
         "machine_id": i.machine_id,
         "host_id": i.host_id,
+        "cpu_name": i.cpu_name,
+        "driver_version": i.driver_version,
+        "dlperf": i.dlperf,
+        "pcie_bw": i.pcie_bw,
         "probe": probe_json(probe, samples.as_deref(), clock_samples.as_deref()),
     })
 }

@@ -41,7 +41,9 @@ fn a_box_with_everything_and_a_box_with_nothing_have_the_same_keys() {
         "num_gpus": 1, "geolocation": "South Korea, KR", "actual_status": "running",
         "intended_status": "running", "dph_total": 0.9, "start_date": 1_000.0,
         "ssh_host": "ssh6.vast.ai", "ssh_port": 36_000, "machine_id": 100_682, "host_id": 406_325,
-        "status_msg": "success, running pytorch/pytorch_2.5.1"}),
+        "status_msg": "success, running pytorch/pytorch_2.5.1",
+        "cpu_name": "AMD EPYC 7K62 48-Core Processor", "driver_version": "580.142",
+        "dlperf": 199.2, "pcie_bw": 26.9}),
     );
     let bare = instance(&json!({"id": 2}));
     let probes = vec![
@@ -84,6 +86,21 @@ fn a_box_with_everything_and_a_box_with_nothing_have_the_same_keys() {
         "the API's message, whatever the status"
     );
     assert_eq!(
+        (
+            b["cpu_name"].as_str(),
+            b["driver_version"].as_str(),
+            b["dlperf"].as_f64(),
+            b["pcie_bw"].as_f64()
+        ),
+        (
+            Some("AMD EPYC 7K62 48-Core Processor"),
+            Some("580.142"),
+            Some(199.2),
+            Some(26.9)
+        ),
+        "what tells the machine from another, always, like the ids"
+    );
+    assert_eq!(
         (b["age_s"].as_u64(), b["cost"].as_f64()),
         (Some(8_100), Some(2.025))
     );
@@ -123,6 +140,10 @@ fn a_box_with_everything_and_a_box_with_nothing_have_the_same_keys() {
         "ssh_port",
         "machine_id",
         "host_id",
+        "cpu_name",
+        "driver_version",
+        "dlperf",
+        "pcie_bw",
         "probe",
     ] {
         assert!(n[unknown].is_null(), "{unknown} is null, not missing: {n}");

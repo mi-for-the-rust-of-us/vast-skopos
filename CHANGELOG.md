@@ -32,9 +32,20 @@ All notable changes to this project are documented here. The format is based on
   `machine_id` `in [...]`, in the same object as the `--exclude-*` lists' `notin` (probed 2026-10-25: the
   server applies both), re-checked on each row, named in the footer (`hosts ...`, `machines ...`).
   `OfferQuery::only_hosts`, `OfferQuery::only_machines`.
+- `vas offers --wide`: what tells one machine from another, `MACHINE` after `HOST`, then `CPU`, `DRIVER`,
+  `DLPERF`, `DLPERF/$` (computed against the `$/H` shown, storage included), `PCIE GB/s` and `MAX W` (the
+  card's maximum, not the limit a host sets), with `WHERE` still last (and `SEEN` before it in a watch).
+  `vas --wide` gains `CPU`, `DRIVER`, `DLPERF` and `PCIE GB/s` after `MACHINE` and `HOST`, so a rented box and
+  an offer can be set side by side (note 7). DLPerf is a plain number: it did not show two hosts' 500 W caps
+  (note 8's counterexample). `--compact` carries `cpu_name`, `driver_version`, `dlperf` and `pcie_bw` on
+  every box. `Offer::cpu_name`, `driver_version`, `dlperf`, `pcie_bw`, `gpu_max_power`,
+  `Offer::dlperf_per_dollar`; `Instance::cpu_name`, `driver_version`, `dlperf`, `pcie_bw`;
+  `render::OfferColumns`.
 
 ### Changed
 
+- `render::offers_table` and `render::offers_table_marked` take an `OfferColumns` (after `top`): the
+  plain table is `OfferColumns::Plain`.
 - The `LAST LOG / SSH ERROR` cell of a failed probe no longer repeats `failed to probe HOST:PORT over ssh`:
   the `SSH` column already names the target. `--compact`'s `error` keeps the whole text.
 

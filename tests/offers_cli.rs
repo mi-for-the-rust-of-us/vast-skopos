@@ -481,6 +481,64 @@ fn the_hosts_and_machines_asked_for_accumulate_and_meet_the_excluded_in_one_filt
     );
 }
 
+/// Two sibling machines of one South Korean host, as the search answered them on 2026-10-25.
+fn siblings(_: &str) -> (u16, String) {
+    (
+        200,
+        r#"{"offers": [
+          {"id": 1, "gpu_name": "RTX 5090", "num_gpus": 1, "dph_total": 0.5, "host_id": 406325,
+           "machine_id": 145061, "verification": "verified", "cpu_name": "AMD EPYC 7K62 48-Core Processor",
+           "driver_version": "580.142", "dlperf": 199.2, "pcie_bw": 26.9, "gpu_max_power": 600.0,
+           "geolocation": "South Korea, KR", "rentable": true, "rented": false},
+          {"id": 2, "gpu_name": "RTX 5090", "num_gpus": 1, "dph_total": 0.6, "host_id": 406325,
+           "machine_id": 142476, "verification": "verified", "cpu_name": "Intel Xeon Gold 6338",
+           "driver_version": "575.64", "dlperf": 199.2, "pcie_bw": 25.1, "gpu_max_power": 600.0,
+           "geolocation": "South Korea, KR", "rentable": true, "rented": false}
+        ]}"#
+        .to_owned(),
+    )
+}
+
+#[test]
+fn wide_shows_what_tells_two_machines_of_one_host_apart() {
+    let (base, _) = serve(siblings);
+    let (out, stdout, stderr) = vas(
+        &base,
+        &fresh_home("wide"),
+        true,
+        &["offers", "--no-config", "--wide"],
+    );
+    assert!(out.status.success(), "{stderr}");
+    let header = stdout.lines().next().unwrap();
+    for column in ["MACHINE", "CPU", "DRIVER", "DLPERF/$", "PCIE GB/s", "MAX W"] {
+        assert!(header.contains(column), "{column}: {stdout}");
+    }
+    let rows: Vec<String> = stdout
+        .lines()
+        .skip(1)
+        .take(2)
+        .map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
+        .collect();
+    assert!(
+        rows[0].contains(
+            "406325 145061 verified AMD EPYC 7K62 48-Core Processor 580.142 199.2 398 26.9 600"
+        ),
+        "{stdout}"
+    );
+    assert!(
+        rows[1].contains("406325 142476 verified Intel Xeon Gold 6338 575.64 199.2 332 25.1 600"),
+        "the same host and DLPerf, another machine: {stdout}"
+    );
+    let (base, _) = serve(siblings);
+    let (_, plain, _) = vas(
+        &base,
+        &fresh_home("narrow"),
+        true,
+        &["offers", "--no-config"],
+    );
+    assert!(!plain.contains("EPYC"), "{plain}");
+}
+
 #[test]
 fn excluded_hosts_accumulate_too() {
     let (base, seen) = serve(bundles);

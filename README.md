@@ -115,7 +115,7 @@ The offer search needs no key:
 ```rust,no_run
 use vast_skopos::api::SearchClient;
 use vast_skopos::offer::{OfferQuery, OfferSort, select};
-use vast_skopos::render::{offers_footer, offers_table};
+use vast_skopos::render::{OfferColumns, offers_footer, offers_table};
 
 fn main() -> vast_skopos::Result<()> {
     let mut q = OfferQuery::default(); // the identity: every offer rentable now
@@ -128,7 +128,7 @@ fn main() -> vast_skopos::Result<()> {
     let (top, now) = (20, 0.0); // `now`: Unix seconds, named in the footer
     // What `vas offers` prints: the table, then the footer (which says when vast.ai's 64-row cap
     // may have cut the list).
-    print!("{}{}", offers_table(&kept, top), offers_footer(&page, &kept, top, &q, OfferSort::Price, now));
+    print!("{}{}", offers_table(&kept, top, OfferColumns::Plain), offers_footer(&page, &kept, top, &q, OfferSort::Price, now));
     Ok(())
 }
 ```
@@ -175,7 +175,7 @@ ID        GPU          VRAM  $/H    CUDA  DISK   UP/DOWN Mb/s  REL %  MAX DAYS  
 | `vas --ssh` | also probe every running box over `ssh`, once each, in parallel |
 | `vas --ssh --log PATH_OR_GLOB` | also print, for the newest match of the pattern on each box, its last two path components and its last non-blank line (`s0/train.log: ...`, so a glob whose varying part is among the last two components says which run wrote it); `(empty)` when the file has no line to show, `(not a file)` when the newest match is a directory, `(no file matches)` when nothing matched, `?` when the box's answer was cut short. The pattern is expanded by the box's shell, so quote it locally (and quote a part with spaces again inside, `'"/root/my runs"/*/train.log'`); the line is shown without control characters, at most 120 characters, the path at most 60 |
 | `vas --ssh -i ~/.ssh/id_ed25519` | use this private key (default: `ssh`'s own choice, agent and `~/.ssh/config`) |
-| `vas --wide` | also show each box's machine id and host id (what a rentals log, `--exclude-machine` and `--exclude-host` need) |
+| `vas --wide` | also show each box's machine id and host id (what a rentals log, `--exclude-machine` and `--exclude-host` need), then its CPU, driver, DLPerf and PCIe bandwidth (`CPU`, `DRIVER`, `DLPERF`, `PCIE GB/s`: what tells it from another machine of its host, as `vas offers --wide` shows them) |
 | `vas --compact` | JSON Lines instead of the table, for scripts and monitors ([below](#vas---compact-json-lines)); not with `--wide` |
 | `vas --watch 60` | refresh every 60 s (at least 10) until Ctrl+C |
 | `vas --credit-log FILE` | append one CSV row per look to `FILE`: the credit as a curve ([below](#the-credit-history)) |
@@ -318,7 +318,7 @@ about two seconds of a $0.19/h box, and vast.ai sends the credit with float nois
 
 ```text
 $ vas --compact --ssh --log '/root/runs/*/train.log'
-{"age_s":8100,"at":1792250000,"cost":2.025,"dph":0.9,"gpu_name":"RTX 5090","host_id":406325,"id":56362434,"intended":"running","kind":"box","label":"me36 box 2","machine_id":100682,"num_gpus":1,"probe":{"clock_trend":null,"gpus":[{"index":0,"mem_total_mib":32607,"mem_used_mib":29400,"other_mem_mib":10,"power_default_w":575,"power_limit_w":575,"power_w":560,"sm_max_mhz":3090,"sm_mhz":2900,"throttle":[],"util_pct":99}],"log":{"file":"/root/runs/s0/train.log","line":"e41 loss 0.3","state":"line"},"util_trend":null},"ssh_host":"ssh6.vast.ai","ssh_port":36000,"status":"running","status_msg":null,"where":"South Korea, KR"}
+{"age_s":8100,"at":1792250000,"cost":2.025,"cpu_name":"AMD EPYC 7K62 48-Core Processor","dlperf":199.2,"dph":0.9,"driver_version":"580.142","gpu_name":"RTX 5090","host_id":406325,"id":56362434,"intended":"running","kind":"box","label":"me36 box 2","machine_id":100682,"num_gpus":1,"pcie_bw":26.9,"probe":{"clock_trend":null,"gpus":[{"index":0,"mem_total_mib":32607,"mem_used_mib":29400,"other_mem_mib":10,"power_default_w":575,"power_limit_w":575,"power_w":560,"sm_max_mhz":3090,"sm_mhz":2900,"throttle":[],"util_pct":99}],"log":{"file":"/root/runs/s0/train.log","line":"e41 loss 0.3","state":"line"},"util_trend":null},"ssh_host":"ssh6.vast.ai","ssh_port":36000,"status":"running","status_msg":null,"where":"South Korea, KR"}
 {"at":1792250000,"burn":0.9,"credit":12.93,"hours_left":14.4,"kind":"money","running":1,"unsure":{}}
 ```
 
@@ -329,7 +329,8 @@ else `gpus` (per GPU: `util_pct`, `mem_used_mib`, `mem_total_mib`, `other_mem_mi
 say), `log`, `util_trend` and `clock_trend` (`null` in a one-shot, else the last GPU samples of a `--watch`,
 see above); `log` is `null` without `--log`, else an object whose `state` is `line`, `empty`,
 `not_a_file`, `no_match` or `unreadable`. `status_msg` is vast.ai's own message on the box, as the API
-gives it whatever the status (`null` when it gives none). `unsure` counts, by state, the boxes meant to run that read
+gives it whatever the status (`null` when it gives none); `cpu_name`, `driver_version`, `dlperf` and
+`pcie_bw` are always there, like the ids (what `--wide` shows). `unsure` counts, by state, the boxes meant to run that read
 otherwise (the burn, above). With `--ssh --watch N`, a change of a GPU's power limit or throttle reasons is an
 `event` object, between the boxes and the money (see the power cap, above). With `--watch N`, a look is printed every N seconds with no separator line (the table form of `--watch`
 stamps each look with `== vas, unix time N`; JSON lines would not parse with it): the `at`
@@ -351,6 +352,7 @@ tells looks apart. `jq` does the rest, for example `vas --compact | jq -r 'selec
 | `--host ID`, `--machine ID` | only this host or this machine: what a host rented from before offers now, or whether the machine you had is for rent again (`vas --wide` shows your boxes' ids); repeatable, and an `--exclude-*` of the same id still leaves it out |
 | `--exclude-country CC`, `--exclude-host ID`, `--exclude-machine ID` | leave out a country (two letters), a host or a machine (a host may own several; `vas --wide` shows yours); repeatable |
 | `--top N` (20), `--sort price\|reliability\|up` | how many rows, in which order |
+| `--wide` | also show what tells one machine from another: `MACHINE` after `HOST`, then `CPU`, `DRIVER`, `DLPERF` (vast.ai's benchmark score), `DLPERF/$` (per `$/h` shown, storage included), `PCIE GB/s` and `MAX W` (the card's maximum power, NOT the limit a host sets: only `vas --ssh`'s `POWER` reads that) ([below](#is-this-the-machine-we-had)) |
 | `--watch SECONDS`, `--changes` | search again every N seconds (at least 20) until Ctrl+C, each look the whole table marked with what moved; `--changes` prints only what moved ([below](#watching-the-offers)) |
 | `--config FILE`, `--no-config` | read the flags of `FILE` first, or of no file |
 
@@ -384,6 +386,15 @@ constraint is also **re-checked on each row**: a row whose field contradicts one
 counted in the footer); a row MISSING the field is kept, with a dash. The footer also names every
 constraint applied (a config file never acts unseen), the storage priced into `$/h` and the time of
 the search (UTC): the list is a snapshot of a market where offers vanish within minutes.
+
+<a id="is-this-the-machine-we-had"></a>
+
+**Is this the machine we had?** One host can own several machines, and a search shows the host, not the
+machine. `vas offers --wide` adds what tells them apart (the machine id, the CPU, the driver), and
+`vas --wide` shows the same for a rented box, so the two can be set side by side; `--host ID` or
+`--machine ID` narrows a search to one of them. DLPerf is shown as a number and nothing more: on
+2026-10-25 two South Korean RTX 5090s read DLPerf 199.2, the same as an uncapped card, and were both capped
+by their host at 500 of 600 W. Only the card's own reading (`vas --ssh`, `POWER`) shows a cap.
 
 <a id="verified-unverified-deverified"></a>
 

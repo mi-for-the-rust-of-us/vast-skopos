@@ -44,6 +44,17 @@ pub struct Instance {
     pub machine_id: Option<u64>,
     /// The host's id: what `vas offers --exclude-host` takes.
     pub host_id: Option<u64>,
+    /// The CPU's model, as the host reports it (e.g. `AMD EPYC 7K62 48-Core Processor`): with the
+    /// driver, what tells one machine of a host from another.
+    pub cpu_name: Option<String>,
+    /// The NVIDIA driver's version (e.g. `580.142`).
+    pub driver_version: Option<String>,
+    /// vast.ai's own benchmark score of the machine, `DLPerf` (an RTX 5090 reads about 199). It did NOT
+    /// show a host's 500 W power cap on two machines (2026-10-25): the card's own reading does
+    /// (`vas --ssh`, `POWER`).
+    pub dlperf: Option<f64>,
+    /// The bandwidth between the host and the GPU that vast.ai measured, in GB/s.
+    pub pcie_bw: Option<f64>,
 }
 
 /// Whether `c` must not reach a terminal from someone else's text: a control character, or an
@@ -189,6 +200,10 @@ impl Instance {
             geolocation: text(row, "geolocation"),
             machine_id: integer(row, "machine_id"),
             host_id: integer(row, "host_id"),
+            cpu_name: text(row, "cpu_name"),
+            driver_version: text(row, "driver_version"),
+            dlperf: number(row, "dlperf"),
+            pcie_bw: number(row, "pcie_bw"),
         })
     }
 

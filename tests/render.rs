@@ -14,7 +14,9 @@ use vast_skopos::SkoposError;
 use vast_skopos::instance::{Account, Instance};
 use vast_skopos::offer::{OfferPage, OfferQuery, OfferSort, select};
 use vast_skopos::probe::parse_output;
-use vast_skopos::render::{TableOptions, money_line, offers_footer, offers_table, table};
+use vast_skopos::render::{
+    OfferColumns, TableOptions, money_line, offers_footer, offers_table, table,
+};
 
 fn instance(json: &serde_json::Value) -> Instance {
     Instance::from_json(json).unwrap()
@@ -96,7 +98,9 @@ fn wide_adds_the_machine_and_the_host_after_ssh_and_before_the_probe_columns() {
     let rows = vec![
         instance(
             &serde_json::json!({"id": 56_362_434, "actual_status": "running",
-            "ssh_host": "ssh6.vast.ai", "ssh_port": 36_000, "machine_id": 100_682, "host_id": 406_325}),
+            "ssh_host": "ssh6.vast.ai", "ssh_port": 36_000, "machine_id": 100_682, "host_id": 406_325,
+            "cpu_name": "AMD EPYC 7K62 48-Core Processor", "driver_version": "580.142",
+            "dlperf": 199.238_301_991, "pcie_bw": 26.9}),
         ),
         instance(&serde_json::json!({"id": 2, "actual_status": "exited"})),
     ];
@@ -120,7 +124,21 @@ fn wide_adds_the_machine_and_the_host_after_ssh_and_before_the_probe_columns() {
     );
     let lines: Vec<&str> = text.lines().collect();
     let header: Vec<&str> = lines[0].split_whitespace().collect();
-    assert_eq!(&header[8..12], ["SSH", "MACHINE", "HOST", "GPU%"], "{text}");
+    assert_eq!(
+        &header[8..17],
+        [
+            "SSH", "MACHINE", "HOST", "CPU", "DRIVER", "DLPERF", "PCIE", "GB/s", "GPU%"
+        ],
+        "{text}"
+    );
+    assert!(
+        lines[1]
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .contains("AMD EPYC 7K62 48-Core Processor 580.142 199.2 26.9"),
+        "the CPU, the driver, DLPerf and the PCIe bandwidth, as the offers show them: {text}"
+    );
     let first: Vec<&str> = lines[1].split_whitespace().collect();
     assert!(
         first
@@ -162,7 +180,7 @@ fn the_offers_table_of_real_rows_is_aligned_and_footed() {
     q.verified = true;
     // BORROW: explicit clone -- the page is read again by the footer
     let kept = select(page.offers.clone(), &q, OfferSort::Price);
-    let text = offers_table(&kept, 2);
+    let text = offers_table(&kept, 2, OfferColumns::Plain);
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(
         lines.len(),
@@ -230,7 +248,7 @@ fn a_long_host_written_cell_is_capped_and_its_hidden_characters_dropped() {
     let offer = vast_skopos::offer::Offer::from_json(&serde_json::json!(
         {"id": 1, "gpu_name": long, "geolocation": format!("{}, US", "Z".repeat(500))}))
     .unwrap();
-    let text = offers_table(&[offer], 1);
+    let text = offers_table(&[offer], 1, OfferColumns::Plain);
     let row = text.lines().nth(1).unwrap();
     assert!(!row.contains('\u{202e}'), "{row}");
     assert!(
@@ -343,7 +361,7 @@ fn the_marked_table_keeps_its_columns_aligned_with_a_mark_and_a_was() {
     let before = [watched(1, 0.5), watched(2, 0.6), watched(7, 0.9)];
     let now = [watched(3, 0.4), watched(1, 0.55), watched(2, 0.6)];
     let (watch, changes) = moved(&before, &now);
-    let text = offers_table_marked(&now, 20, &changes, &watch);
+    let text = offers_table_marked(&now, 20, OfferColumns::Plain, &changes, &watch);
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(lines.len(), 4, "the header and three rows: {text}");
     // The mark column is the first, one character wide; every id starts in the same column.
@@ -370,8 +388,14 @@ fn the_marked_table_keeps_its_columns_aligned_with_a_mark_and_a_was() {
     );
     assert_eq!(seen(lines[2]), "4/4", "{text}");
     assert!(
-        offers_table_marked(&[], 20, &OfferChanges::default(), &MarketWatch::default())
-            .ends_with("(no offers)\n"),
+        offers_table_marked(
+            &[],
+            20,
+            OfferColumns::Plain,
+            &OfferChanges::default(),
+            &MarketWatch::default()
+        )
+        .ends_with("(no offers)\n"),
         "an empty market"
     );
 }
@@ -383,7 +407,7 @@ fn a_machine_back_under_another_offer_id_has_no_mark_and_shows_its_old_price() {
     let before = [on_machine(10, 1, 0.5)];
     let now = [on_machine(11, 1, 0.55), on_machine(20, 2, 0.6)];
     let (watch, changes) = moved(&before, &now);
-    let text = offers_table_marked(&now, 20, &changes, &watch);
+    let text = offers_table_marked(&now, 20, OfferColumns::Plain, &changes, &watch);
     let lines: Vec<&str> = text.lines().collect();
     assert!(
         lines[1].starts_with("   11") && lines[1].contains("0.550 (was 0.500)"),
@@ -405,7 +429,7 @@ fn every_row_of_a_new_machine_is_marked_but_only_the_row_that_moved_has_a_was() 
         on_machine(12, 1, 0.9),
     ];
     let (watch, changes) = moved(&before, &now);
-    let text = offers_table_marked(&now, 20, &changes, &watch);
+    let text = offers_table_marked(&now, 20, OfferColumns::Plain, &changes, &watch);
     let lines: Vec<&str> = text.lines().collect();
     assert!(
         lines[1].starts_with("+  21") && lines[2].starts_with("+  22"),
@@ -426,6 +450,7 @@ fn a_machine_the_watch_does_not_remember_has_a_dash_for_seen() {
     let text = offers_table_marked(
         &[watched(1, 0.5)],
         20,
+        OfferColumns::Plain,
         &OfferChanges::default(),
         &MarketWatch::default(),
     );
@@ -846,5 +871,99 @@ fn a_failed_probe_says_whether_ssh_reached_the_box_and_how_old_the_box_is() {
     assert!(
         !text.contains("failed to probe"),
         "the target is in the SSH column already: {text}"
+    );
+}
+
+/// An offer with everything `--wide` shows.
+fn wide_offer(id: u64, price: f64) -> vast_skopos::offer::Offer {
+    vast_skopos::offer::Offer::from_json(&serde_json::json!({"id": id, "gpu_name": "RTX 5090",
+        "num_gpus": 1, "dph_total": price, "host_id": 406_325, "machine_id": 145_061,
+        "verification": "verified", "cpu_name": "AMD EPYC 7K62 48-Core Processor",
+        "driver_version": "580.142", "dlperf": 199.2, "pcie_bw": 26.9, "gpu_max_power": 600.0,
+        "geolocation": "South Korea, KR"}))
+    .unwrap()
+}
+
+/// The column names of a header line: parted by two spaces or more.
+fn header_columns(text: &str) -> Vec<String> {
+    text.lines()
+        .next()
+        .unwrap()
+        .split("  ")
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+#[test]
+fn the_wide_offers_table_tells_machines_apart_and_keeps_where_last() {
+    use vast_skopos::market::MarketWatch;
+    use vast_skopos::offer::OfferChanges;
+    use vast_skopos::render::offers_table_marked;
+    let offers = [wide_offer(1, 0.4), wide_offer(2, 0.0)];
+    let plain = offers_table(&offers, 20, OfferColumns::Plain);
+    assert!(
+        !plain.contains("MACHINE") && !plain.contains("EPYC"),
+        "{plain}"
+    );
+    let text = offers_table(&offers, 20, OfferColumns::Wide);
+    assert_eq!(
+        header_columns(&text),
+        [
+            "ID",
+            "GPU",
+            "VRAM",
+            "$/H",
+            "CUDA",
+            "DISK",
+            "UP/DOWN Mb/s",
+            "REL %",
+            "MAX DAYS",
+            "HOST",
+            "MACHINE",
+            "VERIFICATION",
+            "CPU",
+            "DRIVER",
+            "DLPERF",
+            "DLPERF/$",
+            "PCIE GB/s",
+            "MAX W",
+            "WHERE"
+        ],
+        "{text}"
+    );
+    // The cells, one space apart whatever the padding.
+    let words = |n: usize| {
+        text.lines()
+            .nth(n)
+            .unwrap()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    assert!(
+        words(1).ends_with(
+            "406325 145061 verified AMD EPYC 7K62 48-Core Processor 580.142 199.2 498 26.9 600 South Korea, KR"
+        ),
+        "{text}"
+    );
+    assert!(
+        words(2).contains("580.142 199.2 - 26.9 600"),
+        "no DLPerf per dollar at a price of 0: {text}"
+    );
+    // A watch's table: SEEN still comes right before WHERE.
+    let marked = offers_table_marked(
+        &offers,
+        20,
+        OfferColumns::Wide,
+        &OfferChanges::default(),
+        &MarketWatch::default(),
+    );
+    let columns = header_columns(&marked);
+    assert_eq!(
+        &columns[columns.len() - 3..],
+        ["MAX W", "SEEN", "WHERE"],
+        "{marked}"
     );
 }

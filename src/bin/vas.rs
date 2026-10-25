@@ -17,8 +17,8 @@ use vast_skopos::market::MarketWatch;
 use vast_skopos::offer::{OfferChanges, OfferQuery, OfferSort, country_code, gpu_model, select};
 use vast_skopos::probe::probe_all;
 use vast_skopos::render::{
-    TableOptions, offers_changes_note, offers_changes_only, offers_footer, offers_table,
-    offers_table_marked, offers_variance_note, table,
+    OfferColumns, TableOptions, offers_changes_note, offers_changes_only, offers_footer,
+    offers_table, offers_table_marked, offers_variance_note, table,
 };
 use vast_skopos::runway::Runway;
 use vast_skopos::trend::Trend;
@@ -65,7 +65,8 @@ struct LookArgs {
     #[arg(long, value_name = "FILE")]
     key_file: Option<PathBuf>,
     /// Also show each box's machine id and host id (what a rentals log, --exclude-machine and
-    /// --exclude-host need).
+    /// --exclude-host need), then its CPU, driver, DLPerf and PCIe bandwidth (what tells it from
+    /// another machine, as vas offers --wide shows them).
     #[arg(long)]
     wide: bool,
     /// JSON Lines instead of the table, for scripts and monitors: one object per box, then one for
@@ -178,6 +179,11 @@ struct OffersArgs {
     /// With --watch: print only what moved since the last look (one line each), not the table.
     #[arg(long, requires = "watch")]
     changes: bool,
+    /// Also show what tells one machine from another: MACHINE (after HOST), then CPU, DRIVER, DLPERF
+    /// (vast.ai's benchmark score), DLPERF/$ (per $/h shown), PCIE GB/s and MAX W (the card's maximum
+    /// power, not the limit a host sets: vas --ssh's POWER reads that).
+    #[arg(long)]
+    wide: bool,
     /// Show at most N offers.
     #[arg(long, value_name = "N", default_value_t = 20, value_parser = clap::value_parser!(u64).range(1..))]
     top: u64,
@@ -672,6 +678,11 @@ fn offers(args: OffersArgs) -> ExitCode {
         eprintln!("vas offers: VAST_URL is set: searching {}", client.base());
     }
     let top = usize::try_from(args.top).unwrap_or(usize::MAX);
+    let columns = if args.wide {
+        OfferColumns::Wide
+    } else {
+        OfferColumns::Plain
+    };
     let nothing = OfferChanges::default();
     let mut market = MarketWatch::default();
     run_looks(
@@ -691,9 +702,15 @@ fn offers(args: OffersArgs) -> ExitCode {
                 // A blank line parts the looks of a watch.
                 let gap = if market.looks() > 1 { "\n" } else { "" };
                 let table = if args.watch.is_some() {
-                    offers_table_marked(&kept, top, moved.as_ref().unwrap_or(&nothing), &market)
+                    offers_table_marked(
+                        &kept,
+                        top,
+                        columns,
+                        moved.as_ref().unwrap_or(&nothing),
+                        &market,
+                    )
                 } else {
-                    offers_table(&kept, top)
+                    offers_table(&kept, top, columns)
                 };
                 let footer = offers_footer(&page, &kept, top, &query, sort, at);
                 // One search is a sample: a one-shot says so every time, a watch on its first look.

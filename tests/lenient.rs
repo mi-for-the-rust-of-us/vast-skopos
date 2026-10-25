@@ -86,6 +86,53 @@ fn the_api_text_loses_the_same_characters() {
 }
 
 #[test]
+fn what_tells_machines_apart_is_read_leniently_on_an_offer_and_on_a_box() {
+    use vast_skopos::offer::Offer;
+    let row = serde_json::json!({"id": 1, "cpu_name": "AMD\u{202E} EPYC\u{1b}", "driver_version": " 580.142 ",
+        "dlperf": "199.2", "pcie_bw": 26.9, "gpu_max_power": "575", "dph_total": 0.5});
+    let o = Offer::from_json(&row).unwrap();
+    assert_eq!(
+        (o.cpu_name.as_deref(), o.driver_version.as_deref()),
+        (Some("AMD EPYC"), Some("580.142"))
+    );
+    assert_eq!(
+        (o.dlperf, o.pcie_bw, o.gpu_max_power),
+        (Some(199.2), Some(26.9), Some(575.0))
+    );
+    assert_eq!(o.dlperf_per_dollar(), Some(398.4));
+    let i = Instance::from_json(&row).unwrap();
+    assert_eq!(
+        (
+            i.cpu_name.as_deref(),
+            i.driver_version.as_deref(),
+            i.dlperf,
+            i.pcie_bw
+        ),
+        (Some("AMD EPYC"), Some("580.142"), Some(199.2), Some(26.9))
+    );
+    // Garbage costs a dash, never the row.
+    let odd = serde_json::json!({"id": 2, "cpu_name": 7, "driver_version": [], "dlperf": "NaN",
+        "pcie_bw": "fast", "gpu_max_power": {}, "dph_total": -1.0});
+    let o = Offer::from_json(&odd).unwrap();
+    assert_eq!(
+        (
+            o.cpu_name,
+            o.driver_version,
+            o.dlperf,
+            o.pcie_bw,
+            o.gpu_max_power
+        ),
+        (None, None, None, None, None)
+    );
+    let below_zero =
+        Offer::from_json(&serde_json::json!({"id": 3, "dlperf": 199.2, "dph_total": -1.0}))
+            .unwrap();
+    assert_eq!(below_zero.dlperf_per_dollar(), None);
+    let i = Instance::from_json(&odd).unwrap();
+    assert_eq!((i.cpu_name, i.dlperf, i.pcie_bw), (None, None, None));
+}
+
+#[test]
 fn a_row_that_says_port_zero_has_no_endpoint_to_probe() {
     let row = |port: u64| {
         Instance::from_json(&serde_json::json!(

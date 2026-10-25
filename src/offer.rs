@@ -64,6 +64,19 @@ pub struct Offer {
     pub machine_id: Option<u64>,
     /// vast.ai's verdict on the machine (`verified`, `unverified`, `deverified`, ...).
     pub verification: Option<String>,
+    /// The CPU's model, as the host reports it (e.g. `AMD EPYC 7K62 48-Core Processor`).
+    pub cpu_name: Option<String>,
+    /// The NVIDIA driver's version (e.g. `580.142`).
+    pub driver_version: Option<String>,
+    /// vast.ai's own benchmark score of the machine, `DLPerf` (an RTX 5090 reads about 199). It did NOT
+    /// show a host's 500 W power cap on two machines (2026-10-25): the card's own reading does
+    /// (`vas --ssh`, `POWER`).
+    pub dlperf: Option<f64>,
+    /// The bandwidth between the host and the GPU that vast.ai measured, in GB/s.
+    pub pcie_bw: Option<f64>,
+    /// The most power the GPU can be given, in watts: the card's maximum, not the limit a host sets
+    /// (which only the card tells: `vas --ssh`, `POWER`).
+    pub gpu_max_power: Option<f64>,
     /// Whether the offer can be rented.
     pub rentable: Option<bool>,
     /// Whether it is rented already.
@@ -104,9 +117,33 @@ impl Offer {
             host_id: integer(row, "host_id"),
             machine_id: integer(row, "machine_id"),
             verification: text(row, "verification"),
+            cpu_name: text(row, "cpu_name"),
+            driver_version: text(row, "driver_version"),
+            dlperf: number(row, "dlperf"),
+            pcie_bw: number(row, "pcie_bw"),
+            gpu_max_power: number(row, "gpu_max_power"),
             rentable: boolean(row, "rentable"),
             rented: boolean(row, "rented"),
         })
+    }
+
+    /// `DLPerf` per dollar per hour: [`Offer::dlperf`] over the price shown ([`Offer::dph_total`],
+    /// storage included); `None` without both, or for a price that is not above zero.
+    ///
+    /// Computed here rather than read from vast.ai's `dlperf_per_dphtotal`, so that it matches the
+    /// `$/H` column, which prices in the storage the search asked for.
+    ///
+    /// ```
+    /// use vast_skopos::offer::Offer;
+    /// let at = |price: f64| Offer::from_json(&serde_json::json!({"id": 1, "dlperf": 199.0,
+    ///   "dph_total": price})).unwrap();
+    /// assert_eq!(at(0.5).dlperf_per_dollar(), Some(398.0));
+    /// assert_eq!(at(0.0).dlperf_per_dollar(), None);
+    /// ```
+    #[must_use]
+    pub fn dlperf_per_dollar(&self) -> Option<f64> {
+        let price = self.dph_total.filter(|p| *p > 0.0)?;
+        Some(self.dlperf? / price)
     }
 
     /// The country code: what follows the last comma of the location, when it is two ASCII
