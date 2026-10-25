@@ -64,6 +64,9 @@ pub struct Offer {
     pub machine_id: Option<u64>,
     /// vast.ai's verdict on the machine (`verified`, `unverified`, `deverified`, ...).
     pub verification: Option<String>,
+    /// vast.ai's code for that verdict, undocumented: 0 unverified, 1 verified, 2 and up deverified
+    /// (seen 2026-10-25: 2, 4, 6, 8, 10, 12, 14 and 33). What the search filters on.
+    pub vericode: Option<u64>,
     /// The CPU's model, as the host reports it (e.g. `AMD EPYC 7K62 48-Core Processor`).
     pub cpu_name: Option<String>,
     /// The NVIDIA driver's version (e.g. `580.142`).
@@ -120,6 +123,7 @@ impl Offer {
             host_id: integer(row, "host_id"),
             machine_id: integer(row, "machine_id"),
             verification: text(row, "verification"),
+            vericode: integer(row, "vericode"),
             cpu_name: text(row, "cpu_name"),
             driver_version: text(row, "driver_version"),
             dlperf: number(row, "dlperf"),
@@ -463,8 +467,10 @@ impl OfferQuery {
                 .verification
                 .as_deref()
                 .is_none_or(|v| v == "verified");
-        let deverified_ok =
-            !self.exclude_deverified || offer.verification.as_deref() != Some("deverified");
+        // The same rule as the server's (`vericode <= 1`), and the text it goes with.
+        let deverified_ok = !self.exclude_deverified
+            || (offer.verification.as_deref() != Some("deverified")
+                && offer.vericode.is_none_or(|code| code <= 1));
         let country_ok = offer.country().is_none_or(|c| {
             !self
                 .exclude_countries

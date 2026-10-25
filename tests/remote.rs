@@ -425,7 +425,7 @@ fn a_status_line_written_in_the_log_is_only_a_line() {
 }
 
 #[test]
-fn a_matching_line_longer_than_the_byte_cap_keeps_its_status_and_is_cut_to_the_width() {
+fn a_matching_line_longer_than_the_byte_cap_keeps_its_head_and_its_status() {
     let d = scratch("grep-wide");
     let root = d.display().to_string();
     fs::write(
@@ -436,7 +436,47 @@ fn a_matching_line_longer_than_the_byte_cap_keeps_its_status_and_is_cut_to_the_w
     let LogReading::Line { line: shown, .. } = grep_in(&d, &format!("{root}/*.log"), "loss") else {
         panic!("a line was expected");
     };
-    assert!(shown.starts_with("xxxx") && shown.ends_with('…'), "{shown}");
+    assert!(
+        shown.starts_with("loss xxx") && shown.ends_with('…'),
+        "the head, where the match is: {shown}"
+    );
     assert_eq!(shown.chars().count(), 121);
+    let _ = fs::remove_dir_all(&d);
+}
+
+#[test]
+fn a_crlf_log_and_a_pattern_that_matches_an_empty_line_still_give_a_line() {
+    let d = scratch("grep-crlf");
+    let root = d.display().to_string();
+    let file = format!("{root}/train.log");
+    fs::write(&file, "loss 1\r\nstep 2\r\n").unwrap();
+    assert_eq!(
+        grep_in(&d, &format!("{root}/*.log"), ".*"),
+        line(&file, "step 2"),
+        "the empty lines a CRLF would leave are squeezed out"
+    );
+    fs::write(&file, "\nloss 1\n").unwrap();
+    assert_eq!(
+        grep_in(&d, &format!("{root}/*.log"), "^$"),
+        line(&file, ""),
+        "a blank line matched is a line, not a cut answer"
+    );
+    let _ = fs::remove_dir_all(&d);
+}
+
+#[test]
+fn a_refused_pattern_leaves_nothing_on_stderr_for_ssh_to_report() {
+    let d = scratch("grep-quiet");
+    let root = d.display().to_string();
+    fs::write(d.join("train.log"), "step\n").unwrap();
+    let query = LogQuery::new(format!("{root}/*.log")).grep("(");
+    let out = Command::new("sh")
+        .arg("-c")
+        .arg(remote_command(Some(&query)))
+        .current_dir(&d)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!stderr.contains("grep"), "{stderr}");
     let _ = fs::remove_dir_all(&d);
 }

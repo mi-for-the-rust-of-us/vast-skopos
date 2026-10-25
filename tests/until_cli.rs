@@ -1,6 +1,6 @@
-//! `vas --until`, end to end: a fake `ssh` first on the `PATH` runs the remote command with the local
-//! `sh` (and a fake `nvidia-smi`), against a scratch log. Linux only, as `tests/remote.rs`: the boxes
-//! are Linux, and the remote command needs `timeout`.
+//! `vas --grep` and `vas --until`, end to end: a fake `ssh` first on the `PATH` runs the remote
+//! command with the local `sh` (and a fake `nvidia-smi`), against a scratch log. Linux only, as
+//! `tests/remote.rs`: the boxes are Linux, and the remote command needs `timeout`.
 
 #![cfg(target_os = "linux")]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -54,27 +54,41 @@ fn scratch(name: &str) -> RemoveOnDrop {
     RemoveOnDrop(dir)
 }
 
-/// `vas --ssh --log <dir>/runs/*/run.log --watch 0 --until <pattern>`, the fake `ssh` first on the
-/// `PATH`, against the mock at `base`.
-fn wait_for(base: &str, dir: &Path, pattern: &str) -> KillOnDrop {
+/// `vas --ssh --log <dir>/runs/*/run.log` and `more` flags, the fake `ssh` first on the `PATH`,
+/// against the mock at `base`; stdout and stderr piped.
+fn vas(base: &str, dir: &Path, more: &[&str]) -> Command {
     let path = format!(
         "{}:{}",
         dir.join("bin").display(),
         std::env::var("PATH").unwrap()
     );
     let glob = format!("{}/runs/*/run.log", dir.display());
-    let child = Command::new(env!("CARGO_BIN_EXE_vas"))
-        .args(["--ssh", "--log", &glob, "--watch", "0", "--until", pattern])
+    let mut command = Command::new(env!("CARGO_BIN_EXE_vas"));
+    command
+        .args(["--ssh", "--log", &glob])
+        .args(more)
         .env("VAST_URL", base)
         .env("VAST_API_KEY", "k3y")
         .env("HOME", dir)
         .env("PATH", path)
         .env("VAS_WATCH_FLOOR_MS", "50")
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    command
+}
+
+/// [`vas`] with `--watch 0 --until <pattern>`, spawned.
+fn wait_for(base: &str, dir: &Path, pattern: &str) -> KillOnDrop {
+    let child = vas(base, dir, &["--watch", "0", "--until", pattern])
         .spawn()
         .unwrap();
     KillOnDrop(Some(child))
+}
+
+fn stdout_of(child: &mut KillOnDrop) -> String {
+    let mut text = String::new();
+    std::io::Read::read_to_string(&mut child.stdout.take().unwrap(), &mut text).unwrap();
+    text
 }
 
 fn stderr_of(child: &mut KillOnDrop) -> String {
@@ -98,6 +112,51 @@ fn a_line_already_there_ends_the_wait_at_the_first_look() {
     assert_eq!(status.code(), Some(0), "{stderr}");
     assert!(
         stderr.contains("vas: --until: box 77 matched: initial loss 4.21"),
+        "{stderr}"
+    );
+    let stdout = stdout_of(&mut child);
+    assert_eq!(
+        stdout.matches("== vas, unix time").count(),
+        1,
+        "one look: {stdout}"
+    );
+    assert!(
+        stdout.contains("s0/run.log: initial loss 4.21"),
+        "the table shows the line that ended the wait: {stdout}"
+    );
+}
+
+#[test]
+fn grep_shows_the_last_matching_line_in_the_table() {
+    let dir = scratch("grep");
+    fs::write(
+        log(&dir.0),
+        "resumed from e50\nepoch 51\narchived e55\nepoch 56\n",
+    )
+    .unwrap();
+    let (base, _) = serve(one_box);
+    let out = vas(&base, &dir.0, &["--grep", "archived|resumed"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "{stdout}");
+    assert!(stdout.contains("s0/run.log: archived e55"), "{stdout}");
+    let plain = vas(&base, &dir.0, &[]).output().unwrap();
+    let plain = String::from_utf8_lossy(&plain.stdout);
+    assert!(plain.contains("s0/run.log: epoch 56"), "{plain}");
+}
+
+#[test]
+fn a_pattern_the_boxs_grep_refuses_ends_the_wait_at_once_with_exit_code_2() {
+    let dir = scratch("refused");
+    fs::write(log(&dir.0), "step 1\n").unwrap();
+    let (base, _) = serve(one_box);
+    let mut child = wait_for(&base, &dir.0, "(");
+    let status = exit_within_deadline(&mut child);
+    let stderr = stderr_of(&mut child);
+    assert_eq!(status.code(), Some(2), "{stderr}");
+    assert!(
+        stderr.contains("vas: --until: grep on box 77 refused the pattern"),
         "{stderr}"
     );
 }

@@ -251,6 +251,8 @@ pub fn short_path(path: &str) -> String {
 ///     "s1/train.log: (empty)");
 /// assert_eq!(log_cell(Some(&LogReading::Line {
 ///     file: "/r/s1/train.log".to_owned(), line: "e41".to_owned() })), "s1/train.log: e41");
+/// assert_eq!(log_cell(Some(&LogReading::Line {
+///     file: "/r/s1/train.log".to_owned(), line: String::new() })), "s1/train.log: (a blank line)");
 /// assert_eq!(log_cell(Some(&LogReading::NoMatchingLine { file: "/r/s1/train.log".to_owned() })),
 ///     "s1/train.log: (no line matches)");
 /// assert_eq!(log_cell(Some(&LogReading::PatternRefused { file: "/r/s1/train.log".to_owned() })),
@@ -265,6 +267,9 @@ pub fn log_cell(log: Option<&LogReading>) -> String {
         Some(LogReading::NoMatch) => String::from("(no file matches)"),
         Some(LogReading::NotAFile { file }) => format!("{}: (not a file)", short_path(file)),
         Some(LogReading::Empty { file }) => format!("{}: (empty)", short_path(file)),
+        Some(LogReading::Line { file, line }) if line.is_empty() => {
+            format!("{}: (a blank line)", short_path(file))
+        }
         Some(LogReading::Line { file, line }) => format!("{}: {line}", short_path(file)),
         Some(LogReading::NoMatchingLine { file }) => {
             format!("{}: (no line matches)", short_path(file))

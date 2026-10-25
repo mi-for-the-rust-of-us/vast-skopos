@@ -1,4 +1,5 @@
-//! What a look says to `vas --until`: a match, something still to wait on, or nothing.
+//! What a look says to `vas --until` (a match, a refused pattern, a box read, a box starting, or
+//! nothing), and when a wait across looks ends.
 
 #![allow(clippy::unwrap_used, clippy::unnecessary_wraps)]
 // EXPLICIT: test code -- a failed unwrap IS the failed assertion; and the helpers return the
@@ -7,7 +8,7 @@
 use vast_skopos::SkoposError;
 use vast_skopos::instance::Instance;
 use vast_skopos::probe::{ProbeOutcome, parse_output};
-use vast_skopos::until::{Verdict, verdict};
+use vast_skopos::until::{End, STARTING_LOOKS, UNREAD_LOOKS, Verdict, Wait, verdict};
 
 fn instance(id: u64, actual: &str, intended: &str) -> Instance {
     Instance::from_json(
@@ -33,7 +34,11 @@ fn not_yet() -> ProbeOutcome {
     read("vas-grep-file:/r/run.log\nvas-grep-exit:1\n")
 }
 
-fn refused() -> ProbeOutcome {
+fn grep_refused() -> ProbeOutcome {
+    read("vas-grep-file:/r/run.log\nvas-grep-exit:2\n")
+}
+
+fn ssh_refused() -> ProbeOutcome {
     Some(Err(SkoposError::Ssh {
         target: "h:1".to_owned(),
         message: "Connection refused".to_owned(),
@@ -41,13 +46,17 @@ fn refused() -> ProbeOutcome {
 }
 
 #[test]
-fn the_first_box_whose_log_matches_ends_the_wait() {
+fn the_first_box_whose_log_matches_ends_the_wait_even_beside_a_refused_pattern() {
     let boxes = [
         instance(1, "running", "running"),
         instance(2, "running", "running"),
         instance(3, "running", "running"),
     ];
-    let probes = [refused(), matched("initial loss 4.21"), matched("loss 9")];
+    let probes = [
+        grep_refused(),
+        matched("initial loss 4.21"),
+        matched("loss 9"),
+    ];
     assert_eq!(
         verdict(&boxes, &probes),
         Verdict::Matched {
@@ -55,46 +64,99 @@ fn the_first_box_whose_log_matches_ends_the_wait() {
             line: "initial loss 4.21".to_owned()
         }
     );
+    let probes = [ssh_refused(), not_yet(), grep_refused()];
+    assert_eq!(verdict(&boxes, &probes), Verdict::Refused { id: 3 });
 }
 
 #[test]
-fn a_box_read_without_a_match_yet_keeps_the_wait_whatever_its_file_says() {
+fn a_box_read_without_a_match_yet_is_read_whatever_its_file_says() {
     let one = [instance(1, "running", "running")];
-    assert_eq!(verdict(&one, &[not_yet()]), Verdict::Waiting);
+    assert_eq!(verdict(&one, &[not_yet()]), Verdict::Read);
     assert_eq!(
         verdict(&one, &[read("vas-no-file\n")]),
-        Verdict::Waiting,
+        Verdict::Read,
         "the file may not be written yet"
     );
-    assert_eq!(
-        verdict(&one, &[read("vas-grep-file:/r/run.log\nvas-grep-exit:2\n")]),
-        Verdict::Waiting,
-        "a refused pattern is said in the table on every look; the box was read"
-    );
+    assert_eq!(verdict(&one, &[read("vas-not-a-file:/r\n")]), Verdict::Read);
 }
 
 #[test]
-fn a_box_still_starting_keeps_the_wait_and_nothing_to_read_ends_it() {
+fn a_box_not_running_is_starting_and_nothing_to_read_is_unread() {
     let loading = instance(1, "loading", "running");
     let gone = instance(2, "exited", "stopped");
     let failing = instance(3, "running", "running");
     assert_eq!(
         verdict(std::slice::from_ref(&loading), &[None]),
-        Verdict::Waiting,
-        "a box rented a minute ago does not count against the wait"
+        Verdict::Starting
     );
     assert_eq!(
-        verdict(&[gone.clone(), failing.clone()], &[None, refused()]),
+        verdict(&[gone, failing.clone()], &[None, ssh_refused()]),
         Verdict::Unread
     );
     assert_eq!(verdict(&[], &[]), Verdict::Unread, "no box at all");
     assert_eq!(
-        verdict(&[loading, failing], &[None, refused()]),
-        Verdict::Waiting
+        verdict(&[loading, failing.clone()], &[None, ssh_refused()]),
+        Verdict::Starting
     );
     assert_eq!(
-        verdict(&[gone], &[]),
+        verdict(&[failing], &[]),
         Verdict::Unread,
         "fewer probes than boxes read as not probed"
+    );
+}
+
+#[test]
+fn a_box_read_between_two_unread_looks_starts_the_count_afresh() {
+    let mut wait = Wait::default();
+    for _ in 0..5 {
+        assert_eq!(wait.record(Verdict::Unread), None);
+        assert_eq!(wait.record(Verdict::Read), None);
+    }
+    for n in 1..UNREAD_LOOKS {
+        assert_eq!(wait.record(Verdict::Unread), None, "look {n}");
+    }
+    assert_eq!(wait.record(Verdict::Unread), Some(End::GaveUp));
+}
+
+#[test]
+fn a_box_that_stays_not_running_keeps_a_wait_for_a_bounded_number_of_looks() {
+    let mut wait = Wait::default();
+    for n in 0..STARTING_LOOKS {
+        assert_eq!(wait.record(Verdict::Starting), None, "look {n}");
+    }
+    // A box read resets the bound: it may start again later.
+    assert_eq!(wait.record(Verdict::Read), None);
+    for n in 0..STARTING_LOOKS {
+        assert_eq!(
+            wait.record(Verdict::Starting),
+            None,
+            "look {n} after the read"
+        );
+    }
+    let ends: Vec<Option<End>> = (0..UNREAD_LOOKS)
+        .map(|_| wait.record(Verdict::Starting))
+        .collect();
+    assert_eq!(
+        ends.last(),
+        Some(&Some(End::GaveUp)),
+        "past the bound, a starting look counts as unread: {ends:?}"
+    );
+}
+
+#[test]
+fn a_match_and_a_refused_pattern_end_the_wait_at_once() {
+    assert_eq!(
+        Wait::default().record(Verdict::Matched {
+            id: 7,
+            line: "x".to_owned()
+        }),
+        Some(End::Matched {
+            id: 7,
+            line: "x".to_owned()
+        })
+    );
+    assert_eq!(
+        Wait::default().record(Verdict::Refused { id: 7 }),
+        Some(End::Refused { id: 7 })
     );
 }

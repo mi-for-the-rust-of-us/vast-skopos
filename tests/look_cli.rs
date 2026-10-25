@@ -774,6 +774,47 @@ fn a_wait_with_no_box_to_read_gives_up_after_two_looks_with_exit_code_3() {
     );
 }
 
+/// One box meant to run that is still loading: a wait on it goes on (for a bounded number of looks).
+fn box_loading(target: &str) -> (u16, String) {
+    if target.starts_with("/api/v1/instances/") {
+        (
+            200,
+            r#"{"instances": [{"id": 78, "actual_status": "loading", "intended_status": "running",
+                "dph_total": 0.5, "start_date": 1.0, "status_msg": "46b4edaa8d47: Pull complete"}],
+                "next_token": null}"#
+                .to_owned(),
+        )
+    } else {
+        account(target)
+    }
+}
+
+#[test]
+fn a_closed_stdout_ends_a_wait_with_exit_code_1_not_as_a_match() {
+    let mut child = spawn_watch(
+        box_loading,
+        &[
+            "--ssh", "--log", "/r/*.log", "--watch", "0", "--until", "loss",
+        ],
+        Some("50"),
+    );
+    let stdout = child.stdout.take().unwrap();
+    let mut first = String::new();
+    std::io::BufReader::new(stdout)
+        .read_line(&mut first)
+        .unwrap();
+    assert!(first.starts_with("== vas"), "{first}");
+    // The reader is gone (dropped with the BufReader): the next look cannot be written.
+    let status = exit_within_deadline(&mut child);
+    let mut stderr = String::new();
+    std::io::Read::read_to_string(&mut child.stderr.take().unwrap(), &mut stderr).unwrap();
+    assert_eq!(status.code(), Some(1), "{stderr}");
+    assert!(
+        stderr.contains("vas: --until: stdout was closed before a match"),
+        "{stderr}"
+    );
+}
+
 #[test]
 fn grep_needs_a_log_and_a_pattern_of_one_line() {
     let home = empty_dir("grep");

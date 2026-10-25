@@ -84,9 +84,10 @@ refuses would be another, and the message names the status.
 
 `0` for success (a closed pipe, such as `vas --watch 30 | head`, ends quietly with `0`; so does a
 `--until` wait that found its line), `1` when a look fails or a key file or config file cannot be read or is
-malformed, `2` when a flag or a value is refused, on the command line or in a config file (an unknown flag,
-a value out of range, flags that conflict), and `3` when a `--until` wait gave up: no box could be read for
-2 looks in a row.
+malformed (and when the stdout of a `--until` wait is closed before a match), `2` when a flag or a value is
+refused, on the command line or in a config file (an unknown flag, a value out of range, flags that
+conflict), or when a box's `grep` refuses a `--until` pattern, and `3` when a `--until` wait gave up: no box
+could be read for 2 looks in a row.
 
 ## Searching for offers
 
@@ -252,10 +253,11 @@ dashboard's own rule, so the address in the `SSH` column is the one to use, not 
 The probe failed, and the last cell says which way, how old the box is, and why in `ssh`'s own words:
 
 - `UNREACHABLE 4m: ssh: connect to host ssh3.vast.ai port 32456: Connection refused`: `ssh` never reached
-  the box (refused, timed out, no route, a name that does not resolve, the connection closed before the
-  session, or no answer within 30 s);
+  the box (refused, timed out, no route, a name that does not resolve, the connection closed or reset before
+  the session, or nothing back within 30 s);
 - `SSH FAILED 4m: root@ssh3.vast.ai: Permission denied (publickey).`: it reached the box and was turned away
-  (a refused key, a changed host key), or the box gave no GPU reading.
+  (a refused key, a changed host key), or the box gave no GPU reading, or it began to answer and did not
+  finish within 30 s (`the box answered, but the probe did not finish within 30 s`: a hung `nvidia-smi`, say).
 
 Nothing is retried: what to do about the box is your call. A box that is not `running`, or has no endpoint,
 is not probed (`-`). `--compact` says the same as `error_kind`: `unreachable` or `failed`.
@@ -297,17 +299,20 @@ $ vas --ssh --log '/root/src/askesis/reference/canvas/data/runs/*/run.log' --gre
 ... me38_c12o_s0_d1/run.log: archived /root/src/askesis/reference/canvas/data/runs/me38_c12o_s0_d1/canvas_ema_e55.safetensors
 ```
 
-The search covers the file's last 64 MiB, each carriage-return segment of a progress bar as a line of its
-own. `(no line matches)` when none does, `(grep refused the pattern)` when `grep` cannot read it (`(` alone,
-say). The pattern is quoted for the box's shell: nothing in it is expanded, so `$`, quotes and backquotes
+The search covers the file's last 64 MiB, within 10 s on the box (`?` when it runs past them), each
+carriage-return segment of a progress bar as a line of its own, and each line's first 4096 bytes: a long line
+is shown from its head. `(no line matches)` when none does, `(grep refused the pattern)` when `grep` cannot
+read it (`(` alone, say), `(a blank line)` when the line that matched is empty. The pattern is quoted for the box's shell: nothing in it is expanded, so `$`, quotes and backquotes
 are only characters to match.
 
 ### How do I wait for a line in a log, without a loop of my own?
 
 `vas --ssh --log PATH --watch 30 --until PATTERN` looks every 30 s and exits `0` as soon as a box's log has a
-line matching `PATTERN` (read as `--grep` reads it), saying which box and which line on stderr. It exits `3`
-when no box could be read for 2 looks in a row (every probe failed, or no box is running or starting); a box
-still starting keeps the wait going, and a look whose instances request failed does not count. A pattern
+line matching `PATTERN` (read as `--grep` reads it), saying which box and which line on stderr. It exits `2` at
+once when a box's `grep` refuses the pattern (no later look could match), `3` when no box could be read for 2
+looks in a row (every probe failed or none could be made), and `1` when its stdout is closed before a match;
+a box meant to run but not running (`loading`, say) keeps the wait going for 10 looks in a row at most, and a
+look whose instances request failed does not count. A pattern
 can wait for success or failure at once: `--until 'initial loss|Traceback'`, then read the line it printed.
 There is no time limit of its own: `timeout 3600 vas ...` gives one. See the tutorial
 [Waiting for a line](tutorials/waiting-for-a-line.md).

@@ -395,6 +395,18 @@ fn xdg_wins_over_the_home_config_and_falls_back_when_absent() {
     );
 }
 
+/// The identity's `q` (what every search sends), with `extra`'s keys added: the whole `q` a search
+/// with those constraints must send, so a stray key fails the comparison.
+fn identity_with(extra: &serde_json::Value) -> serde_json::Value {
+    let mut q = serde_json::json!({"rentable": {"eq": true}, "rented": {"eq": false},
+      "type": "on-demand", "limit": 200, "allocated_storage": 5,
+      "order": [["dph_total", "asc"]]});
+    for (key, value) in extra.as_object().unwrap() {
+        q[key] = value.clone();
+    }
+    q
+}
+
 #[test]
 fn the_deverified_are_left_out_as_vericode_and_the_command_line_cancels_the_files() {
     let (base, seen) = serve(bundles);
@@ -405,9 +417,10 @@ fn the_deverified_are_left_out_as_vericode_and_the_command_line_cancels_the_file
         &["offers", "--no-config", "--exclude-deverified"],
     );
     assert!(out.status.success(), "{stderr}");
-    let q = decode_q(&the_request(&seen).target);
-    assert_eq!(q["vericode"], serde_json::json!({"lte": 1}), "{q}");
-    assert!(q.get("verified").is_none(), "{q}");
+    assert_eq!(
+        decode_q(&the_request(&seen).target),
+        identity_with(&serde_json::json!({"vericode": {"lte": 1}}))
+    );
     assert!(stdout.contains("| not deverified |"), "{stdout}");
     // With --verified, only `verified` is sent: it already leaves the deverified out.
     let (base, seen) = serve(bundles);
@@ -423,23 +436,20 @@ fn the_deverified_are_left_out_as_vericode_and_the_command_line_cancels_the_file
         ],
     );
     assert!(out.status.success(), "{stderr}");
-    let q = decode_q(&the_request(&seen).target);
-    assert_eq!(q["verified"], serde_json::json!({"eq": true}), "{q}");
-    assert!(q.get("vericode").is_none(), "{q}");
+    assert_eq!(
+        decode_q(&the_request(&seen).target),
+        identity_with(&serde_json::json!({"verified": {"eq": true}})),
+        "no vericode beside verified"
+    );
     // The file's --exclude-deverified, cancelled on the command line.
     let home = fresh_home("deverified-file");
-    write_config(
-        &home.join("xdg"),
-        "--exclude-deverified
-",
-    );
+    write_config(&home.join("xdg"), "--exclude-deverified\n");
     let (base, seen) = serve(bundles);
     let (out, _, stderr) = vas(&base, &home, true, &["offers", "--no-exclude-deverified"]);
     assert!(out.status.success(), "{stderr}");
-    assert!(
-        decode_q(&the_request(&seen).target)
-            .get("vericode")
-            .is_none(),
+    assert_eq!(
+        decode_q(&the_request(&seen).target),
+        identity_with(&serde_json::json!({})),
         "--no-exclude-deverified cancels the file's"
     );
 }
@@ -469,19 +479,22 @@ fn the_hosts_and_machines_asked_for_accumulate_and_meet_the_excluded_in_one_filt
         ],
     );
     assert!(out.status.success(), "{stderr}");
-    let q = decode_q(&the_request(&seen).target);
     assert_eq!(
-        q["host_id"],
-        serde_json::json!({"in": [1, 406_325], "notin": [1]})
+        decode_q(&the_request(&seen).target),
+        identity_with(&serde_json::json!({
+            "host_id": {"in": [1, 406_325], "notin": [1]},
+            "machine_id": {"in": [2, 145_061]}
+        }))
     );
-    assert_eq!(q["machine_id"], serde_json::json!({"in": [2, 145_061]}));
     assert!(
         stdout.contains("hosts 1 406325, machines 2 145061, not hosts 1 |"),
         "{stdout}"
     );
 }
 
-/// Two sibling machines of one South Korean host, as the search answered them on 2026-10-25.
+/// Two machines of one host, alike but for what `--wide` shows. INVENTED for the test, from the
+/// shape of the search's rows: the ids are those of the 2026-10-25 rental, the other values are not
+/// what vast.ai listed (those two machines were rented, and listed nowhere).
 fn siblings(_: &str) -> (u16, String) {
     (
         200,

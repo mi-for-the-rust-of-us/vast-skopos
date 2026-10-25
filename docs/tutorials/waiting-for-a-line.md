@@ -6,7 +6,8 @@ other lines bury it. This tutorial replaces the loop you would write for that (`
 `--until` to wait for it. It assumes a rented box that `vas --ssh` can already read (see
 [From filters to a running box](from-filters-to-a-running-box.md), steps 7 and 8).
 
-**Not affiliated with vast.ai.** `vas` only reads: on the box, `nvidia-smi`, `ls`, `tail`, `tr` and `grep`.
+**Not affiliated with vast.ai.** `vas` only reads: on the box, `nvidia-smi`, `ls`, `head`, `tail`, `tr`, `cut`
+and `grep`, under `timeout` (and a `sh` of its own for the search).
 
 About the examples: they are output from a real rental (two RTX 5090s, 2026-10-25), trimmed. Commands have a
 PowerShell spelling where it differs.
@@ -41,10 +42,11 @@ vas --ssh --log '/root/src/askesis/reference/canvas/data/runs/*/run.log' --grep 
 
 - The pattern is an **extended regular expression** (`grep -E`), case-sensitive: `|` is "or", `+` is "one
   or more", `.` is any character (write `\.` for a dot).
-- The search covers the file's **last 64 MiB**, and each carriage-return segment of a progress bar is a line
-  of its own, so a bar's `50%` state can be found.
+- The search covers the file's **last 64 MiB**, within 10 s on the box (`?` when it runs past them). Each
+  carriage-return segment of a progress bar is a line of its own, so a bar's `50%` state can be found, and
+  each line's first 4096 bytes are searched: a long line is shown from its head.
 - When no line matches, the cell says `(no line matches)`; when `grep` cannot read the pattern (`(` alone),
-  `(grep refused the pattern)`.
+  `(grep refused the pattern)`; when the line that matched is empty, `(a blank line)`.
 - The pattern is quoted for the box's shell: nothing in it is expanded, so `$`, quotes and backquotes are
   characters to match, never commands. (The path is the opposite: the box's shell expands the glob, so quote
   it on your side.)
@@ -78,12 +80,14 @@ The rules, so a script can rely on them:
 | Exit code | When |
 |---|---|
 | `0` | a box's log has a matching line; `vas: --until: box ID matched: LINE` on stderr |
-| `3` | no box could be read for **2 looks in a row**: every probe failed, or no box is running or starting |
-| `1` | the first look failed (a wrong key, say); after a look has succeeded, a failed instances request is only said, and does not count |
-| `2` | a flag was refused: `--until` needs `--log` and `--watch`, and replaces `--grep` |
+| `3` | no box could be read for **2 looks in a row**: every probe failed, or none could be made |
+| `2` | at once, when a box's `grep` refuses the pattern (no look could match: `vas: --until: grep on box ID refused the pattern ...`); or a flag was refused (`--until` needs `--log` and `--watch`, and replaces `--grep`) |
+| `1` | the first look failed (a wrong key, say), or stdout was closed before a match (`vas ... \| head` is not a match); after a look has succeeded, a failed instances request is only said, and does not count |
 
-A box that is still starting (`loading`, meant to run) keeps the wait going: you can start the wait right after
-renting. A box read without a match yet keeps it going too, even before its log file exists.
+A box meant to run but not running yet (`loading`) keeps the wait going, for **10 looks in a row** at most: you
+can start the wait right after renting, and a box whose host went `offline` does not hold it forever (after the
+ten, its looks count as looks with nothing to read). A box read without a match yet keeps it going too, even
+before its log file exists.
 
 ## 4. Wait for success or failure at once
 

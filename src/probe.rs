@@ -135,7 +135,8 @@ pub enum LogReading {
         file: String,
     },
     /// The newest matching file's last non-blank line; with [`LogQuery::grep`], its last line
-    /// matching the pattern.
+    /// matching the pattern (which may be blank, when the pattern matches an empty line: the
+    /// table then says `(a blank line)`).
     Line {
         /// The file's path on the box, control characters dropped (see `strip`).
         file: String,
@@ -265,9 +266,14 @@ const GREP_FILE_MARK: &str = "vas-grep-file:";
 /// log can stand in for it.
 const GREP_EXIT: &str = "vas-grep-exit:";
 
-/// The bytes searched at the end of the file by [`LogQuery::grep`]: 64 MiB, read in well under a
-/// second, so a log of gigabytes cannot run past the probe's deadline (an older match is not seen).
+/// The bytes searched at the end of the file by [`LogQuery::grep`]: 64 MiB, so a log of gigabytes
+/// is not read whole (an older match is not seen).
 const GREP_BYTES: usize = 64 * 1024 * 1024;
+
+/// The longest the search of [`LogQuery::grep`] may take on the box, in seconds: the whole of it
+/// (`tail`, `tr`, `cut` and `grep`) runs under one `timeout`, and a search cut by it reads as
+/// [`LogReading::Unreadable`], never as an answer about an older part of the file.
+const GREP_SECS: u64 = 10;
 
 /// The lines read from the end of the file: the last non-blank one among them is shown.
 const TAIL_LINES: usize = 20;
@@ -321,8 +327,9 @@ fn shell_quoted(text: &str) -> String {
 /// or a shell glob, expanded on the box): a `vas-file:` line and the file's last lines (at most 20,
 /// capped at 4096 bytes), a `vas-not-a-file:` line when the match is not a regular file, or a
 /// `vas-no-file` line when nothing matched. With [`LogQuery::grep`], a `vas-grep-file:` line, the last
-/// line of the file's last 64 MiB that matches (`grep -a -E`, each carriage-return segment a line),
-/// and `vas-grep-exit:` with `grep`'s status.
+/// line of the file's last 64 MiB that matches (`grep -a -E`, each carriage-return segment a line,
+/// each line's first 4096 bytes), and `vas-grep-exit:` with the status of the search (`grep`'s, or
+/// `timeout`'s 124 when the search ran past 10 s).
 ///
 /// ```
 /// use vast_skopos::probe::{LogQuery, remote_command};
@@ -334,7 +341,7 @@ fn shell_quoted(text: &str) -> String {
 /// assert!(cmd.contains("printf 'vas-not-a-file:%s\\n' \"$f\"") && cmd.contains("echo 'vas-no-file'"));
 /// // The pattern is quoted: the box's shell expands nothing in it.
 /// let cmd = remote_command(Some(&LogQuery::new("/r/*.log").grep("it's $HOME")));
-/// assert!(cmd.contains("grep -a -E -e 'it'\\''s $HOME'"));
+/// assert!(cmd.contains("timeout 10 sh -c '"), "the whole search under one deadline");
 /// assert!(cmd.contains("echo \"vas-grep-exit:$?\""));
 /// ```
 #[must_use]
@@ -364,12 +371,15 @@ pub fn remote_command(log: Option<&LogQuery>) -> String {
         || smi.clone(),
         |query| {
             let pattern = &query.path;
-            // The last line, or the last line matching. `tr` makes each carriage-return segment a
-            // line (a progress bar's matching state is found); `-a` keeps one NUL byte from turning
-            // the answer into "Binary file matches"; `-e` keeps a pattern starting with `-` a
-            // pattern; `$?` after the pipeline is `grep`'s own status; the last two lines (the match
-            // and the status) are kept, cut to their last bytes, so a matching line of megabytes
-            // cannot fill the pipe.
+            // The last line, or the last line matching. The search runs under ONE `timeout` (a
+            // `sh -c` of its own, the file passed as `$1`), so `tr` and `grep` are bounded too and a
+            // search cut short says so (124), instead of answering about the part it read. `tr -s`
+            // makes each carriage-return segment a line (a progress bar's matching state is found)
+            // and squeezes the empty lines a `\r\n` would leave; `cut` keeps each line's head, where a
+            // log line says what it is, so a matching line of megabytes cannot fill the pipe; `-a`
+            // keeps one NUL byte from turning the answer into "Binary file matches"; `-e` keeps a
+            // pattern starting with `-` a pattern; `grep`'s complaints go nowhere (its status says
+            // them), so they cannot stand in for `ssh`'s reason; `$?` is the status of the search.
             let read = query.grep.as_deref().map_or_else(
                 || {
                     format!(
@@ -378,11 +388,15 @@ pub fn remote_command(log: Option<&LogQuery>) -> String {
                     )
                 },
                 |grep| {
-                    let grep = shell_quoted(grep);
+                    let search = shell_quoted(&format!(
+                        "tail -c {GREP_BYTES} -- \"$1\" | tr -s '\\r' '\\n' | cut -b 1-{TAIL_BYTES} \
+                         | grep -a -E -e {} 2>/dev/null",
+                        shell_quoted(grep)
+                    ));
                     let kept = TAIL_BYTES + 128;
                     format!(
                         "printf '{GREP_FILE_MARK}%s\\n' \"$f\"; \
-                         {{ timeout 5 tail -c {GREP_BYTES} -- \"$f\" | tr '\\r' '\\n' | grep -a -E -e {grep}; \
+                         {{ timeout {GREP_SECS} sh -c {search} vas-grep \"$f\"; \
                          echo \"{GREP_EXIT}$?\"; }} | tail -n 2 | tail -c {kept}"
                     )
                 },
@@ -624,6 +638,10 @@ fn merge_power(gpus: &mut [GpuReading], power: &str) {
 ///     LogReading::PatternRefused { file: "/r/a.log".to_owned() });
 /// assert_eq!(parse_log("\nvas-grep-file:/r/a.log\ninitial loss 4.2\n"), LogReading::Unreadable,
 ///     "no status: the answer was cut short");
+/// assert_eq!(parse_log("\nvas-grep-file:/r/a.log\n\nvas-grep-exit:0\n"),
+///     LogReading::Line { file: "/r/a.log".to_owned(), line: String::new() }, "a blank line matched");
+/// assert_eq!(parse_log("\nvas-grep-file:/r/a.log\nvas-grep-exit:124\n"), LogReading::Unreadable,
+///     "the search ran past its deadline");
 /// assert_eq!(parse_log(""), LogReading::Unreadable);
 /// assert_eq!(parse_log("\nconnection reset\n"), LogReading::Unreadable);
 /// ```
@@ -655,10 +673,15 @@ pub fn parse_log(text: &str) -> LogReading {
 }
 
 /// Reads what follows a `vas-grep-file:` line: the last non-blank line must be `vas-grep-exit:N`,
-/// printed by the box's shell after `grep` was done (a log line cannot stand in for it, since it
-/// always comes last); with a status of 0, the line before it is the match.
+/// printed by the box's shell after the search was done (a log line cannot stand in for it, since
+/// it always comes last); with a status of 0, the line right before it is the match, blank or not
+/// (a pattern can match an empty line). A status of 124 (the search ran past its deadline), or
+/// any other, is [`LogReading::Unreadable`].
 fn parse_grep<'a>(file: String, lines: impl Iterator<Item = &'a str>) -> LogReading {
-    let kept: Vec<&str> = lines.filter(|l| !l.trim().is_empty()).collect();
+    let mut kept: Vec<&str> = lines.collect();
+    while kept.last().is_some_and(|l| l.trim().is_empty()) {
+        kept.pop();
+    }
     let mut from_end = kept.iter().rev();
     let status = from_end
         .next()
@@ -828,6 +851,16 @@ fn no_answer() -> String {
     )
 }
 
+/// The reason of a probe the box began to answer (its stdout came back) but that did not finish
+/// within [`PROBE_TIMEOUT`]: a hung `nvidia-smi`, say. The box WAS reached, and
+/// [`SkoposError::is_unreachable`] does not read this as unreachable.
+fn unfinished() -> String {
+    format!(
+        "the box answered, but the probe did not finish within {} s (ssh killed)",
+        PROBE_TIMEOUT.as_secs()
+    )
+}
+
 /// Probes `root@host:port` once.
 ///
 /// # Errors
@@ -888,7 +921,12 @@ pub fn ssh_probe(
         }
     };
     let Some(status) = status else {
-        return Err(SkoposError::ssh(target, no_answer()));
+        // Only the remote command writes to `ssh`'s stdout: any of it says the box was reached.
+        let answered = !collect(&out, Instant::now() + DRAIN_GRACE)
+            .trim()
+            .is_empty();
+        let reason = if answered { unfinished() } else { no_answer() };
+        return Err(SkoposError::ssh(target, reason));
     };
     // One deadline for both pipes, so a stray holder costs at most `DRAIN_GRACE` in all.
     let deadline = Instant::now() + DRAIN_GRACE;
@@ -913,11 +951,12 @@ pub fn ssh_probe(
 
 #[cfg(test)]
 mod tests {
-    use super::no_answer;
+    use super::{no_answer, unfinished};
     use crate::error::SkoposError;
 
     #[test]
-    fn a_probe_ssh_never_answered_reads_as_unreachable() {
+    fn a_probe_ssh_never_answered_reads_as_unreachable_and_one_cut_short_does_not() {
         assert!(SkoposError::ssh("h:1", no_answer()).is_unreachable());
+        assert!(!SkoposError::ssh("h:1", unfinished()).is_unreachable());
     }
 }

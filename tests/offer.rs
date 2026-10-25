@@ -39,12 +39,12 @@ fn every_constraint() -> OfferQuery {
 fn passing() -> Value {
     json!({"id": 1, "gpu_name": "RTX 5090", "num_gpus": 1, "disk_space": 50.0,
       "cuda_max_good": 12.8, "reliability2": 0.99, "inet_up": 200.0, "inet_down": 300.0,
-      "dph_total": 0.8, "duration": 172_800.0, "verification": "verified",
+      "dph_total": 0.8, "duration": 172_800.0, "verification": "verified", "vericode": 1,
       "geolocation": "Texas, US", "host_id": 7, "machine_id": 8, "rentable": true, "rented": false})
 }
 
 /// Each field, and a value contradicting its constraint (bounds are inclusive in `passing`).
-const VIOLATIONS: [(&str, &str); 17] = [
+const VIOLATIONS: [(&str, &str); 18] = [
     ("gpu_name", r#""RTX 4090""#),
     ("num_gpus", "2"),
     ("disk_space", "49.9"),
@@ -55,6 +55,7 @@ const VIOLATIONS: [(&str, &str); 17] = [
     ("dph_total", "0.801"),
     ("duration", "172799.0"),
     ("verification", r#""deverified""#),
+    ("vericode", "2"),
     ("geolocation", r#""Guangdong, CN""#),
     ("host_id", "362355"),
     ("host_id", "9"),
@@ -130,6 +131,12 @@ fn excluding_the_deverified_keeps_the_unverified_and_is_sent_as_vericode() {
     assert!(at(Some("unverified")), "new machines stay");
     assert!(at(Some("verified")));
     assert!(at(None), "a missing field keeps the row");
+    let coded =
+        |code: u64| q.admits(&Offer::from_json(&json!({"id": 1, "vericode": code})).unwrap());
+    assert!(
+        coded(0) && coded(1) && !coded(2) && !coded(33),
+        "the server's rule, re-checked: vericode <= 1"
+    );
     assert_eq!(
         q.to_search_json(OfferSort::Price)["vericode"],
         json!({"lte": 1})
