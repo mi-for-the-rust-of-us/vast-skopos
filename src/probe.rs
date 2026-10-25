@@ -165,8 +165,9 @@ pub type ProbeOutcome = Option<Result<Probe>>;
 /// The longest one probe may take, connection included; the `ssh` process is killed after it.
 pub const PROBE_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// The longest log line shown, in characters.
-const LOG_WIDTH: usize = 120;
+/// The longest log line shown, in characters; vast.ai's status message under the table is cut to it
+/// too (one width for a line of someone else's text that has a line to itself).
+pub(crate) const LOG_WIDTH: usize = 120;
 
 /// The line separating `nvidia-smi`'s output from the log's in the remote command's output.
 const SEPARATOR: &str = "---vas-log---";

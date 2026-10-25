@@ -192,6 +192,12 @@ is refused), since vast.ai's `ssh` proxies are reached by port. Each probe has a
 `COST~` is an estimate: today's `$/h` times the hours since creation. vast.ai bills storage while an
 instance is stopped and prices can change; the invoice is the reference.
 
+**A box that is not running yet** says why in vast.ai's own words, on a line under the table (before the
+money line): `57340012 loading: 46b4edaa8d47: Pull complete`, the message cut at 120 characters. On
+2026-10-24 two boxes read `loading -> running` at 2 minutes of age while that message named the image's
+layers arriving: progress, not a stuck box. A running box's message is not shown; `--compact` carries the
+message of every box as `status_msg`.
+
 **The probe columns.** Under `--ssh`, in order: `GPU% (ssh)`, `VRAM`, `OTHER`, `POWER`, `CLOCK`, then, under
 `--watch`, `TREND` and `CLOCK TREND`, and `LAST LOG / SSH ERROR` last; each is explained below.
 
@@ -307,7 +313,7 @@ about two seconds of a $0.19/h box, and vast.ai sends the credit with float nois
 
 ```text
 $ vas --compact --ssh --log '/root/runs/*/train.log'
-{"age_s":8100,"at":1792250000,"cost":2.025,"dph":0.9,"gpu_name":"RTX 5090","host_id":406325,"id":56362434,"intended":"running","kind":"box","label":"me36 box 2","machine_id":100682,"num_gpus":1,"probe":{"clock_trend":null,"gpus":[{"index":0,"mem_total_mib":32607,"mem_used_mib":29400,"other_mem_mib":10,"power_default_w":575,"power_limit_w":575,"power_w":560,"sm_max_mhz":3090,"sm_mhz":2900,"throttle":[],"util_pct":99}],"log":{"file":"/root/runs/s0/train.log","line":"e41 loss 0.3","state":"line"},"util_trend":null},"ssh_host":"ssh6.vast.ai","ssh_port":36000,"status":"running","where":"South Korea, KR"}
+{"age_s":8100,"at":1792250000,"cost":2.025,"dph":0.9,"gpu_name":"RTX 5090","host_id":406325,"id":56362434,"intended":"running","kind":"box","label":"me36 box 2","machine_id":100682,"num_gpus":1,"probe":{"clock_trend":null,"gpus":[{"index":0,"mem_total_mib":32607,"mem_used_mib":29400,"other_mem_mib":10,"power_default_w":575,"power_limit_w":575,"power_w":560,"sm_max_mhz":3090,"sm_mhz":2900,"throttle":[],"util_pct":99}],"log":{"file":"/root/runs/s0/train.log","line":"e41 loss 0.3","state":"line"},"util_trend":null},"ssh_host":"ssh6.vast.ai","ssh_port":36000,"status":"running","status_msg":null,"where":"South Korea, KR"}
 {"at":1792250000,"burn":0.9,"credit":12.93,"hours_left":14.4,"kind":"money","running":1,"unsure":{}}
 ```
 
@@ -316,7 +322,8 @@ else `gpus` (per GPU: `util_pct`, `mem_used_mib`, `mem_total_mib`, `other_mem_mi
 `power_limit_w`, `power_default_w`, `sm_mhz`, `sm_max_mhz` and `throttle`, each `null` when the box did not
 say), `log`, `util_trend` and `clock_trend` (`null` in a one-shot, else the last GPU samples of a `--watch`,
 see above); `log` is `null` without `--log`, else an object whose `state` is `line`, `empty`,
-`not_a_file`, `no_match` or `unreadable`. `unsure` counts, by state, the boxes meant to run that read
+`not_a_file`, `no_match` or `unreadable`. `status_msg` is vast.ai's own message on the box, as the API
+gives it whatever the status (`null` when it gives none). `unsure` counts, by state, the boxes meant to run that read
 otherwise (the burn, above). With `--ssh --watch N`, a change of a GPU's power limit or throttle reasons is an
 `event` object, between the boxes and the money (see the power cap, above). With `--watch N`, a look is printed every N seconds with no separator line (the table form of `--watch`
 stamps each look with `== vas, unix time N`; JSON lines would not parse with it): the `at`

@@ -40,7 +40,8 @@ fn a_box_with_everything_and_a_box_with_nothing_have_the_same_keys() {
         &json!({"id": 56_362_434, "label": "me36 box 2", "gpu_name": "RTX 5090",
         "num_gpus": 1, "geolocation": "South Korea, KR", "actual_status": "running",
         "intended_status": "running", "dph_total": 0.9, "start_date": 1_000.0,
-        "ssh_host": "ssh6.vast.ai", "ssh_port": 36_000, "machine_id": 100_682, "host_id": 406_325}),
+        "ssh_host": "ssh6.vast.ai", "ssh_port": 36_000, "machine_id": 100_682, "host_id": 406_325,
+        "status_msg": "success, running pytorch/pytorch_2.5.1"}),
     );
     let bare = instance(&json!({"id": 2}));
     let probes = vec![
@@ -78,6 +79,11 @@ fn a_box_with_everything_and_a_box_with_nothing_have_the_same_keys() {
         (Some("running"), Some("running"))
     );
     assert_eq!(
+        b["status_msg"].as_str(),
+        Some("success, running pytorch/pytorch_2.5.1"),
+        "the API's message, whatever the status"
+    );
+    assert_eq!(
         (b["age_s"].as_u64(), b["cost"].as_f64()),
         (Some(8_100), Some(2.025))
     );
@@ -109,6 +115,7 @@ fn a_box_with_everything_and_a_box_with_nothing_have_the_same_keys() {
         "where",
         "status",
         "intended",
+        "status_msg",
         "dph",
         "age_s",
         "cost",

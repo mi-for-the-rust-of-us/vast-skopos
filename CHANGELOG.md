@@ -6,6 +6,18 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- vast.ai's status message for a box that is not running, on a line under the table before the money
+  line: `57340012 loading: 46b4edaa8d47: Pull complete` (cut at 120 characters). The difference between a
+  box that is progressing and one that is stuck (dogfooding 2026-10-23, note 5). `--compact` carries every
+  box's message as `status_msg` (`null` when none). `render::status_lines`.
+
+### Security
+
+- `Cargo.lock`: `rustls-webpki` 0.103.16 and `webpki-roots` 1.0.11 (RUSTSEC-2026-0382, RUSTSEC-2026-0381:
+  the distrusted emSign roots), what `cargo install vast-skopos --locked` builds with.
+
 ## [0.2.0] - 2026-10-19
 
 ### Added

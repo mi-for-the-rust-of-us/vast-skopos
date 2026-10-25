@@ -767,3 +767,31 @@ fn a_label_a_status_and_a_host_from_the_api_are_capped_and_the_port_survives() {
     assert!(row.contains("…"), "{row}");
     assert!(row.contains(":22"), "the port is never cut: {row}");
 }
+
+#[test]
+fn a_box_that_is_not_running_says_vast_ais_message_under_the_table_before_the_money() {
+    let row = |id: u64, status: &str, message: &str| {
+        instance(&serde_json::json!({"id": id, "actual_status": status,
+            "intended_status": "running", "status_msg": message}))
+    };
+    let rows = [
+        row(1, "running", "success, running pytorch"),
+        row(2, "loading", "46b4edaa8d47: Pull complete"),
+        row(3, "exited", &"e".repeat(300)),
+    ];
+    let text = table(&rows, &[], None, TableOptions::new(), 0.0);
+    let lines: Vec<&str> = text.lines().collect();
+    // The header, three rows, then the two messages, then the money.
+    assert_eq!(lines[4], "2 loading: 46b4edaa8d47: Pull complete", "{text}");
+    assert!(lines[5].starts_with("3 exited: eee"), "{text}");
+    assert_eq!(
+        lines[5].chars().count(),
+        "3 exited: ".len() + 120 + 1,
+        "cut at 120 characters and an ellipsis: {text}"
+    );
+    assert!(lines[6].starts_with("credit "), "{text}");
+    assert!(
+        !text.contains("success, running"),
+        "a running box's message is not shown: {text}"
+    );
+}

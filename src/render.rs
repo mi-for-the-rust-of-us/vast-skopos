@@ -6,7 +6,9 @@ use std::fmt::Write as _;
 use crate::instance::{Account, Instance, shortened, whole_secs};
 use crate::market::{LEARNING_LOOKS, MarketWatch, OfferKey};
 use crate::offer::{OFFER_CAP, Offer, OfferChanges, OfferPage, OfferQuery, OfferSort};
-use crate::probe::{GpuReading, LogReading, Probe, ProbeOutcome, mib_to_gib, outcome_at};
+use crate::probe::{
+    GpuReading, LOG_WIDTH, LogReading, Probe, ProbeOutcome, mib_to_gib, outcome_at,
+};
 use crate::runway::Runway;
 use crate::trend::Trend;
 
@@ -322,7 +324,8 @@ impl<'a> TableOptions<'a> {
     }
 }
 
-/// The table: one row per instance, then the money line.
+/// The table: one row per instance, then vast.ai's message on each box that is not running
+/// ([`status_lines`]), then the money line.
 ///
 /// `probes` holds one outcome per instance, in the instances' order (see [`ProbeOutcome`]); a
 /// shorter slice reads as "not probed" for the instances it does not reach. `options` chooses the
@@ -411,11 +414,46 @@ pub fn table(
     if instances.is_empty() {
         out.push_str("(no instances)\n");
     }
+    out.push_str(&status_lines(instances));
     out.push_str(&money_line(instances, account));
     // What moved in the boxes' power since the last look, under the money (a watch that probes).
     for change in trend.map_or(&[][..], Trend::changes) {
         out.push_str(&change.line());
         out.push('\n');
+    }
+    out
+}
+
+/// vast.ai's own message on each box that is not running, a line each: `57340012 loading: 46b4edaa8d47:
+/// Pull complete`, the message cut at 120 characters; empty when no such box has one.
+///
+/// Seen 2026-10-24: two boxes read `loading -> running` at 2 minutes of age while their message named
+/// the image's layers arriving: progress, not a stuck box, which is the difference between waiting
+/// and destroying. A running box's message is not shown: what it says then is not known.
+///
+/// ```
+/// use vast_skopos::{instance::Instance, render::status_lines};
+/// let row = |id: u64, status: &str| Instance::from_json(&serde_json::json!({"id": id,
+///   "actual_status": status, "status_msg": "46b4edaa8d47: Pull complete"})).unwrap();
+/// assert_eq!(status_lines(&[row(1, "running"), row(2, "loading")]),
+///   "2 loading: 46b4edaa8d47: Pull complete\n");
+/// let silent = Instance::from_json(&serde_json::json!({"id": 3, "actual_status": "loading"})).unwrap();
+/// assert_eq!(status_lines(&[silent]), "");
+/// ```
+#[must_use]
+pub fn status_lines(instances: &[Instance]) -> String {
+    let mut out = String::new();
+    for i in instances.iter().filter(|i| !i.is_running()) {
+        let Some(message) = i.status_msg.as_deref() else {
+            continue;
+        };
+        // BORROW: explicit to_owned -- the line owns the message it shows
+        let shown = shortened(message, LOG_WIDTH).unwrap_or_else(|| message.to_owned());
+        let status = i
+            .actual_status
+            .as_deref()
+            .map_or_else(|| String::from("?"), capped);
+        let _ = writeln!(out, "{} {status}: {shown}", i.id);
     }
     out
 }
