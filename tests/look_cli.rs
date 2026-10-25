@@ -467,6 +467,18 @@ fn credit_refused(target: &str) -> (u16, String) {
     }
 }
 
+/// Whether `text` holds a failed probe's label and the box's age. Which label depends on the `ssh`
+/// build, not on `vas`: most say `Connection refused` for the discard port (`UNREACHABLE`), but the
+/// one on GitHub's Windows runner exits 255 and says nothing, which reads as `SSH FAILED ...: no
+/// GPU reading (ssh exit 255)` (seen 2026-10-25). `failure_cell`'s own tests pin the labels.
+fn failed_with_age(text: &str) -> bool {
+    ["UNREACHABLE ", "SSH FAILED "].iter().any(|label| {
+        text.split(label)
+            .skip(1)
+            .any(|after| after.starts_with(|c: char| c.is_ascii_digit()))
+    })
+}
+
 /// One running box whose `ssh` endpoint is this machine's discard port: a probe is refused at once.
 fn box_on_loopback(target: &str) -> (u16, String) {
     if target.starts_with("/api/v1/instances/") {
@@ -524,8 +536,8 @@ fn ssh_probes_the_running_boxes_and_shows_what_it_could_not_read() {
     );
     let row = table.stdout.lines().find(|l| l.starts_with("77")).unwrap();
     assert!(
-        row.contains("UNREACHABLE ") && row.contains("127.0.0.1"),
-        "refused at once: never reached, said with the box's age: {row}"
+        failed_with_age(row) && row.contains("127.0.0.1:9"),
+        "refused at once, said with the box's age: {row}"
     );
     // The same, as JSON: the probe is an object with an `error`, not null.
     let json = vas_with(box_on_loopback, &["--compact", "--ssh"], &env, &[]);
@@ -539,7 +551,13 @@ fn ssh_probes_the_running_boxes_and_shows_what_it_could_not_read() {
             .is_some_and(|e| e.contains("failed to probe 127.0.0.1:9")),
         "{first}"
     );
-    assert_eq!(first["probe"]["error_kind"], "unreachable", "{first}");
+    assert!(
+        matches!(
+            first["probe"]["error_kind"].as_str(),
+            Some("unreachable" | "failed")
+        ),
+        "{first}"
+    );
     // Without --ssh nothing is probed: the probe is null.
     let home = empty_dir("nossh");
     let quiet = vas_with(
@@ -767,7 +785,7 @@ fn a_wait_with_no_box_to_read_gives_up_after_two_looks_with_exit_code_3() {
         2,
         "two looks, each printed: {stdout}"
     );
-    assert!(stdout.contains("UNREACHABLE"), "{stdout}");
+    assert!(failed_with_age(&stdout), "{stdout}");
     assert!(
         stderr.contains("vas: --until: no box could be read for 2 looks in a row"),
         "{stderr}"
@@ -954,7 +972,7 @@ fn a_watch_that_probes_has_a_trend_column_and_a_one_shot_does_not() {
         "{header}"
     );
     let row = lines.iter().find(|l| l.starts_with("77")).unwrap();
-    assert!(row.contains("UNREACHABLE "), "{row}");
+    assert!(failed_with_age(row), "{row}");
     // One look has no history to show: no TREND column.
     let home = empty_dir("trend-once");
     let once = vas_with(box_on_loopback, &["--ssh"], &key_env(&home, ENV_KEY), &[]);

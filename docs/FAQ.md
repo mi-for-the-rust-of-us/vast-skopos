@@ -259,8 +259,10 @@ The probe failed, and the last cell says which way, how old the box is, and why 
   (a refused key, a changed host key), or the box gave no GPU reading, or it began to answer and did not
   finish within 30 s (`the box answered, but the probe did not finish within 30 s`: a hung `nvidia-smi`, say).
 
-Nothing is retried: what to do about the box is your call. A box that is not `running`, or has no endpoint,
-is not probed (`-`). `--compact` says the same as `error_kind`: `unreachable` or `failed`.
+An `ssh` that gives up without a word (`no GPU reading (ssh exit 255)`, seen from the `ssh` of GitHub's
+Windows runner on a refused port) reads `SSH FAILED` too: with nothing said, `vas` cannot tell whether the box
+was reached, and does not guess. Nothing is retried: what to do about the box is your call. A box that is not
+`running`, or has no endpoint, is not probed (`-`). `--compact` says the same as `error_kind`: `unreachable` or `failed`.
 
 ### A box reads `UNREACHABLE`: should I wait or destroy it?
 
