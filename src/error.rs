@@ -148,7 +148,54 @@ impl SkoposError {
             hint,
         }
     }
+
+    /// Whether this is an `ssh` probe that never reached the box: a [`SkoposError::Ssh`] whose reason
+    /// is a failure of the connection itself (refused, timed out, no route, a name that does not
+    /// resolve, closed or reset before the session, or no answer within the probe's deadline).
+    ///
+    /// A box that answered and then refused the key, changed its host key or gave no GPU reading
+    /// WAS reached: `false`, as for every other variant. The difference matters to the decision the
+    /// table serves: an unreachable box of a few minutes may still come up, a refused key will not.
+    ///
+    /// ```
+    /// use vast_skopos::SkoposError;
+    /// let ssh = |m: &str| SkoposError::Ssh { target: "ssh3.vast.ai:32456".to_owned(), message: m.to_owned() };
+    /// assert!(ssh("ssh: connect to host ssh3.vast.ai port 32456: Connection refused").is_unreachable());
+    /// assert!(ssh("kex_exchange_identification: Connection closed by remote host").is_unreachable());
+    /// assert!(!ssh("root@ssh3.vast.ai: Permission denied (publickey).").is_unreachable());
+    /// assert!(!SkoposError::Http { endpoint: "/".to_owned(), message: "timed out".to_owned() }.is_unreachable());
+    /// ```
+    #[must_use]
+    pub fn is_unreachable(&self) -> bool {
+        if let Self::Ssh { message, .. } = self {
+            let reason = message.to_ascii_lowercase();
+            UNREACHABLE_WORDS.iter().any(|words| reason.contains(words))
+        } else {
+            false
+        }
+    }
 }
+
+/// What a probe's reason says, lower-cased, when the box was never reached: OpenSSH's own words,
+/// and the probe's deadline.
+const UNREACHABLE_WORDS: [&str; 10] = [
+    // Nothing listens on the port: a vast.ai proxy with no box behind it yet.
+    "connection refused",
+    // `Connection timed out`, `Operation timed out`, `... timed out during banner exchange`.
+    "timed out",
+    "no route to host",
+    "network is unreachable",
+    // `Could not resolve hostname X: Name or service not known` (or another resolver's reason).
+    "could not resolve hostname",
+    "name or service not known",
+    // The proxy hung up before the session: `Connection closed by 1.2.3.4 port 22`.
+    "connection closed",
+    "connection reset",
+    // `kex_exchange_identification: read: Connection reset by peer`, and its other endings.
+    "kex_exchange_identification",
+    // The probe's own deadline (`probe::ssh_probe`): ssh never answered.
+    "no answer within",
+];
 
 /// The advice of a rate-limit error: how long to wait, rounded up to the second, or just to wait.
 fn wait_text(retry_after: Option<&f64>) -> String {
@@ -156,4 +203,48 @@ fn wait_text(retry_after: Option<&f64>) -> String {
         || String::from("wait before the next call"),
         |secs| format!("try again in {:.0} s", secs.ceil().max(1.0)),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SkoposError;
+
+    fn ssh(message: &str) -> SkoposError {
+        SkoposError::ssh("ssh3.vast.ai:32456", message)
+    }
+
+    #[test]
+    fn what_openssh_says_of_a_box_it_never_reached_reads_as_unreachable() {
+        for message in [
+            "ssh: connect to host ssh3.vast.ai port 32456: Connection refused",
+            "ssh: connect to host 185.65.225.164 port 42722: Connection timed out",
+            "ssh: connect to host 185.65.225.164 port 42722: Operation timed out",
+            "Connection timed out during banner exchange",
+            "ssh: connect to host 10.0.0.1 port 22: No route to host",
+            "ssh: connect to host 10.0.0.1 port 22: Network is unreachable",
+            "ssh: Could not resolve hostname ssh9.vast.ai: Name or service not known",
+            "ssh: Could not resolve hostname ssh9.vast.ai: No such host is known.",
+            "Connection closed by 185.65.225.164 port 42722",
+            "kex_exchange_identification: read: Connection reset by peer",
+            "kex_exchange_identification: Connection closed by remote host",
+            "no answer within 30 s (ssh killed)",
+        ] {
+            assert!(ssh(message).is_unreachable(), "{message}");
+        }
+    }
+
+    #[test]
+    fn a_box_that_answered_and_refused_was_reached() {
+        for message in [
+            "root@ssh3.vast.ai: Permission denied (publickey).",
+            "Host key verification failed.",
+            "no GPU reading (ssh exit 0)",
+            "the probe thread panicked",
+            "failed to run ssh: program not found",
+        ] {
+            assert!(!ssh(message).is_unreachable(), "{message}");
+        }
+        let http = SkoposError::http("/api/v1/instances/", "connection refused");
+        assert!(!http.is_unreachable(), "only a probe can be unreachable");
+    }
 }

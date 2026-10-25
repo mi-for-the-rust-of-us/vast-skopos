@@ -672,6 +672,15 @@ pub fn probe_all(
     })
 }
 
+/// The reason of a probe that `ssh` never answered within [`PROBE_TIMEOUT`]: one that
+/// [`SkoposError::is_unreachable`] reads as unreachable.
+fn no_answer() -> String {
+    format!(
+        "no answer within {} s (ssh killed)",
+        PROBE_TIMEOUT.as_secs()
+    )
+}
+
 /// Probes `root@host:port` once.
 ///
 /// # Errors
@@ -732,13 +741,7 @@ pub fn ssh_probe(
         }
     };
     let Some(status) = status else {
-        return Err(SkoposError::ssh(
-            target,
-            format!(
-                "no answer within {} s (ssh killed)",
-                PROBE_TIMEOUT.as_secs()
-            ),
-        ));
+        return Err(SkoposError::ssh(target, no_answer()));
     };
     // One deadline for both pipes, so a stray holder costs at most `DRAIN_GRACE` in all.
     let deadline = Instant::now() + DRAIN_GRACE;
@@ -759,4 +762,15 @@ pub fn ssh_probe(
         return Err(SkoposError::ssh(target, reason));
     }
     Ok(probe)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::no_answer;
+    use crate::error::SkoposError;
+
+    #[test]
+    fn a_probe_ssh_never_answered_reads_as_unreachable() {
+        assert!(SkoposError::ssh("h:1", no_answer()).is_unreachable());
+    }
 }

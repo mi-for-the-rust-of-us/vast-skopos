@@ -184,8 +184,13 @@ ID        GPU          VRAM  $/H    CUDA  DISK   UP/DOWN Mb/s  REL %  MAX DAYS  
 
 `--ssh` uses your system `ssh` with `BatchMode=yes`, `ConnectTimeout=10` and keep-alives, gives
 each probe 30 s in all (and `nvidia-smi` 20 s on the box), and makes **one attempt** per box per
-refresh: a box that refuses is reported in its row (with `ssh`'s own last error line), never
-retried in a loop. Host keys are accepted on first use (`StrictHostKeyChecking=accept-new`: trust on first use, a changed key
+refresh: a box that refuses is reported in its row, never retried in a loop. The row says what
+happened, how old the box is, and `ssh`'s own last error line: `UNREACHABLE 4m: ssh: connect to host
+ssh3.vast.ai port 32456: Connection refused` when `ssh` never reached the box (refused, timed out, no route,
+a name that does not resolve, closed before the session, no answer within 30 s), `SSH FAILED 4m: ...` when it
+did and was turned away (a refused key, a changed host key, no GPU reading). The age is what the choice
+between waiting and destroying rests on: three rentals (2026-10-17, 10-18, 10-23) met boxes that read
+`running` at 4 minutes and refused every connection, and were destroyed unused. Host keys are accepted on first use (`StrictHostKeyChecking=accept-new`: trust on first use, a changed key
 is refused), since vast.ai's `ssh` proxies are reached by port. Each probe has an `ssh` session of its own
 (`ControlMaster=no`, `ControlPath=none`), whatever `~/.ssh/config` says about shared connections.
 
@@ -317,7 +322,8 @@ $ vas --compact --ssh --log '/root/runs/*/train.log'
 {"at":1792250000,"burn":0.9,"credit":12.93,"hours_left":14.4,"kind":"money","running":1,"unsure":{}}
 ```
 
-`probe` is `null` for a box not probed (no `--ssh`, or not running), `{"error": "..."}` when the probe failed,
+`probe` is `null` for a box not probed (no `--ssh`, or not running), `{"error": "...", "error_kind": "unreachable"}` when the
+probe failed (`error_kind` is `unreachable` when `ssh` never reached the box, else `failed`),
 else `gpus` (per GPU: `util_pct`, `mem_used_mib`, `mem_total_mib`, `other_mem_mib`, `power_w`,
 `power_limit_w`, `power_default_w`, `sm_mhz`, `sm_max_mhz` and `throttle`, each `null` when the box did not
 say), `log`, `util_trend` and `clock_trend` (`null` in a one-shot, else the last GPU samples of a `--watch`,

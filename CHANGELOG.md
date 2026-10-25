@@ -12,6 +12,17 @@ All notable changes to this project are documented here. The format is based on
   line: `57340012 loading: 46b4edaa8d47: Pull complete` (cut at 120 characters). The difference between a
   box that is progressing and one that is stuck (dogfooding 2026-10-23, note 5). `--compact` carries every
   box's message as `status_msg` (`null` when none). `render::status_lines`.
+- A failed probe says whether `ssh` reached the box, and the box's age: `UNREACHABLE 4m: ssh: connect to host
+  ... Connection refused` (refused, timed out, no route, a name that does not resolve, closed or reset before
+  the session, no answer within 30 s) or `SSH FAILED 4m: ...` (a refused key, a changed host key, no GPU
+  reading); the age is what the choice between waiting and destroying rests on (note 1a). `--compact`'s probe
+  error object gains `error_kind` (`unreachable` or `failed`). `SkoposError::is_unreachable`,
+  `render::failure_cell`.
+
+### Changed
+
+- The `LAST LOG / SSH ERROR` cell of a failed probe no longer repeats `failed to probe HOST:PORT over ssh`:
+  the `SSH` column already names the target. `--compact`'s `error` keeps the whole text.
 
 ### Security
 

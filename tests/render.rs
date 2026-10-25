@@ -64,7 +64,10 @@ fn the_table_shows_cost_status_probe_and_money() {
         text.contains("s0/train.log: [ 796.4s] layer 4"),
         "the log cell names the run: {text}"
     );
-    assert!(text.contains("Connection refused"), "ssh error: {text}");
+    assert!(
+        text.contains("UNREACHABLE 10m: Connection refused"),
+        "the ssh error, its kind and the box's age: {text}"
+    );
     assert!(
         text.contains("credit $5.94 | burn $0.643/h over 1 running | ~9.2 h left"),
         "{text}"
@@ -793,5 +796,55 @@ fn a_box_that_is_not_running_says_vast_ais_message_under_the_table_before_the_mo
     assert!(
         !text.contains("success, running"),
         "a running box's message is not shown: {text}"
+    );
+}
+
+#[test]
+fn a_failed_probe_says_whether_ssh_reached_the_box_and_how_old_the_box_is() {
+    let now = 1_000.0;
+    let row = |id: u64| {
+        instance(
+            &serde_json::json!({"id": id, "actual_status": "running", "start_date": now - 240.0}),
+        )
+    };
+    let failed = |message: &str| {
+        Some(Err(SkoposError::Ssh {
+            target: "ssh3.vast.ai:32456".to_owned(),
+            message: message.to_owned(),
+        }))
+    };
+    let probes = vec![
+        failed("ssh: connect to host ssh3.vast.ai port 32456: Connection refused"),
+        failed("ssh: connect to host 185.65.225.164 port 42722: Connection timed out"),
+        failed("root@ssh3.vast.ai: Permission denied (publickey)."),
+        failed("no GPU reading (ssh exit 0)"),
+    ];
+    let rows = [row(1), row(2), row(3), row(4)];
+    let text = table(&rows, &probes, None, TableOptions::new().ssh(true), now);
+    // The cell is the last one of the row.
+    let cell = |id: &str| text.lines().find(|l| l.starts_with(id)).unwrap();
+    assert!(
+        cell("1 ").ends_with(
+            "UNREACHABLE 4m: ssh: connect to host ssh3.vast.ai port 32456: Connection refused"
+        ),
+        "{text}"
+    );
+    assert!(
+        cell("2 ").ends_with(
+            "UNREACHABLE 4m: ssh: connect to host 185.65.225.164 port 42722: Connection timed out"
+        ),
+        "{text}"
+    );
+    assert!(
+        cell("3 ").ends_with("SSH FAILED 4m: root@ssh3.vast.ai: Permission denied (publickey)."),
+        "{text}"
+    );
+    assert!(
+        cell("4 ").ends_with("SSH FAILED 4m: no GPU reading (ssh exit 0)"),
+        "{text}"
+    );
+    assert!(
+        !text.contains("failed to probe"),
+        "the target is in the SSH column already: {text}"
     );
 }

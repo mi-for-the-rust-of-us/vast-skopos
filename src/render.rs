@@ -3,6 +3,7 @@
 
 use std::fmt::Write as _;
 
+use crate::error::SkoposError;
 use crate::instance::{Account, Instance, shortened, whole_secs};
 use crate::market::{LEARNING_LOOKS, MarketWatch, OfferKey};
 use crate::offer::{OFFER_CAP, Offer, OfferChanges, OfferPage, OfferQuery, OfferSort};
@@ -265,6 +266,38 @@ pub fn log_cell(log: Option<&LogReading>) -> String {
     }
 }
 
+/// The cell of a probe that failed: `UNREACHABLE 4m: <reason>` when `ssh` never reached the box
+/// ([`SkoposError::is_unreachable`]), else `SSH FAILED 4m: <reason>`; the age is the box's
+/// (`age_secs`, left out when unknown), since the age is what the choice between waiting and
+/// destroying rests on. The reason is `ssh`'s own: the target is already in the `SSH` column.
+///
+/// ```
+/// use vast_skopos::{SkoposError, render::failure_cell};
+/// let e = SkoposError::Ssh { target: "ssh3.vast.ai:32456".to_owned(),
+///   message: "ssh: connect to host ssh3.vast.ai port 32456: Connection refused".to_owned() };
+/// assert_eq!(failure_cell(&e, Some(240.0)),
+///   "UNREACHABLE 4m: ssh: connect to host ssh3.vast.ai port 32456: Connection refused");
+/// let key = SkoposError::Ssh { target: "h:1".to_owned(), message: "Permission denied (publickey).".to_owned() };
+/// assert_eq!(failure_cell(&key, None), "SSH FAILED: Permission denied (publickey).");
+/// ```
+#[doc(hidden)]
+#[must_use]
+pub fn failure_cell(error: &SkoposError, age_secs: Option<f64>) -> String {
+    let label = if error.is_unreachable() {
+        "UNREACHABLE"
+    } else {
+        "SSH FAILED"
+    };
+    let reason = if let SkoposError::Ssh { message, .. } = error {
+        // BORROW: explicit clone -- the cell owns the reason it shows
+        message.clone()
+    } else {
+        error.to_string()
+    };
+    let aged = age_secs.map_or_else(String::new, |secs| format!(" {}", age(secs)));
+    format!("{label}{aged}: {reason}")
+}
+
 /// Which optional columns [`table`] shows. `TableOptions::new()` is the plain table; the other
 /// columns are asked for by name, so no call site reads as two bare booleans.
 ///
@@ -398,7 +431,10 @@ pub fn table(
                         log_cell(p.log.as_ref()),
                     )
                 }
-                Some(Err(e)) => ([(); 5].map(|()| String::from("?")), e.to_string()),
+                Some(Err(e)) => (
+                    [(); 5].map(|()| String::from("?")),
+                    failure_cell(e, i.age_secs(now)),
+                ),
                 None => ([(); 5].map(|()| String::from("-")), String::from("-")),
             };
             row.extend(cells);

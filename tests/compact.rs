@@ -162,6 +162,10 @@ fn a_failed_probe_and_every_log_state_are_objects() {
         msg.contains("Connection refused") && msg.contains("second line"),
         "{msg}"
     );
+    assert_eq!(
+        lines[0]["probe"]["error_kind"], "unreachable",
+        "a refused connection never reached the box"
+    );
     assert!(
         lines[0]["probe"].get("gpus").is_none(),
         "an error has no readings"

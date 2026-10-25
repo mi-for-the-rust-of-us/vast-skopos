@@ -524,8 +524,8 @@ fn ssh_probes_the_running_boxes_and_shows_what_it_could_not_read() {
     );
     let row = table.stdout.lines().find(|l| l.starts_with("77")).unwrap();
     assert!(
-        row.contains("failed to probe 127.0.0.1:9 over ssh"),
-        "{row}"
+        row.contains("UNREACHABLE ") && row.contains("127.0.0.1"),
+        "refused at once: never reached, said with the box's age: {row}"
     );
     // The same, as JSON: the probe is an object with an `error`, not null.
     let json = vas_with(box_on_loopback, &["--compact", "--ssh"], &env, &[]);
@@ -539,6 +539,7 @@ fn ssh_probes_the_running_boxes_and_shows_what_it_could_not_read() {
             .is_some_and(|e| e.contains("failed to probe 127.0.0.1:9")),
         "{first}"
     );
+    assert_eq!(first["probe"]["error_kind"], "unreachable", "{first}");
     // Without --ssh nothing is probed: the probe is null.
     let home = empty_dir("nossh");
     let quiet = vas_with(
@@ -810,7 +811,7 @@ fn a_watch_that_probes_has_a_trend_column_and_a_one_shot_does_not() {
         "{header}"
     );
     let row = lines.iter().find(|l| l.starts_with("77")).unwrap();
-    assert!(row.contains("failed to probe 127.0.0.1:9"), "{row}");
+    assert!(row.contains("UNREACHABLE "), "{row}");
     // One look has no history to show: no TREND column.
     let home = empty_dir("trend-once");
     let once = vas_with(box_on_loopback, &["--ssh"], &key_env(&home, ENV_KEY), &[]);
