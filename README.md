@@ -531,12 +531,14 @@ rental is a budget, and how long the credit lasts at the current burn is the num
 | Doc | |
 |-----|---|
 | [From filters to a running box](docs/tutorials/from-filters-to-a-running-box.md) | A tutorial: from a filters file to a running box, and watching it until you are done |
-| [FAQ](docs/FAQ.md) | The questions that came up on real rentals: the key and the files, why the offer list changes, the money line, what `--ssh` reads, a slow rental (power cap, someone else on the GPU), rate limits |
+| [Waiting for a line](docs/tutorials/waiting-for-a-line.md) | A tutorial: `--grep` to see the line a run printed once, `--until` to wait for it in place of a loop of your own, and the exit codes a script reads |
+| [FAQ](docs/FAQ.md) | The questions that came up on real rentals: the key and the files, why the offer list changes, which machine is which, verified or not, the money line, what `--ssh` reads, a box that is loading or unreachable, waiting for a line, a slow rental (power cap, someone else on the GPU), rate limits |
 | [Roadmap](docs/roadmap-v0.2.0.md) | What 0.2.0 contains and does not, the known limits, and the candidates for later (a text interface, a measured upload, ...) |
 | [`vas` and `vastai`](docs/comparison-with-vastai.md) | Vast.ai's own CLI/SDK and `vas`, compared row by row: scope, read-only by design, the GPU read on the box, the runway, the offer search, key hygiene, redirects, the `ssh` port rule |
 | [Dogfooding, 2026-10-16](https://github.com/mi-for-the-rust-of-us/vast-skopos/blob/main/docs/dogfooding/2026-10-16.md) | The first real rental (Me35, three RTX 5090s): what broke in the first minute, what helped, the next features, and `vas offers` probed and built for the next rental |
 | [Dogfooding, 2026-10-17](https://github.com/mi-for-the-rust-of-us/vast-skopos/blob/main/docs/dogfooding/2026-10-17.md) | `vas offers`' first rental (Me36, five 5090s for three slots): what worked, seven notes for the next versions (offers that vanish, a burn line that can mislead, machine ids, a compact mode, labels, a two-size uplink measure for `vas check`, a credit history) |
 | [Dogfooding, 2026-10-18](https://github.com/mi-for-the-rust-of-us/vast-skopos/blob/main/docs/dogfooding/2026-10-18.md) | `vas offers --watch` on the live market: boxes going away and arriving by the second, and the idea of a TUI for the watch |
+| [Dogfooding, 2026-10-23](https://github.com/mi-for-the-rust-of-us/vast-skopos/blob/main/docs/dogfooding/2026-10-23.md) | Seven runs chained on one RTX 5090, then the hunts of 10-24 and 10-25: the cost of a 500 W cap, and the notes behind 0.3.0 (the status message, `UNREACHABLE` with the age, `--grep` and `--until`, `--wide` and `--host` on the offers, unverified is not deverified) |
 | [Review of the code since 0.1.0, 2026-10-18](https://github.com/mi-for-the-rust-of-us/vast-skopos/blob/main/docs/audits/2026-10-18-review.md) | Three fresh readers, finding by finding: what was fixed, what was accepted, what is deferred |
 | [CONVENTIONS](CONVENTIONS.md) | The rules every line follows, the API-key and box rules included |
 | [CHANGELOG](CHANGELOG.md) | Release history |

@@ -1,9 +1,11 @@
 # Frequently asked questions
 
 **Not affiliated with vast.ai.** `vas` is an independent, read-only tool. Everything here was observed
-on real rentals or read from the code; where something is a guess, it says so. It describes **0.2.0**:
-0.1.0 has no `--credit-log`, `--wide`, `--compact`, `--exclude-machine`, probe columns beyond utilisation
-and memory, `--watch` on `vas offers` or rate-limit handling.
+on real rentals or read from the code; where something is a guess, it says so. It describes the code as
+it is now, on its way to **0.3.0**: 0.2.0 has no status line under the table, no `UNREACHABLE`, no
+`--grep` or `--until`, no `--exclude-deverified`, `--host`, `--machine` or `--wide` on `vas offers`; 0.1.0
+has no `--credit-log`, `--wide`, `--compact`, `--exclude-machine`, probe columns beyond utilisation and
+memory, `--watch` on `vas offers` or rate-limit handling.
 
 A few words used below:
 
@@ -116,7 +118,48 @@ listing, `3/9` one that flickers).
 
 A host is a person or company that rents out hardware; a host may own several machines. `vas --wide`
 shows both ids of your boxes. `vas offers --exclude-machine ID` leaves out one machine, `--exclude-host ID`
-all of a host's machines. Both can be repeated, and they add to the ones in your config file.
+all of a host's machines; `--machine ID` and `--host ID` keep only them. All four can be repeated, they add
+to the ones in your config file, and an id both kept and excluded is left out.
+
+### Is this the machine I had?
+
+`vas offers` shows the host, and one host may list several machines that look alike. `vas offers --wide`
+adds what tells them apart: `MACHINE`, `CPU` and `DRIVER` (and `DLPERF`, `DLPERF/$`, `PCIE GB/s`, `LIMIT W`);
+`vas --wide` shows the same `CPU`, `DRIVER`, `DLPERF` and `PCIE GB/s` for your rented boxes, so the two can be
+set side by side. To see only one host's or one machine's offers: `vas offers --host 406325 --wide`. On
+2026-10-25 that answered:
+
+```text
+ID        GPU          VRAM  $/H    CUDA  DISK  UP/DOWN Mb/s  REL %  MAX DAYS  HOST    MACHINE  VERIFICATION  CPU  DRIVER      DLPERF  DLPERF/$  PCIE GB/s  LIMIT W  WHERE
+48989513  1x RTX 5090  32G   0.496  13.0  401G  182/213       99.65  6.1       406325  148820   deverified    -    580.178.04  11.0    22        47.2       500      South Korea, KR
+1 offer, cheapest first | hosts 406325 | $/h includes 5 GB of storage | searched 13:27:11 UTC
+```
+
+A third machine of the host whose two rented boxes were running beside it: same driver (`580.178.04`), its
+own id, deverified, and a DLPerf of 11.
+
+### Can DLPerf or `LIMIT W` tell me that a host has capped the card?
+
+DLPerf cannot, as far as seen: on 2026-10-25 two RTX 5090s of one host read DLPerf 199.2, the same as an
+uncapped card, and `vas --ssh` read both capped at 500 of 600 W. `LIMIT W` (vast.ai's `gpu_max_power`, the
+power limit the listing gives) may: a third machine of that host listed 500 W the same day, and RTX 5090 offers
+listed anything from 400 to 575 W. That is one host, not a rule. The card's own reading, `vas --ssh`'s
+`POWER`, is the one that says what the run gets: read it on every box you rent.
+
+### Verified, unverified, deverified: which should I filter?
+
+vast.ai's documentation defines three stages. **Verified** machines passed its automated checks
+(reliability, network, operational health, performance) and are monitored. **Unverified** ones are new or
+under evaluation: "not a judgment of quality". **Deverified** ones were verified and no longer meet the
+requirements. None of the three checks speed or a power cap.
+
+`--verified` keeps only the first, so it hides new machines too. `--exclude-deverified` hides only the
+third. On 2026-10-24, an unverified box ran at full power and as fast as the fastest measured, a verified one
+was capped at 475 W, and a deverified one never started three instances in 17 minutes: for a rental,
+`--exclude-deverified` plus your own checks (`vas --ssh`'s `POWER`, a speed check) was the better rule. The
+search ignores a filter on the `verification` field it shows, so `vas` sends `vericode <= 1` (0 is
+unverified, 1 verified, 2 and up deverified, as probed on 2026-10-25) and re-checks each row; the footer
+says `not deverified`. In a config file, `--no-exclude-deverified` on the command line cancels it.
 
 ### The price in the table differs from the one I expected
 
@@ -151,6 +194,15 @@ The burn adds the boxes the API reads as `running` **and** the boxes you asked t
 status) that read otherwise (`offline`, `loading`, ...): `burn $1.940/h over 3 running + 1 offline (meant
 to run, billing unknown)`. Whether such a box bills is not known from the API, and a burn that left it out
 would overstate how long your credit lasts, so `vas` counts it and names it. A stopped box is not counted.
+
+### A box stays `loading` for minutes: is it stuck?
+
+Read the line under the table: for every box that is not running, `vas` prints vast.ai's own status message,
+`57340012 loading: 46b4edaa8d47: Pull complete`. On 2026-10-24 two boxes read `loading -> running` at 2
+minutes of age while that message named the image's layers arriving: they were progressing, and both read
+`running` at the next look. A box whose message does not move for many minutes is another matter (three
+boxes on one deverified machine read `rebooting -> running` for up to 17 minutes that day). `--compact`
+carries every box's message as `status_msg`.
 
 ### What does `--credit-log` write?
 
@@ -197,9 +249,26 @@ dashboard's own rule, so the address in the `SSH` column is the one to use, not 
 
 ### A box shows an error instead of GPU numbers
 
-The probe failed, and the row says why in `ssh`'s own words (connection refused, timeout, a refused key).
-Nothing is retried: what to do about a box that refuses is your call. A box that is not `running`, or has
-no endpoint, is not probed (`-`).
+The probe failed, and the last cell says which way, how old the box is, and why in `ssh`'s own words:
+
+- `UNREACHABLE 4m: ssh: connect to host ssh3.vast.ai port 32456: Connection refused`: `ssh` never reached
+  the box (refused, timed out, no route, a name that does not resolve, the connection closed before the
+  session, or no answer within 30 s);
+- `SSH FAILED 4m: root@ssh3.vast.ai: Permission denied (publickey).`: it reached the box and was turned away
+  (a refused key, a changed host key), or the box gave no GPU reading.
+
+Nothing is retried: what to do about the box is your call. A box that is not `running`, or has no endpoint,
+is not probed (`-`). `--compact` says the same as `error_kind`: `unreachable` or `failed`.
+
+### A box reads `UNREACHABLE`: should I wait or destroy it?
+
+The age is there for that choice. Three rentals (2026-10-17, 10-18 and 10-23) met boxes that read `running`
+at about 4 minutes while their `ssh` address refused every connection; each was destroyed unused, for a few
+cents. A box of a minute or two may still be starting: look again. If it still refuses after several minutes,
+try the direct address the dashboard gives (its public IP and the port mapped to 22) before giving up on it.
+Before you destroy it, run `vas --wide` once and note its `MACHINE`: `vas offers --exclude-machine ID` keeps
+it out of your next search. `SSH FAILED` is different: the box answered, so a refused key is fixed on your
+side (is your public key on your vast.ai account?), not by waiting.
 
 ### Why not trust the dashboard's GPU utilisation?
 
@@ -217,6 +286,31 @@ cut at 120 characters. `(no file matches)` when nothing matched, `(not a file)` 
 a directory, `(empty)` for a file with no line to show, and `?` when the box's answer was cut short. Quote
 the glob locally (`'/root/runs/*/train.log'`): the box's shell expands it. A long progress bar that is
 rewritten in place for hours shows its final state.
+
+With `--grep PATTERN`, the cell shows the last line that MATCHES instead (an extended regular expression,
+`grep -E`, case-sensitive). On 2026-10-25, a run's log ended in an epoch line, and `--grep 'archived|resumed'`
+found the archive line well above it:
+
+```text
+$ vas --ssh --log '/root/src/askesis/reference/canvas/data/runs/*/run.log' --grep 'archived|resumed'
+... LAST LOG / SSH ERROR
+... me38_c12o_s0_d1/run.log: archived /root/src/askesis/reference/canvas/data/runs/me38_c12o_s0_d1/canvas_ema_e55.safetensors
+```
+
+The search covers the file's last 64 MiB, each carriage-return segment of a progress bar as a line of its
+own. `(no line matches)` when none does, `(grep refused the pattern)` when `grep` cannot read it (`(` alone,
+say). The pattern is quoted for the box's shell: nothing in it is expanded, so `$`, quotes and backquotes
+are only characters to match.
+
+### How do I wait for a line in a log, without a loop of my own?
+
+`vas --ssh --log PATH --watch 30 --until PATTERN` looks every 30 s and exits `0` as soon as a box's log has a
+line matching `PATTERN` (read as `--grep` reads it), saying which box and which line on stderr. It exits `3`
+when no box could be read for 2 looks in a row (every probe failed, or no box is running or starting); a box
+still starting keeps the wait going, and a look whose instances request failed does not count. A pattern
+can wait for success or failure at once: `--until 'initial loss|Traceback'`, then read the line it printed.
+There is no time limit of its own: `timeout 3600 vas ...` gives one. See the tutorial
+[Waiting for a line](tutorials/waiting-for-a-line.md).
 
 ## When a rental is slow
 

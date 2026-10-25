@@ -67,6 +67,14 @@ All notable changes to this project are documented here. The format is based on
 - The `LAST LOG / SSH ERROR` cell of a failed probe no longer repeats `failed to probe HOST:PORT over ssh`:
   the `SSH` column already names the target. `--compact`'s `error` keeps the whole text.
 
+### Documentation
+
+- A second tutorial, [Waiting for a line](docs/tutorials/waiting-for-a-line.md), from a live wait on two
+  rented RTX 5090s (2026-10-25). The FAQ gains which machine is which, what DLPerf and `LIMIT W` can and
+  cannot say, verified against unverified against deverified, a box that stays `loading`, `UNREACHABLE` and
+  `SSH FAILED`, wait or destroy, `--grep`, and waiting with `--until`; the first tutorial uses
+  `--exclude-deverified`, the status line and the failure labels.
+
 ### Security
 
 - `Cargo.lock`: `rustls-webpki` 0.103.16 and `webpki-roots` 1.0.11 (RUSTSEC-2026-0382, RUSTSEC-2026-0381:

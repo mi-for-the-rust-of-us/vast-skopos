@@ -1,6 +1,6 @@
 # From filters to a running box
 
-A walk through one rental with `vas` (vast-skopos 0.2): you write down what you want, search the market
+A walk through one rental with `vas` (vast-skopos 0.3): you write down what you want, search the market
 without a key, watch it for a few minutes, rent a box **outside `vas`**, then watch the box until you are
 done with it. Steps 1 to 5 take about twenty minutes; steps 7 to 11 last as long as your rental.
 
@@ -64,7 +64,7 @@ One flag per line:
 --cuda 13
 --inet-up 200
 --exclude-country CN
---verified
+--exclude-deverified
 ```
 
 What each line asks:
@@ -79,7 +79,7 @@ What each line asks:
 | `--cuda 13` | the host's driver must support CUDA 13 |
 | `--inet-up 200` | at least 200 Mbit/s of **advertised** upload (the host's own test, not your route) |
 | `--exclude-country CN` | leave a country out |
-| `--verified` | only machines vast.ai has verified |
+| `--exclude-deverified` | leave out the machines vast.ai has deverified (verified once, then found failing its checks), and keep the unverified ones, which are new or under evaluation; `--verified` would hide those too ([FAQ](../FAQ.md#verified-unverified-deverified-which-should-i-filter)) |
 
 The file is read first; the command line adds to it or overrides it. [README](../../README.md#vas-offers) lists
 every flag.
@@ -102,7 +102,8 @@ ID        GPU          VRAM  $/H    CUDA  DISK   UP/DOWN Mb/s  REL %  MAX DAYS  
 vast.ai's answers vary from one search to the next; repeat the search, or use --watch, to see more.
 ```
 
-(Five of the twenty rows, from a search on 2026-10-19.) How to read it:
+(Five of the twenty rows, from a search on 2026-10-19, with `--verified` in the file at the time.) How to
+read it:
 
 - **`ID`** is the offer id: what you rent. **`HOST`** is the host that owns the hardware.
 - **`$/H` includes the storage you asked for**; the footer says how much (here 50 GB).
@@ -156,6 +157,16 @@ vas offers --exclude-machine 123456
 
 (Both can be repeated, and they add to the lists in your file.)
 
+One host may list several machines that look alike in the table. `--wide` adds what tells them apart, the
+machine id, the CPU and the driver, with vast.ai's benchmark score (`DLPERF`, and per dollar) and the power
+limit the listing gives (`LIMIT W`); `--host ID` or `--machine ID` keeps only one of them:
+
+```sh
+vas offers --wide --host 406325
+```
+
+(A listed figure is not a reading of the card: step 8 reads the card itself.)
+
 ## 6. Rent it, outside `vas`
 
 **This step starts billing.** Check the price, the disk size and the image first.
@@ -163,6 +174,9 @@ vas offers --exclude-machine 123456
 Take the `ID` of the offer to the vast.ai console, or to the official CLI: `vastai create instance ID` with an
 image and a disk size (run `vastai create instance --help` for its options). A minute or so later the box
 appears in `vas`, typically `loading` and then `running`. `vas` cannot do any of this, by design.
+
+While a box is not running, `vas` prints vast.ai's own message for it under the table:
+`57340012 loading: 46b4edaa8d47: Pull complete` is the image arriving, layer by layer: wait for it.
 
 ## 7. Give `vas` a key
 
@@ -221,9 +235,16 @@ GPU% (ssh)  VRAM       OTHER  POWER  CLOCK      LAST LOG / SSH ERROR
 - **`LAST LOG`**: the newest file matching `--log`, named by its last two path components, and its last
   non-blank line (`(no file matches)`, `(not a file)`, `(empty)` or `?` otherwise).
 
-If the last column shows an `ssh` error instead, the row gives `ssh`'s own words: a refused key (your public
-key is not on your account), or a timeout (the box may still be starting). Fix it with a plain `ssh` and run
-`vas` again; `vas` retries nothing. More in the [FAQ](../FAQ.md#looking-inside-a-box).
+If the last column shows an error instead, it says which way the probe failed, how old the box is, and
+`ssh`'s own words. `UNREACHABLE 4m: ...` means `ssh` never reached the box (refused, timed out): a box of a
+minute or two may still be starting, so look again; one that still refuses after several minutes may never
+come up. `SSH FAILED 4m: ...` means the box answered and turned `ssh` away: a refused key (your public key is
+not on your account) is fixed on your side, not by waiting. `vas` retries nothing. More in the
+[FAQ](../FAQ.md#a-box-reads-unreachable-should-i-wait-or-destroy-it).
+
+Run `vas --wide` once on every box you rent, even one you destroy at once: it shows the box's `MACHINE` (what
+`--exclude-machine` takes) and the `CPU`, `DRIVER`, `DLPERF` and `PCIE GB/s` that tell it from its host's other
+machines.
 
 ## 9. Keep watching, and keep the credit curve
 
@@ -246,6 +267,9 @@ credit becomes a curve you can plot or compare with the burn. It is the only fil
 and only because you named it. Stop with Ctrl+C. (For a script or a monitor, `--compact` prints the same
 readings as JSON Lines: see the [README](../../README.md#vas---compact-json-lines).)
 
+To wait for one line of the log (the first loss of a stage, say) rather than watch, see
+[Waiting for a line](waiting-for-a-line.md): `--until` ends the watch when the line appears.
+
 ## 10. When something looks wrong
 
 - **The GPU reads 100 % but the run is slow.** Look at `POWER` and `CLOCK`: a limit below the default, or a
@@ -254,7 +278,9 @@ readings as JSON Lines: see the [README](../../README.md#vas---compact-json-line
 - **`OTHER` shows gigabytes.** Something outside your container is using the card (probably another user of
   the machine); `vas` cannot name it. The [FAQ](../FAQ.md#what-should-i-do-about-it) says what to gather and
   who to ask.
-- **A box shows an `ssh` error.** See step 8.
+- **A box shows `UNREACHABLE` or `SSH FAILED`.** See step 8.
+- **A box stays `loading`.** Read vast.ai's message under the table (step 6): a message that moves is
+  progress.
 - **The credit runs down faster than the burn says.** Compare the credit log's fall with `burn_per_hour`
   ([FAQ](../FAQ.md#what-does---credit-log-write)).
 
@@ -268,6 +294,7 @@ invoice.
 
 ## Where next
 
+- [Waiting for a line](waiting-for-a-line.md): `--grep` and `--until`, instead of a loop of your own.
 - [FAQ](../FAQ.md): the questions that came up on real rentals.
 - [README](../../README.md): every flag, the JSON format, the key and file rules.
 - [`vas` and `vastai`](../comparison-with-vastai.md): which tool for which job.
