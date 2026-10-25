@@ -348,6 +348,7 @@ tells looks apart. `jq` does the rest, for example `vas --compact | jq -r 'selec
 | `--max-price DOLLARS`, `--min-days DAYS` | the highest `$/h` (storage included), the shortest acceptable maximum rental |
 | `--verified`, `--no-verified` | only machines vast.ai has verified; `--no-verified` cancels a config file's `--verified` |
 | `--exclude-deverified`, `--no-exclude-deverified` | leave out the machines vast.ai has DEVERIFIED (verified once, then found failing its checks) and keep the unverified ones (new, or under evaluation), which `--verified` hides too ([below](#verified-unverified-deverified)); the second flag cancels a config file's first |
+| `--host ID`, `--machine ID` | only this host or this machine: what a host rented from before offers now, or whether the machine you had is for rent again (`vas --wide` shows your boxes' ids); repeatable, and an `--exclude-*` of the same id still leaves it out |
 | `--exclude-country CC`, `--exclude-host ID`, `--exclude-machine ID` | leave out a country (two letters), a host or a machine (a host may own several; `vas --wide` shows yours); repeatable |
 | `--top N` (20), `--sort price\|reliability\|up` | how many rows, in which order |
 | `--watch SECONDS`, `--changes` | search again every N seconds (at least 20) until Ctrl+C, each look the whole table marked with what moved; `--changes` prints only what moved ([below](#watching-the-offers)) |

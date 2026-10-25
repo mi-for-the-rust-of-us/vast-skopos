@@ -445,6 +445,43 @@ fn the_deverified_are_left_out_as_vericode_and_the_command_line_cancels_the_file
 }
 
 #[test]
+fn the_hosts_and_machines_asked_for_accumulate_and_meet_the_excluded_in_one_filter() {
+    let (base, seen) = serve(bundles);
+    let home = fresh_home("only");
+    write_config(
+        &home.join("xdg"),
+        "--host 1
+--machine 2
+",
+    );
+    let (out, stdout, stderr) = vas(
+        &base,
+        &home,
+        true,
+        &[
+            "offers",
+            "--host",
+            "406325",
+            "--exclude-host",
+            "1",
+            "--machine",
+            "145061",
+        ],
+    );
+    assert!(out.status.success(), "{stderr}");
+    let q = decode_q(&the_request(&seen).target);
+    assert_eq!(
+        q["host_id"],
+        serde_json::json!({"in": [1, 406_325], "notin": [1]})
+    );
+    assert_eq!(q["machine_id"], serde_json::json!({"in": [2, 145_061]}));
+    assert!(
+        stdout.contains("hosts 1 406325, machines 2 145061, not hosts 1 |"),
+        "{stdout}"
+    );
+}
+
+#[test]
 fn excluded_hosts_accumulate_too() {
     let (base, seen) = serve(bundles);
     let home = fresh_home("hosts");

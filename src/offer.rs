@@ -202,6 +202,10 @@ pub struct OfferQuery {
     pub exclude_deverified: bool,
     /// Country codes excluded (e.g. `CN`).
     pub exclude_countries: Vec<String>,
+    /// Only these hosts (empty: every host): what a host rented from before offers now.
+    pub only_hosts: Vec<u64>,
+    /// Only these machines (empty: every machine): is the machine rented before for rent again?
+    pub only_machines: Vec<u64>,
     /// Host ids excluded.
     pub exclude_hosts: Vec<u64>,
     /// Machine ids excluded (a host may own several machines, one of which can be the bad one).
@@ -257,6 +261,8 @@ impl OfferQuery {
             && !self.verified
             && !self.exclude_deverified
             && self.exclude_countries.is_empty()
+            && self.only_hosts.is_empty()
+            && self.only_machines.is_empty()
             && self.exclude_hosts.is_empty()
             && self.exclude_machines.is_empty()
     }
@@ -287,14 +293,19 @@ impl OfferQuery {
         codes
     }
 
-    /// The excluded hosts, sorted, each once: as sent and as summarised.
-    fn hosts(&self) -> Vec<u64> {
-        sorted_once(&self.exclude_hosts)
-    }
-
-    /// The excluded machines, sorted, each once: as sent and as summarised.
-    fn machines(&self) -> Vec<u64> {
-        sorted_once(&self.exclude_machines)
+    /// The ids of the field (`host_id`, `machine_id`) the search keeps (`only`) and leaves out
+    /// (`excluded`), as the server's one object for it: `{"in": [...], "notin": [...]}`, each sorted,
+    /// each once, each only when given (probed 2026-10-25: the server applies both; one id in both
+    /// lists leaves no row); `None` when neither is given.
+    fn ids_filter(only: &[u64], excluded: &[u64]) -> Option<Value> {
+        let mut ops = Map::new();
+        if !only.is_empty() {
+            ops.insert("in".into(), json!(sorted_once(only)));
+        }
+        if !excluded.is_empty() {
+            ops.insert("notin".into(), json!(sorted_once(excluded)));
+        }
+        (!ops.is_empty()).then_some(Value::Object(ops))
     }
 
     /// The search's `q`, for `sort`: always rentable, not rented, on-demand, [`FETCH_LIMIT`] rows,
@@ -367,11 +378,11 @@ impl OfferQuery {
         if !self.exclude_countries.is_empty() {
             q.insert("geolocation".into(), json!({"notin": self.countries()}));
         }
-        if !self.exclude_hosts.is_empty() {
-            q.insert("host_id".into(), json!({"notin": self.hosts()}));
+        if let Some(hosts) = Self::ids_filter(&self.only_hosts, &self.exclude_hosts) {
+            q.insert("host_id".into(), hosts);
         }
-        if !self.exclude_machines.is_empty() {
-            q.insert("machine_id".into(), json!({"notin": self.machines()}));
+        if let Some(machines) = Self::ids_filter(&self.only_machines, &self.exclude_machines) {
+            q.insert("machine_id".into(), machines);
         }
         Value::Object(q)
     }
@@ -420,12 +431,15 @@ impl OfferQuery {
                 .iter()
                 .any(|x| x.trim().eq_ignore_ascii_case(c))
         });
-        let host_ok = offer
-            .host_id
-            .is_none_or(|h| !self.exclude_hosts.contains(&h));
-        let machine_ok = offer
-            .machine_id
-            .is_none_or(|m| !self.exclude_machines.contains(&m));
+        let wanted = |id: Option<u64>, only: &[u64], excluded: &[u64]| {
+            id.is_none_or(|i| (only.is_empty() || only.contains(&i)) && !excluded.contains(&i))
+        };
+        let host_ok = wanted(offer.host_id, &self.only_hosts, &self.exclude_hosts);
+        let machine_ok = wanted(
+            offer.machine_id,
+            &self.only_machines,
+            &self.exclude_machines,
+        );
         available
             && same_text(self.gpu.as_ref(), offer.gpu_name.as_ref())
             && same_count(self.num_gpus, offer.num_gpus)
@@ -501,13 +515,24 @@ impl OfferQuery {
         if !self.exclude_countries.is_empty() {
             parts.push(format!("not in {}", self.countries().join(" ")));
         }
+        let named = |ids: &[u64]| {
+            sorted_once(ids)
+                .iter()
+                .map(u64::to_string)
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        if !self.only_hosts.is_empty() {
+            parts.push(format!("hosts {}", named(&self.only_hosts)));
+        }
+        if !self.only_machines.is_empty() {
+            parts.push(format!("machines {}", named(&self.only_machines)));
+        }
         if !self.exclude_hosts.is_empty() {
-            let hosts: Vec<String> = self.hosts().iter().map(u64::to_string).collect();
-            parts.push(format!("not hosts {}", hosts.join(" ")));
+            parts.push(format!("not hosts {}", named(&self.exclude_hosts)));
         }
         if !self.exclude_machines.is_empty() {
-            let machines: Vec<String> = self.machines().iter().map(u64::to_string).collect();
-            parts.push(format!("not machines {}", machines.join(" ")));
+            parts.push(format!("not machines {}", named(&self.exclude_machines)));
         }
         if parts.is_empty() {
             String::from("no constraint")

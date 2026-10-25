@@ -151,6 +151,14 @@ struct OffersArgs {
     /// Cancels --exclude-deverified (e.g. the config file's).
     #[arg(long, overrides_with = "exclude_deverified")]
     no_exclude_deverified: bool,
+    /// Only this host (e.g. one rented from before, to see what it offers now). Repeatable; added to
+    /// the config file's.
+    #[arg(long, value_name = "HOST_ID")]
+    host: Vec<u64>,
+    /// Only this machine (is the machine rented before for rent again? vas --wide shows yours).
+    /// Repeatable; added to the config file's.
+    #[arg(long, value_name = "MACHINE_ID")]
+    machine: Vec<u64>,
     /// Leave out this country (two letters, e.g. CN). Repeatable; added to the config file's.
     #[arg(long, value_name = "CC", value_parser = country)]
     exclude_country: Vec<String>,
@@ -202,6 +210,8 @@ impl OffersArgs {
         q.verified = self.verified;
         q.exclude_deverified = self.exclude_deverified;
         q.exclude_countries.clone_from(&self.exclude_country);
+        q.only_hosts.clone_from(&self.host);
+        q.only_machines.clone_from(&self.machine);
         q.exclude_hosts.clone_from(&self.exclude_host);
         q.exclude_machines.clone_from(&self.exclude_machine);
         q

@@ -28,6 +28,8 @@ fn every_constraint() -> OfferQuery {
     q.verified = true;
     q.exclude_deverified = true;
     q.exclude_countries = vec!["CN".to_owned()];
+    q.only_hosts = vec![7];
+    q.only_machines = vec![8];
     q.exclude_hosts = vec![362_355];
     q.exclude_machines = vec![142_875];
     q
@@ -42,7 +44,7 @@ fn passing() -> Value {
 }
 
 /// Each field, and a value contradicting its constraint (bounds are inclusive in `passing`).
-const VIOLATIONS: [(&str, &str); 15] = [
+const VIOLATIONS: [(&str, &str); 17] = [
     ("gpu_name", r#""RTX 4090""#),
     ("num_gpus", "2"),
     ("disk_space", "49.9"),
@@ -55,7 +57,9 @@ const VIOLATIONS: [(&str, &str); 15] = [
     ("verification", r#""deverified""#),
     ("geolocation", r#""Guangdong, CN""#),
     ("host_id", "362355"),
+    ("host_id", "9"),
     ("machine_id", "142875"),
+    ("machine_id", "10"),
     ("rentable", "false"),
     ("rented", "true"),
 ];
@@ -96,8 +100,8 @@ fn every_constraint_is_sent_in_the_servers_unit() {
         ("duration", json!({"gte": 172_800.0})),
         ("verified", json!({"eq": true})),
         ("geolocation", json!({"notin": ["CN"]})),
-        ("host_id", json!({"notin": [362_355]})),
-        ("machine_id", json!({"notin": [142_875]})),
+        ("host_id", json!({"in": [7], "notin": [362_355]})),
+        ("machine_id", json!({"in": [8], "notin": [142_875]})),
         ("rentable", json!({"eq": true})),
         ("rented", json!({"eq": false})),
         ("allocated_storage", json!(50)),
@@ -204,6 +208,47 @@ fn a_host_and_a_machine_are_told_apart() {
         q.summary().ends_with("not hosts 5, not machines 9"),
         "{}",
         q.summary()
+    );
+}
+
+#[test]
+fn only_the_hosts_and_machines_asked_for_are_kept_and_an_excluded_one_still_goes() {
+    let offer = |host: Option<u64>, machine: Option<u64>| {
+        let mut row = json!({"id": 1});
+        if let Some(h) = host {
+            row["host_id"] = h.into();
+        }
+        if let Some(m) = machine {
+            row["machine_id"] = m.into();
+        }
+        Offer::from_json(&row).unwrap()
+    };
+    let mut q = OfferQuery::default();
+    q.only_hosts = vec![406_325, 102_965, 406_325];
+    assert!(!q.is_identity());
+    assert!(q.admits(&offer(Some(406_325), None)));
+    assert!(!q.admits(&offer(Some(155_385), None)), "another host");
+    assert!(
+        q.admits(&offer(None, None)),
+        "a missing field keeps the row"
+    );
+    q.exclude_hosts = vec![102_965];
+    assert!(!q.admits(&offer(Some(102_965), None)), "excluded wins");
+    q.only_machines = vec![145_061];
+    assert!(q.admits(&offer(Some(406_325), Some(145_061))));
+    assert!(
+        !q.admits(&offer(Some(406_325), Some(142_476))),
+        "a sibling machine"
+    );
+    let sent = q.to_search_json(OfferSort::Price);
+    assert_eq!(
+        sent["host_id"],
+        json!({"in": [102_965, 406_325], "notin": [102_965]})
+    );
+    assert_eq!(sent["machine_id"], json!({"in": [145_061]}));
+    assert_eq!(
+        q.summary(),
+        "hosts 102965 406325, machines 145061, not hosts 102965"
     );
 }
 

@@ -26,6 +26,12 @@ All notable changes to this project are documented here. The format is based on
   2026-10-25), so it is sent as `vericode <= 1`, and not beside `verified`, which already leaves the
   deverified out (given both, the server applied only one). Footer: `not deverified`.
   `OfferQuery::exclude_deverified`.
+- `vas offers --host ID` and `--machine ID` (repeatable, accumulated with the config file's): only these
+  hosts or machines, to see what a host rented from before offers now, or whether the machine you had is
+  for rent again (note 7: answering "is this the box we had?" took the raw API). Sent as `host_id` and
+  `machine_id` `in [...]`, in the same object as the `--exclude-*` lists' `notin` (probed 2026-10-25: the
+  server applies both), re-checked on each row, named in the footer (`hosts ...`, `machines ...`).
+  `OfferQuery::only_hosts`, `OfferQuery::only_machines`.
 
 ### Changed
 
