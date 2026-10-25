@@ -60,17 +60,19 @@ struct LookArgs {
     #[arg(long, value_name = "PATH_OR_GLOB", requires = "ssh", value_parser = non_blank)]
     log: Option<String>,
     /// With --log: the last line MATCHING this extended regular expression (grep -E, case-sensitive),
-    /// not the last line: "initial loss|Traceback". Searched in the file's last 64 MiB within 10 s,
-    /// each carriage-return segment a line, each line's first 4096 bytes; "(no line matches)" when none
-    /// does, "(grep refused the pattern)" when it is not one. Quoted for the box's shell: nothing in it
-    /// is expanded.
+    /// not the last line: "initial loss|Traceback". Searched in the file's last 64 MiB within 10 s
+    /// ("?" past them), each carriage-return segment a line, empty lines left out, each line's first
+    /// 4096 bytes; "(no line matches)" when none does, "(grep refused the pattern)" when it is not
+    /// one, "(a blank line)" for a line of spaces only. Quoted for the box's shell: nothing in it is
+    /// expanded.
     #[arg(long, value_name = "PATTERN", requires = "log", value_parser = grep_pattern)]
     grep: Option<String>,
     /// With --log and --watch: wait for a line matching this pattern (as --grep reads it, which it
     /// replaces) on any box, then exit 0 with that line on stderr. Exits 2 at once when a box's grep
-    /// refuses the pattern, 3 when no box could be read for 2 looks in a row (every probe failed or
-    /// none could be made), and 1 when stdout is closed before a match. A box meant to run but not
-    /// running (loading, say) keeps the wait going for 10 looks in a row at most.
+    /// refuses the pattern (and no other box was read), 3 when no box could be read for 2 looks in a
+    /// row (every probe failed or gave no readable log, or none could be made), and 1 when the first
+    /// look fails or stdout is closed before a match. A box meant to run but not running (loading,
+    /// say) keeps the wait going for 10 looks at most since a box was last read.
     #[arg(
         long,
         value_name = "PATTERN",
@@ -91,7 +93,9 @@ struct LookArgs {
     #[arg(long)]
     wide: bool,
     /// JSON Lines instead of the table, for scripts and monitors: one object per box, then one for
-    /// the money, each with a kind and an at (Unix seconds); the machine and host ids always.
+    /// the money, each with a kind and an at (Unix seconds); every key always (null when not
+    /// known), the machine and host ids, the CPU, driver, DLPerf, PCIe and vast.ai's status message
+    /// among them.
     #[arg(long, conflicts_with = "wide")]
     compact: bool,
     /// Append one row per look to this CSV file: unix_time,credit,burn_per_hour,running,unsure (a
@@ -620,7 +624,12 @@ fn wait_stop(end: End) -> Stop {
     match end {
         End::Matched { id, line } => Stop {
             code: ExitCode::SUCCESS,
-            said: format!("--until: box {id} matched: {line}"),
+            // As the table says it: a line of spaces only is empty once cleaned.
+            said: if line.is_empty() {
+                format!("--until: box {id} matched: (a blank line)")
+            } else {
+                format!("--until: box {id} matched: {line}")
+            },
         },
         End::Refused { id } => Stop {
             code: ExitCode::from(REFUSED),
@@ -941,12 +950,14 @@ mod tests {
             .to_string();
         assert!(
             help.contains(&format!(
-                "Exits {REFUSED} at once when a box's grep refuses the pattern, {GAVE_UP} when no box could be read for {UNREAD_LOOKS} looks in a row"
+                "Exits {REFUSED} at once when a box's grep refuses the pattern (and no other box was read), {GAVE_UP} when no box could be read for {UNREAD_LOOKS} looks in a row"
             )),
             "{help}"
         );
         assert!(
-            help.contains(&format!("for {STARTING_LOOKS} looks in a row at most")),
+            help.contains(&format!(
+                "for {STARTING_LOOKS} looks at most since a box was last read"
+            )),
             "{help}"
         );
     }

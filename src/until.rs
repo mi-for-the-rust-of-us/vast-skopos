@@ -14,10 +14,13 @@ use crate::probe::{LogReading, ProbeOutcome, outcome_at};
 /// The looks in a row with nothing to wait on after which a wait gives up.
 pub const UNREAD_LOOKS: u32 = 2;
 
-/// The looks in a row a box meant to run but not running may keep a wait going.
+/// The looks a box meant to run but not running may keep a wait going, counted since a box was last
+/// read.
 ///
 /// After them, such a look counts as one with nothing to wait on. A box rented a minute ago is
-/// `loading` for a few looks; one whose host went `offline` must not hold a wait forever.
+/// `loading` for a few looks; one whose host went `offline` must not hold a wait forever. A look
+/// with nothing to read in between does not start the count afresh: a box flipping between
+/// `loading` and unreachable must not hold a wait forever either.
 pub const STARTING_LOOKS: u32 = 10;
 
 /// What one look says to a wait.
@@ -31,19 +34,22 @@ pub enum Verdict {
         /// The matching line, as the table shows it (cleaned, cut at 120 characters).
         line: String,
     },
-    /// No match, and a box's `grep` refused the pattern (one it cannot read as an extended regular
-    /// expression, or a `grep` that lacks the options the probe gives it): no later look can match.
+    /// No match, a box's `grep` refused the pattern (one it cannot read as an extended regular
+    /// expression, or a `grep` that lacks the options the probe gives it), and no other box was read
+    /// that could still match.
     Refused {
         /// The instance's id: the first such box, in the instances' order.
         id: u64,
     },
     /// No match yet, and a box was read: its log does not match yet, or no file matches its path
-    /// yet.
+    /// yet. A log the box could not give ([`LogReading::Unreadable`]: the search ran past its
+    /// deadline, the file could not be read, the answer was cut short) is NOT a box read.
     Read,
     /// No box was read, but a box meant to run is not running (yet): `loading`, say.
     Starting,
     /// Nothing to wait on: no box was read and none is meant to run but not running. Every probe
-    /// failed, or none could be made (no box running, or none with an `ssh` endpoint).
+    /// failed or gave no readable log, or none could be made (no box running, or none with an `ssh`
+    /// endpoint).
     Unread,
 }
 
@@ -79,26 +85,23 @@ pub fn verdict(instances: &[Instance], probes: &[ProbeOutcome]) -> Verdict {
                     line: line.clone(),
                 };
             }
-            Some(LogReading::PatternRefused { .. }) => {
-                refused = refused.or(Some(i.id));
-            }
-            // EXPLICIT: every other reading is a box read without a match (yet).
+            Some(LogReading::PatternRefused { .. }) => refused = refused.or(Some(i.id)),
+            // EXPLICIT: a log the box could not give is no box read: it must not hold a wait.
+            Some(LogReading::Unreadable) => {}
             Some(
                 LogReading::NoMatch
                 | LogReading::NotAFile { .. }
                 | LogReading::Empty { .. }
-                | LogReading::NoMatchingLine { .. }
-                | LogReading::Unreadable,
+                | LogReading::NoMatchingLine { .. },
             )
-            | None => {}
+            | None => read = true,
         }
-        read = true;
     }
-    if let Some(id) = refused {
-        return Verdict::Refused { id };
-    }
+    // A box that took the pattern can still match: one box's refusal ends a wait only alone.
     if read {
         Verdict::Read
+    } else if let Some(id) = refused {
+        Verdict::Refused { id }
     } else if instances
         .iter()
         .any(|i| i.is_meant_to_run() && !i.is_running())
@@ -129,8 +132,8 @@ pub enum End {
     GaveUp,
 }
 
-/// A wait across looks: the looks in a row with nothing to wait on, and those in which only a box
-/// that is not running kept it going.
+/// A wait across looks: the looks in a row with nothing to wait on, and those since a box was last
+/// read in which only a box that is not running kept it going.
 ///
 /// ```
 /// use vast_skopos::until::{End, UNREAD_LOOKS, Verdict, Wait};
@@ -145,7 +148,8 @@ pub enum End {
 pub struct Wait {
     /// The looks in a row with nothing to wait on.
     unread: u32,
-    /// The looks in a row in which only a box meant to run but not running kept the wait going.
+    /// The looks since a box was last read in which a box meant to run but not running kept the
+    /// wait going.
     starting: u32,
 }
 
@@ -153,7 +157,7 @@ impl Wait {
     /// Counts one look's `verdict`; the end of the wait, when this look ends it.
     ///
     /// A [`Verdict::Read`] starts both counts afresh; a [`Verdict::Starting`] keeps the wait going
-    /// for [`STARTING_LOOKS`] looks in a row, then counts as [`Verdict::Unread`].
+    /// for [`STARTING_LOOKS`] looks since a box was last read, then counts as [`Verdict::Unread`].
     ///
     /// ```
     /// use vast_skopos::until::{End, STARTING_LOOKS, Verdict, Wait};

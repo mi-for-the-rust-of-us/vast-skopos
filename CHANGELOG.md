@@ -45,19 +45,20 @@ All notable changes to this project are documented here. The format is based on
 - `vas --ssh --log PATH --grep PATTERN`: the last line MATCHING an extended regular expression (`grep -E`)
   instead of the last line, so a line printed once and buried by the next ones is caught (note 2: the
   first training loss of a stage, followed within seconds by its evaluation lines). Searched in the file's
-  last 64 MiB within 10 s (one `timeout` over the whole search; `?` past it), each carriage-return segment a
-  line (`tr -s`, which also squeezes the empty lines of a CRLF log), each line's first 4096 bytes (a long
-  line is shown from its head), NUL bytes read as text (`grep -a`); `(no line matches)`, `(grep refused the
-  pattern)` and `(a blank line)` when that is what happened (`--compact`: `no_matching_line`,
-  `pattern_refused`, or a `line` that is empty). `grep`'s complaints are not on stderr, where they would
-  stand in for `ssh`'s reason. The pattern is single-quoted for the box's shell, never expanded (a rule in
+  last 64 MiB within 10 s (one `timeout` over the whole search; `?` past it, and for a file the search cannot
+  read), each carriage-return segment a line, empty lines left out (a CRLF log would leave one after every
+  line), each line's first 4096 bytes (a long line is shown from its head), NUL bytes read as text
+  (`grep -a`); `(no line matches)`, `(grep refused the pattern)` and `(a blank line)` (a line of spaces only)
+  when that is what happened (`--compact`: `no_matching_line`, `pattern_refused`, or a `line` that is
+  empty). `tail`'s and `grep`'s complaints are not on stderr, where they would stand in for `ssh`'s reason. The pattern is single-quoted for the box's shell, never expanded (a rule in
   CONVENTIONS.md), and `grep`'s status is the answer's last line, so no log line can stand in for it.
   `probe::LogQuery`, `LogReading::NoMatchingLine`, `LogReading::PatternRefused`.
 - `vas --ssh --log PATH --watch N --until PATTERN`: wait for a line matching `PATTERN` (as `--grep` reads it,
-  which it replaces) on any box, then exit 0 with the line on stderr; exit 2 at once when a box's `grep` refuses the pattern;
-  exit 3 when no box could be read for 2 looks in a row (every probe failed or none could be made); exit 1
-  when stdout is closed before a match. A box meant to run but not running keeps the wait going for 10
-  looks in a row at most (one whose host went offline must not hold it forever), and a look whose instances
+  which it replaces) on any box, then exit 0 with the line on stderr; exit 2 at once when a box's `grep` refuses the pattern
+  and no other box was read; exit 3 when no box could be read for 2 looks in a row (every probe failed or
+  gave no readable log, or none could be made); exit 1 when the first look fails or stdout is closed before
+  a match. A box meant to run but not running keeps the wait going for 10 looks at most since a box was
+  last read (one whose host went offline must not hold it forever), and a look whose instances
   request failed does not count (note 2: the rule of the hand-written `ssh` loops it replaces, in one place).
   `until::verdict`, `until::Verdict`, `until::Wait`, `until::End`, `until::UNREAD_LOOKS`,
   `until::STARTING_LOOKS`.

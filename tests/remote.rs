@@ -445,7 +445,7 @@ fn a_matching_line_longer_than_the_byte_cap_keeps_its_head_and_its_status() {
 }
 
 #[test]
-fn a_crlf_log_and_a_pattern_that_matches_an_empty_line_still_give_a_line() {
+fn empty_lines_are_not_searched_and_a_line_of_spaces_is_a_blank_line() {
     let d = scratch("grep-crlf");
     let root = d.display().to_string();
     let file = format!("{root}/train.log");
@@ -453,14 +453,45 @@ fn a_crlf_log_and_a_pattern_that_matches_an_empty_line_still_give_a_line() {
     assert_eq!(
         grep_in(&d, &format!("{root}/*.log"), ".*"),
         line(&file, "step 2"),
-        "the empty lines a CRLF would leave are squeezed out"
+        "the empty line a CRLF leaves after every line is not searched"
     );
-    fs::write(&file, "\nloss 1\n").unwrap();
+    for text in [
+        "\nloss 1\n",
+        "loss 1\n\nstep 2\n",
+        "loss 1\r\n\r\nstep 2\r\n",
+    ] {
+        fs::write(&file, text).unwrap();
+        assert_eq!(
+            grep_in(&d, &format!("{root}/*.log"), "^$"),
+            LogReading::NoMatchingLine { file: file.clone() },
+            "an empty line, first or in the middle, is never searched: {text:?}"
+        );
+    }
+    fs::write(&file, "loss 1\n   \nstep 2\n").unwrap();
     assert_eq!(
-        grep_in(&d, &format!("{root}/*.log"), "^$"),
+        grep_in(&d, &format!("{root}/*.log"), "^ +$"),
         line(&file, ""),
-        "a blank line matched is a line, not a cut answer"
+        "a line of spaces matched is a line, empty once cleaned"
     );
+    let _ = fs::remove_dir_all(&d);
+}
+
+#[test]
+fn a_file_the_search_cannot_read_is_unreadable_not_a_file_without_a_match() {
+    use std::os::unix::fs::PermissionsExt;
+    let d = scratch("grep-unreadable");
+    let root = d.display().to_string();
+    let file = d.join("train.log");
+    fs::write(&file, "loss 1\n").unwrap();
+    fs::set_permissions(&file, fs::Permissions::from_mode(0o000)).unwrap();
+    // Root reads any file: the test says nothing when run as root.
+    if fs::read(&file).is_err() {
+        assert_eq!(
+            grep_in(&d, &format!("{root}/*.log"), "loss"),
+            LogReading::Unreadable
+        );
+    }
+    fs::set_permissions(&file, fs::Permissions::from_mode(0o644)).unwrap();
     let _ = fs::remove_dir_all(&d);
 }
 

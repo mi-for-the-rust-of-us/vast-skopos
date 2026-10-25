@@ -135,8 +135,8 @@ pub enum LogReading {
         file: String,
     },
     /// The newest matching file's last non-blank line; with [`LogQuery::grep`], its last line
-    /// matching the pattern (which may be blank, when the pattern matches an empty line: the
-    /// table then says `(a blank line)`).
+    /// matching the pattern (empty lines are not searched; a line of spaces only can match, and
+    /// is empty once cleaned: the table then says `(a blank line)`).
     Line {
         /// The file's path on the box, control characters dropped (see `strip`).
         file: String,
@@ -177,8 +177,9 @@ pub struct LogQuery {
     pub path: String,
     /// A POSIX extended regular expression (`grep -E`, case-sensitive), quoted for the box's shell
     /// and so never expanded: the last line matching it is shown instead of the last line, searched
-    /// in the file's last 64 MiB, each carriage-return segment (a progress bar's state) a line of
-    /// its own. `None`: the last non-blank line.
+    /// in the file's last 64 MiB within 10 s, each carriage-return segment (a progress bar's state)
+    /// a line of its own, empty lines left out, each line's first 4096 bytes. `None`: the last
+    /// non-blank line.
     pub grep: Option<String>,
 }
 
@@ -328,8 +329,8 @@ fn shell_quoted(text: &str) -> String {
 /// capped at 4096 bytes), a `vas-not-a-file:` line when the match is not a regular file, or a
 /// `vas-no-file` line when nothing matched. With [`LogQuery::grep`], a `vas-grep-file:` line, the last
 /// line of the file's last 64 MiB that matches (`grep -a -E`, each carriage-return segment a line,
-/// each line's first 4096 bytes), and `vas-grep-exit:` with the status of the search (`grep`'s, or
-/// `timeout`'s 124 when the search ran past 10 s).
+/// empty lines left out, each line's first 4096 bytes), and `vas-grep-exit:` with the status of the
+/// search (`grep`'s; 3 when the file cannot be read; `timeout`'s 124 when the search ran past 10 s).
 ///
 /// ```
 /// use vast_skopos::probe::{LogQuery, remote_command};
@@ -373,13 +374,15 @@ pub fn remote_command(log: Option<&LogQuery>) -> String {
             let pattern = &query.path;
             // The last line, or the last line matching. The search runs under ONE `timeout` (a
             // `sh -c` of its own, the file passed as `$1`), so `tr` and `grep` are bounded too and a
-            // search cut short says so (124), instead of answering about the part it read. `tr -s`
-            // makes each carriage-return segment a line (a progress bar's matching state is found)
-            // and squeezes the empty lines a `\r\n` would leave; `cut` keeps each line's head, where a
-            // log line says what it is, so a matching line of megabytes cannot fill the pipe; `-a`
-            // keeps one NUL byte from turning the answer into "Binary file matches"; `-e` keeps a
-            // pattern starting with `-` a pattern; `grep`'s complaints go nowhere (its status says
-            // them), so they cannot stand in for `ssh`'s reason; `$?` is the status of the search.
+            // search cut short says so (124), instead of answering about the part it read; a file
+            // that cannot be read (gone since `ls`, say) says so too (3), instead of "no line
+            // matches". `tr` makes each carriage-return segment a line (a progress bar's matching
+            // state is found); the empty lines are dropped (a `\r\n` would leave one after every
+            // line), so an empty line is never searched; `cut` keeps each line's head, where a log
+            // line says what it is, so a matching line of megabytes cannot fill the pipe; `-a` keeps
+            // one NUL byte from turning the answer into "Binary file matches"; `-e` keeps a pattern
+            // starting with `-` a pattern; `tail`'s and `grep`'s complaints go nowhere (the status
+            // says them), so they cannot stand in for `ssh`'s reason; `$?` is the search's status.
             let read = query.grep.as_deref().map_or_else(
                 || {
                     format!(
@@ -389,7 +392,8 @@ pub fn remote_command(log: Option<&LogQuery>) -> String {
                 },
                 |grep| {
                     let search = shell_quoted(&format!(
-                        "tail -c {GREP_BYTES} -- \"$1\" | tr -s '\\r' '\\n' | cut -b 1-{TAIL_BYTES} \
+                        "[ -r \"$1\" ] || exit 3; tail -c {GREP_BYTES} -- \"$1\" 2>/dev/null \
+                         | tr '\\r' '\\n' | grep -a -v -e '^$' | cut -b 1-{TAIL_BYTES} \
                          | grep -a -E -e {} 2>/dev/null",
                         shell_quoted(grep)
                     ));
@@ -674,9 +678,9 @@ pub fn parse_log(text: &str) -> LogReading {
 
 /// Reads what follows a `vas-grep-file:` line: the last non-blank line must be `vas-grep-exit:N`,
 /// printed by the box's shell after the search was done (a log line cannot stand in for it, since
-/// it always comes last); with a status of 0, the line right before it is the match, blank or not
-/// (a pattern can match an empty line). A status of 124 (the search ran past its deadline), or
-/// any other, is [`LogReading::Unreadable`].
+/// it always comes last); with a status of 0, the line right before it is the match (a line of
+/// spaces only is empty once cleaned). A status of 3 (the file could not be read), 124 (the search
+/// ran past its deadline), or any other, is [`LogReading::Unreadable`].
 fn parse_grep<'a>(file: String, lines: impl Iterator<Item = &'a str>) -> LogReading {
     let mut kept: Vec<&str> = lines.collect();
     while kept.last().is_some_and(|l| l.trim().is_empty()) {
@@ -865,8 +869,8 @@ fn unfinished() -> String {
 ///
 /// # Errors
 /// Returns [`SkoposError::Ssh`] if the host name starts with `-`, if `ssh` cannot be started, if it
-/// gives no answer within [`PROBE_TIMEOUT`], or if it prints no GPU reading (refused, host key
-/// changed, ...).
+/// gives no answer within [`PROBE_TIMEOUT`] (or the box began to answer and did not finish within
+/// it), or if it prints no GPU reading (refused, host key changed, ...).
 pub fn ssh_probe(
     host: &str,
     port: u16,

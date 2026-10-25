@@ -299,20 +299,22 @@ $ vas --ssh --log '/root/src/askesis/reference/canvas/data/runs/*/run.log' --gre
 ... me38_c12o_s0_d1/run.log: archived /root/src/askesis/reference/canvas/data/runs/me38_c12o_s0_d1/canvas_ema_e55.safetensors
 ```
 
-The search covers the file's last 64 MiB, within 10 s on the box (`?` when it runs past them), each
-carriage-return segment of a progress bar as a line of its own, and each line's first 4096 bytes: a long line
-is shown from its head. `(no line matches)` when none does, `(grep refused the pattern)` when `grep` cannot
-read it (`(` alone, say), `(a blank line)` when the line that matched is empty. The pattern is quoted for the box's shell: nothing in it is expanded, so `$`, quotes and backquotes
+The search covers the file's last 64 MiB, within 10 s on the box (`?` when it runs past them, or when the
+file cannot be read), each carriage-return segment of a progress bar as a line of its own, empty lines left
+out, and each line's first 4096 bytes: a long line is shown from its head. `(no line matches)` when none does,
+`(grep refused the pattern)` when `grep` cannot read it (`(` alone, say), `(a blank line)` when the line that
+matched is made of spaces only. The pattern is quoted for the box's shell: nothing in it is expanded, so `$`, quotes and backquotes
 are only characters to match.
 
 ### How do I wait for a line in a log, without a loop of my own?
 
 `vas --ssh --log PATH --watch 30 --until PATTERN` looks every 30 s and exits `0` as soon as a box's log has a
 line matching `PATTERN` (read as `--grep` reads it), saying which box and which line on stderr. It exits `2` at
-once when a box's `grep` refuses the pattern (no later look could match), `3` when no box could be read for 2
-looks in a row (every probe failed or none could be made), and `1` when its stdout is closed before a match;
-a box meant to run but not running (`loading`, say) keeps the wait going for 10 looks in a row at most, and a
-look whose instances request failed does not count. A pattern
+once when a box's `grep` refuses the pattern and no other box was read (no later look could match), `3` when
+no box could be read for 2 looks in a row (every probe failed or gave no readable log, or none could be made),
+and `1` when the first look fails or its stdout is closed before a match; a box meant to run but not running
+(`loading`, say) keeps the wait going for 10 looks at most since a box was last read, and a look whose
+instances request failed does not count. A pattern
 can wait for success or failure at once: `--until 'initial loss|Traceback'`, then read the line it printed.
 There is no time limit of its own: `timeout 3600 vas ...` gives one. See the tutorial
 [Waiting for a line](tutorials/waiting-for-a-line.md).

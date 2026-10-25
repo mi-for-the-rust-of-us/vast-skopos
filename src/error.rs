@@ -170,11 +170,21 @@ impl SkoposError {
         if let Self::Ssh { message, .. } = self {
             let reason = message.to_ascii_lowercase();
             UNREACHABLE_WORDS.iter().any(|words| reason.contains(words))
+                && !SESSION_WORDS.iter().any(|words| reason.contains(words))
         } else {
             false
         }
     }
 }
+
+/// What OpenSSH says, lower-cased, of a session that was open and then dropped: a reset or a close
+/// with these words came after the box was reached, and is not "unreachable".
+const SESSION_WORDS: [&str; 2] = [
+    // `Read from remote host 1.2.3.4: Connection reset by peer`.
+    "read from remote host",
+    // `client_loop: send disconnect: Connection reset by peer`.
+    "client_loop",
+];
 
 /// What a probe's reason says, lower-cased, when the box was never reached: OpenSSH's own words,
 /// and the probe's deadline.
@@ -236,6 +246,8 @@ mod tests {
     #[test]
     fn a_box_that_answered_and_refused_was_reached() {
         for message in [
+            "Read from remote host 185.65.225.164: Connection reset by peer",
+            "client_loop: send disconnect: Connection reset by peer",
             "root@ssh3.vast.ai: Permission denied (publickey).",
             "Host key verification failed.",
             "no GPU reading (ssh exit 0)",

@@ -64,8 +64,26 @@ fn the_first_box_whose_log_matches_ends_the_wait_even_beside_a_refused_pattern()
             line: "initial loss 4.21".to_owned()
         }
     );
+    let probes = [ssh_refused(), grep_refused(), None];
+    assert_eq!(verdict(&boxes, &probes), Verdict::Refused { id: 2 });
     let probes = [ssh_refused(), not_yet(), grep_refused()];
-    assert_eq!(verdict(&boxes, &probes), Verdict::Refused { id: 3 });
+    assert_eq!(
+        verdict(&boxes, &probes),
+        Verdict::Read,
+        "box 2 took the pattern and may still match: one box's refusal does not end the wait"
+    );
+}
+
+#[test]
+fn a_log_the_box_could_not_give_is_no_box_read() {
+    let one = [instance(1, "running", "running")];
+    for cut in [
+        "vas-grep-file:/r/run.log\nvas-grep-exit:124\n",
+        "vas-grep-file:/r/run.log\nvas-grep-exit:3\n",
+        "vas-grep-file:/r/run.log\n",
+    ] {
+        assert_eq!(verdict(&one, &[read(cut)]), Verdict::Unread, "{cut:?}");
+    }
 }
 
 #[test]

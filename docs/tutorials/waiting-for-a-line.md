@@ -42,11 +42,12 @@ vas --ssh --log '/root/src/askesis/reference/canvas/data/runs/*/run.log' --grep 
 
 - The pattern is an **extended regular expression** (`grep -E`), case-sensitive: `|` is "or", `+` is "one
   or more", `.` is any character (write `\.` for a dot).
-- The search covers the file's **last 64 MiB**, within 10 s on the box (`?` when it runs past them). Each
-  carriage-return segment of a progress bar is a line of its own, so a bar's `50%` state can be found, and
-  each line's first 4096 bytes are searched: a long line is shown from its head.
+- The search covers the file's **last 64 MiB**, within 10 s on the box (`?` when it runs past them, or when
+  the file cannot be read). Each carriage-return segment of a progress bar is a line of its own, so a bar's
+  `50%` state can be found; empty lines are left out; and each line's first 4096 bytes are searched: a long
+  line is shown from its head.
 - When no line matches, the cell says `(no line matches)`; when `grep` cannot read the pattern (`(` alone),
-  `(grep refused the pattern)`; when the line that matched is empty, `(a blank line)`.
+  `(grep refused the pattern)`; when the line that matched is made of spaces only, `(a blank line)`.
 - The pattern is quoted for the box's shell: nothing in it is expanded, so `$`, quotes and backquotes are
   characters to match, never commands. (The path is the opposite: the box's shell expands the glob, so quote
   it on your side.)
@@ -80,13 +81,13 @@ The rules, so a script can rely on them:
 | Exit code | When |
 |---|---|
 | `0` | a box's log has a matching line; `vas: --until: box ID matched: LINE` on stderr |
-| `3` | no box could be read for **2 looks in a row**: every probe failed, or none could be made |
-| `2` | at once, when a box's `grep` refuses the pattern (no look could match: `vas: --until: grep on box ID refused the pattern ...`); or a flag was refused (`--until` needs `--log` and `--watch`, and replaces `--grep`) |
+| `3` | no box could be read for **2 looks in a row**: every probe failed or gave no readable log (`?`), or none could be made |
+| `2` | at once, when a box's `grep` refuses the pattern and no other box was read (no look could match: `vas: --until: grep on box ID refused the pattern ...`); or a flag was refused (`--until` needs `--log` and `--watch`, and replaces `--grep`) |
 | `1` | the first look failed (a wrong key, say), or stdout was closed before a match (`vas ... \| head` is not a match); after a look has succeeded, a failed instances request is only said, and does not count |
 
-A box meant to run but not running yet (`loading`) keeps the wait going, for **10 looks in a row** at most: you
-can start the wait right after renting, and a box whose host went `offline` does not hold it forever (after the
-ten, its looks count as looks with nothing to read). A box read without a match yet keeps it going too, even
+A box meant to run but not running yet (`loading`) keeps the wait going, for **10 looks** at most, counted since
+a box was last read: you can start the wait right after renting, and a box whose host went `offline` does not
+hold it forever (after the ten, its looks count as looks with nothing to read). A box read without a match yet keeps it going too, even
 before its log file exists.
 
 ## 4. Wait for success or failure at once
