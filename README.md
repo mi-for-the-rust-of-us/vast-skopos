@@ -347,6 +347,7 @@ tells looks apart. `jq` does the rest, for example `vas --compact | jq -r 'selec
 | `--inet-up MBIT_S`, `--inet-down MBIT_S` | the lowest ADVERTISED bandwidth (the host's own test, not your route: see the dogfooding note) |
 | `--max-price DOLLARS`, `--min-days DAYS` | the highest `$/h` (storage included), the shortest acceptable maximum rental |
 | `--verified`, `--no-verified` | only machines vast.ai has verified; `--no-verified` cancels a config file's `--verified` |
+| `--exclude-deverified`, `--no-exclude-deverified` | leave out the machines vast.ai has DEVERIFIED (verified once, then found failing its checks) and keep the unverified ones (new, or under evaluation), which `--verified` hides too ([below](#verified-unverified-deverified)); the second flag cancels a config file's first |
 | `--exclude-country CC`, `--exclude-host ID`, `--exclude-machine ID` | leave out a country (two letters), a host or a machine (a host may own several; `vas --wide` shows yours); repeatable |
 | `--top N` (20), `--sort price\|reliability\|up` | how many rows, in which order |
 | `--watch SECONDS`, `--changes` | search again every N seconds (at least 20) until Ctrl+C, each look the whole table marked with what moved; `--changes` prints only what moved ([below](#watching-the-offers)) |
@@ -382,6 +383,18 @@ constraint is also **re-checked on each row**: a row whose field contradicts one
 counted in the footer); a row MISSING the field is kept, with a dash. The footer also names every
 constraint applied (a config file never acts unseen), the storage priced into `$/h` and the time of
 the search (UTC): the list is a snapshot of a market where offers vanish within minutes.
+
+<a id="verified-unverified-deverified"></a>
+
+**Verified, unverified, deverified.** vast.ai's documentation defines three stages: *verified* machines
+passed its automated checks (reliability, network, operational health, performance) and are monitored;
+*unverified* ones are new or under evaluation, "not a judgment of quality"; *deverified* ones were verified
+and no longer meet the requirements. None of the three checks speed or a power cap. `--verified` hides the
+last two; `--exclude-deverified` hides only the deverified, so a new machine that passes your own checks
+(`vas --ssh`'s `POWER`, a speed check) can still be rented. The search does not filter on the `verification`
+field it shows (probed 2026-10-25: `neq`, `in` and `notin` all came back with deverified rows), so `vas`
+sends `vericode <= 1` (0 is unverified, 1 verified, 2 and up deverified), and re-checks `verification` on
+each row as usual.
 
 #### Watching the offers
 

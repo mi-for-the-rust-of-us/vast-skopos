@@ -106,7 +106,7 @@ impl From<Sort> for OfferSort {
 /// given twice is the last one, a list (`--exclude-*`) keeps every entry.
 // EXPLICIT: these doc comments ARE the `--help` text, where backticks would print literally; and
 // the switches of a command line are booleans, one per flag (`--verified`, `--no-verified`,
-// `--changes`, `--no-config`), not a state to model.
+// `--exclude-deverified`, `--no-exclude-deverified`, `--changes`, `--no-config`), not a state to model.
 #[allow(clippy::doc_markdown, clippy::struct_excessive_bools)]
 #[derive(Debug, clap::Args)]
 #[command(args_override_self = true)]
@@ -144,6 +144,13 @@ struct OffersArgs {
     /// Cancels --verified (e.g. the config file's).
     #[arg(long, overrides_with = "verified")]
     no_verified: bool,
+    /// Leave out the machines vast.ai has deverified (verified once, then found failing its checks)
+    /// and keep the unverified ones (new, or under evaluation), which --verified hides as well.
+    #[arg(long, overrides_with = "no_exclude_deverified")]
+    exclude_deverified: bool,
+    /// Cancels --exclude-deverified (e.g. the config file's).
+    #[arg(long, overrides_with = "exclude_deverified")]
+    no_exclude_deverified: bool,
     /// Leave out this country (two letters, e.g. CN). Repeatable; added to the config file's.
     #[arg(long, value_name = "CC", value_parser = country)]
     exclude_country: Vec<String>,
@@ -193,6 +200,7 @@ impl OffersArgs {
         q.max_price = self.max_price;
         q.min_days = self.min_days;
         q.verified = self.verified;
+        q.exclude_deverified = self.exclude_deverified;
         q.exclude_countries.clone_from(&self.exclude_country);
         q.exclude_hosts.clone_from(&self.exclude_host);
         q.exclude_machines.clone_from(&self.exclude_machine);

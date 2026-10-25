@@ -26,6 +26,7 @@ fn every_constraint() -> OfferQuery {
     q.max_price = Some(0.8);
     q.min_days = Some(2.0);
     q.verified = true;
+    q.exclude_deverified = true;
     q.exclude_countries = vec!["CN".to_owned()];
     q.exclude_hosts = vec![362_355];
     q.exclude_machines = vec![142_875];
@@ -103,6 +104,33 @@ fn every_constraint_is_sent_in_the_servers_unit() {
     ] {
         assert_eq!(q[field], want, "{field}");
     }
+    assert!(
+        q.get("vericode").is_none(),
+        "`verified` already leaves the deverified out, and the server applies only one of the two"
+    );
+}
+
+#[test]
+fn excluding_the_deverified_keeps_the_unverified_and_is_sent_as_vericode() {
+    let mut q = OfferQuery::default();
+    q.exclude_deverified = true;
+    assert!(!q.is_identity());
+    let at = |verification: Option<&str>| {
+        let mut row = json!({"id": 1});
+        if let Some(v) = verification {
+            row["verification"] = v.into();
+        }
+        q.admits(&Offer::from_json(&row).unwrap())
+    };
+    assert!(!at(Some("deverified")));
+    assert!(at(Some("unverified")), "new machines stay");
+    assert!(at(Some("verified")));
+    assert!(at(None), "a missing field keeps the row");
+    assert_eq!(
+        q.to_search_json(OfferSort::Price)["vericode"],
+        json!({"lte": 1})
+    );
+    assert_eq!(q.summary(), "not deverified");
 }
 
 #[test]

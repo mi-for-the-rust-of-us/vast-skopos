@@ -194,8 +194,12 @@ pub struct OfferQuery {
     pub max_price: Option<f64>,
     /// The shortest acceptable maximum rental, in days.
     pub min_days: Option<f64>,
-    /// Only machines vast.ai has verified.
+    /// Only machines vast.ai has verified (which hides the unverified ones as well as the deverified).
     pub verified: bool,
+    /// Leave out the machines vast.ai has deverified (verified once, then found failing its checks)
+    /// and keep the unverified ones (new, or under evaluation: "not a judgment of quality", in vast.ai's
+    /// words), which [`OfferQuery::verified`] hides too.
+    pub exclude_deverified: bool,
     /// Country codes excluded (e.g. `CN`).
     pub exclude_countries: Vec<String>,
     /// Host ids excluded.
@@ -251,6 +255,7 @@ impl OfferQuery {
             && self.max_price.is_none()
             && self.min_days.is_none()
             && !self.verified
+            && !self.exclude_deverified
             && self.exclude_countries.is_empty()
             && self.exclude_hosts.is_empty()
             && self.exclude_machines.is_empty()
@@ -352,6 +357,13 @@ impl OfferQuery {
         if self.verified {
             q.insert("verified".into(), json!({"eq": true}));
         }
+        // The server does not filter on `verification` (probed 2026-10-25: `neq`, `in` and `notin` all
+        // came back with deverified rows); it does on `vericode`: 0 unverified, 1 verified, 2 and up
+        // deverified. Not sent beside `verified`, which already leaves the deverified out: given both,
+        // the server applied only one (an unverified row came back to `verified`).
+        if self.exclude_deverified && !self.verified {
+            q.insert("vericode".into(), json!({"lte": 1}));
+        }
         if !self.exclude_countries.is_empty() {
             q.insert("geolocation".into(), json!({"notin": self.countries()}));
         }
@@ -400,6 +412,8 @@ impl OfferQuery {
                 .verification
                 .as_deref()
                 .is_none_or(|v| v == "verified");
+        let deverified_ok =
+            !self.exclude_deverified || offer.verification.as_deref() != Some("deverified");
         let country_ok = offer.country().is_none_or(|c| {
             !self
                 .exclude_countries
@@ -423,6 +437,7 @@ impl OfferQuery {
             && at_least(offer.duration, min_secs)
             && price_ok
             && verified_ok
+            && deverified_ok
             && country_ok
             && host_ok
             && machine_ok
@@ -479,6 +494,9 @@ impl OfferQuery {
         }
         if self.verified {
             parts.push(String::from("verified"));
+        }
+        if self.exclude_deverified {
+            parts.push(String::from("not deverified"));
         }
         if !self.exclude_countries.is_empty() {
             parts.push(format!("not in {}", self.countries().join(" ")));

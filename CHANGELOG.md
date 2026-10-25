@@ -19,6 +19,14 @@ All notable changes to this project are documented here. The format is based on
   error object gains `error_kind` (`unreachable` or `failed`). `SkoposError::is_unreachable`,
   `render::failure_cell`.
 
+- `vas offers --exclude-deverified` (and `--no-exclude-deverified`, to cancel a config file's): leaves out
+  the machines vast.ai has deverified and keeps the unverified ones, which `--verified` hides too (note 9:
+  an unverified box ran at full power and as fast as the fastest measured, a verified one was capped at
+  475 W, a deverified one never started). The search ignores a filter on `verification` (probed
+  2026-10-25), so it is sent as `vericode <= 1`, and not beside `verified`, which already leaves the
+  deverified out (given both, the server applied only one). Footer: `not deverified`.
+  `OfferQuery::exclude_deverified`.
+
 ### Changed
 
 - The `LAST LOG / SSH ERROR` cell of a failed probe no longer repeats `failed to probe HOST:PORT over ssh`:

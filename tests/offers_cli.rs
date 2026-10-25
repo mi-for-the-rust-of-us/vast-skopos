@@ -396,6 +396,55 @@ fn xdg_wins_over_the_home_config_and_falls_back_when_absent() {
 }
 
 #[test]
+fn the_deverified_are_left_out_as_vericode_and_the_command_line_cancels_the_files() {
+    let (base, seen) = serve(bundles);
+    let (out, stdout, stderr) = vas(
+        &base,
+        &fresh_home("deverified"),
+        true,
+        &["offers", "--no-config", "--exclude-deverified"],
+    );
+    assert!(out.status.success(), "{stderr}");
+    let q = decode_q(&the_request(&seen).target);
+    assert_eq!(q["vericode"], serde_json::json!({"lte": 1}), "{q}");
+    assert!(q.get("verified").is_none(), "{q}");
+    assert!(stdout.contains("| not deverified |"), "{stdout}");
+    // With --verified, only `verified` is sent: it already leaves the deverified out.
+    let (base, seen) = serve(bundles);
+    let (out, _, stderr) = vas(
+        &base,
+        &fresh_home("deverified-verified"),
+        true,
+        &[
+            "offers",
+            "--no-config",
+            "--exclude-deverified",
+            "--verified",
+        ],
+    );
+    assert!(out.status.success(), "{stderr}");
+    let q = decode_q(&the_request(&seen).target);
+    assert_eq!(q["verified"], serde_json::json!({"eq": true}), "{q}");
+    assert!(q.get("vericode").is_none(), "{q}");
+    // The file's --exclude-deverified, cancelled on the command line.
+    let home = fresh_home("deverified-file");
+    write_config(
+        &home.join("xdg"),
+        "--exclude-deverified
+",
+    );
+    let (base, seen) = serve(bundles);
+    let (out, _, stderr) = vas(&base, &home, true, &["offers", "--no-exclude-deverified"]);
+    assert!(out.status.success(), "{stderr}");
+    assert!(
+        decode_q(&the_request(&seen).target)
+            .get("vericode")
+            .is_none(),
+        "--no-exclude-deverified cancels the file's"
+    );
+}
+
+#[test]
 fn excluded_hosts_accumulate_too() {
     let (base, seen) = serve(bundles);
     let home = fresh_home("hosts");
