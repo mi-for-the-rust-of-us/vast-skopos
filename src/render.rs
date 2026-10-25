@@ -539,7 +539,7 @@ pub enum OfferColumns {
     #[default]
     Plain,
     /// With what tells one machine from another (`vas offers --wide`): `MACHINE` after `HOST`, then
-    /// `CPU`, `DRIVER`, `DLPERF`, `DLPERF/$`, `PCIE GB/s` and `MAX W` after `VERIFICATION`. `WHERE`
+    /// `CPU`, `DRIVER`, `DLPERF`, `DLPERF/$`, `PCIE GB/s` and `LIMIT W` after `VERIFICATION`. `WHERE`
     /// stays last.
     Wide,
 }
@@ -564,7 +564,14 @@ fn offer_header(columns: OfferColumns) -> Vec<&'static str> {
     }
     header.push("VERIFICATION");
     if wide {
-        header.extend(["CPU", "DRIVER", "DLPERF", "DLPERF/$", "PCIE GB/s", "MAX W"]);
+        header.extend([
+            "CPU",
+            "DRIVER",
+            "DLPERF",
+            "DLPERF/$",
+            "PCIE GB/s",
+            "LIMIT W",
+        ]);
     }
     header.push("WHERE");
     header

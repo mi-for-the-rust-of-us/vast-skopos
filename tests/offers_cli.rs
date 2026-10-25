@@ -510,7 +510,14 @@ fn wide_shows_what_tells_two_machines_of_one_host_apart() {
     );
     assert!(out.status.success(), "{stderr}");
     let header = stdout.lines().next().unwrap();
-    for column in ["MACHINE", "CPU", "DRIVER", "DLPERF/$", "PCIE GB/s", "MAX W"] {
+    for column in [
+        "MACHINE",
+        "CPU",
+        "DRIVER",
+        "DLPERF/$",
+        "PCIE GB/s",
+        "LIMIT W",
+    ] {
         assert!(header.contains(column), "{column}: {stdout}");
     }
     let rows: Vec<String> = stdout

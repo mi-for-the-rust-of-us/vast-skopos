@@ -355,7 +355,7 @@ tells looks apart. `jq` does the rest, for example `vas --compact | jq -r 'selec
 | `--host ID`, `--machine ID` | only this host or this machine: what a host rented from before offers now, or whether the machine you had is for rent again (`vas --wide` shows your boxes' ids); repeatable, and an `--exclude-*` of the same id still leaves it out |
 | `--exclude-country CC`, `--exclude-host ID`, `--exclude-machine ID` | leave out a country (two letters), a host or a machine (a host may own several; `vas --wide` shows yours); repeatable |
 | `--top N` (20), `--sort price\|reliability\|up` | how many rows, in which order |
-| `--wide` | also show what tells one machine from another: `MACHINE` after `HOST`, then `CPU`, `DRIVER`, `DLPERF` (vast.ai's benchmark score), `DLPERF/$` (per `$/h` shown, storage included), `PCIE GB/s` and `MAX W` (the card's maximum power, NOT the limit a host sets: only `vas --ssh`'s `POWER` reads that) ([below](#is-this-the-machine-we-had)) |
+| `--wide` | also show what tells one machine from another: `MACHINE` after `HOST`, then `CPU`, `DRIVER`, `DLPERF` (vast.ai's benchmark score), `DLPERF/$` (per `$/h` shown, storage included), `PCIE GB/s` and `LIMIT W` (the GPU power limit the listing gives: a listed figure, not a reading of the card, which `vas --ssh`'s `POWER` is) ([below](#is-this-the-machine-we-had)) |
 | `--watch SECONDS`, `--changes` | search again every N seconds (at least 20) until Ctrl+C, each look the whole table marked with what moved; `--changes` prints only what moved ([below](#watching-the-offers)) |
 | `--config FILE`, `--no-config` | read the flags of `FILE` first, or of no file |
 
@@ -397,7 +397,9 @@ machine. `vas offers --wide` adds what tells them apart (the machine id, the CPU
 `vas --wide` shows the same for a rented box, so the two can be set side by side; `--host ID` or
 `--machine ID` narrows a search to one of them. DLPerf is shown as a number and nothing more: on
 2026-10-25 two South Korean RTX 5090s read DLPerf 199.2, the same as an uncapped card, and were both capped
-by their host at 500 of 600 W. Only the card's own reading (`vas --ssh`, `POWER`) shows a cap.
+by their host at 500 of 600 W. `LIMIT W` may say more: the same day, another machine of that host listed
+500 W, and RTX 5090 offers listed anything from 400 to 575 W. One host is not a rule; the card's own
+reading (`vas --ssh`, `POWER`) is the one that says what the run gets.
 
 <a id="verified-unverified-deverified"></a>
 

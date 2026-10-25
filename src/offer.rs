@@ -74,8 +74,11 @@ pub struct Offer {
     pub dlperf: Option<f64>,
     /// The bandwidth between the host and the GPU that vast.ai measured, in GB/s.
     pub pcie_bw: Option<f64>,
-    /// The most power the GPU can be given, in watts: the card's maximum, not the limit a host sets
-    /// (which only the card tells: `vas --ssh`, `POWER`).
+    /// The GPU's power limit as the listing gives it, in watts (`gpu_max_power`, which the official CLI
+    /// calls "GPU power limit (watts)"). It comes from the listing, not from the card: on 2026-10-25 a
+    /// machine of host 406325 listed 500 W, the cap `vas --ssh` read on two other machines of that
+    /// host, and RTX 5090 offers listed 400 to 575 W. Whether it always shows the enforced limit is not
+    /// known; the card's own reading is `vas --ssh`'s `POWER`.
     pub gpu_max_power: Option<f64>,
     /// Whether the offer can be rented.
     pub rentable: Option<bool>,

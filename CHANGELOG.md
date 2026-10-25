@@ -33,8 +33,9 @@ All notable changes to this project are documented here. The format is based on
   server applies both), re-checked on each row, named in the footer (`hosts ...`, `machines ...`).
   `OfferQuery::only_hosts`, `OfferQuery::only_machines`.
 - `vas offers --wide`: what tells one machine from another, `MACHINE` after `HOST`, then `CPU`, `DRIVER`,
-  `DLPERF`, `DLPERF/$` (computed against the `$/H` shown, storage included), `PCIE GB/s` and `MAX W` (the
-  card's maximum, not the limit a host sets), with `WHERE` still last (and `SEEN` before it in a watch).
+  `DLPERF`, `DLPERF/$` (computed against the `$/H` shown, storage included), `PCIE GB/s` and `LIMIT W` (the
+  GPU power limit the listing gives; on 2026-10-25 it matched, on one host, the cap `vas --ssh` read on the
+  card), with `WHERE` still last (and `SEEN` before it in a watch).
   `vas --wide` gains `CPU`, `DRIVER`, `DLPERF` and `PCIE GB/s` after `MACHINE` and `HOST`, so a rented box and
   an offer can be set side by side (note 7). DLPerf is a plain number: it did not show two hosts' 500 W caps
   (note 8's counterexample). `--compact` carries `cpu_name`, `driver_version`, `dlperf` and `pcie_bw` on

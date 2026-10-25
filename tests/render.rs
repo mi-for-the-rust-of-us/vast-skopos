@@ -928,7 +928,7 @@ fn the_wide_offers_table_tells_machines_apart_and_keeps_where_last() {
             "DLPERF",
             "DLPERF/$",
             "PCIE GB/s",
-            "MAX W",
+            "LIMIT W",
             "WHERE"
         ],
         "{text}"
@@ -963,7 +963,7 @@ fn the_wide_offers_table_tells_machines_apart_and_keeps_where_last() {
     let columns = header_columns(&marked);
     assert_eq!(
         &columns[columns.len() - 3..],
-        ["MAX W", "SEEN", "WHERE"],
+        ["LIMIT W", "SEEN", "WHERE"],
         "{marked}"
     );
 }

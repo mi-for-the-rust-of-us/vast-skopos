@@ -199,8 +199,8 @@ struct OffersArgs {
     #[arg(long, requires = "watch")]
     changes: bool,
     /// Also show what tells one machine from another: MACHINE (after HOST), then CPU, DRIVER, DLPERF
-    /// (vast.ai's benchmark score), DLPERF/$ (per $/h shown), PCIE GB/s and MAX W (the card's maximum
-    /// power, not the limit a host sets: vas --ssh's POWER reads that).
+    /// (vast.ai's benchmark score), DLPERF/$ (per $/h shown), PCIE GB/s and LIMIT W (the GPU power
+    /// limit the listing gives, not a reading of the card: vas --ssh's POWER reads that).
     #[arg(long)]
     wide: bool,
     /// Show at most N offers.
