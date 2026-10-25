@@ -134,16 +134,69 @@ pub enum LogReading {
         /// The file's path on the box, control characters dropped (see `strip`).
         file: String,
     },
-    /// The newest matching file's last non-blank line.
+    /// The newest matching file's last non-blank line; with [`LogQuery::grep`], its last line
+    /// matching the pattern.
     Line {
         /// The file's path on the box, control characters dropped (see `strip`).
         file: String,
-        /// Its last non-blank line, cleaned (see `clean`).
+        /// Its last non-blank (or last matching) line, cleaned (see `clean`).
         line: String,
+    },
+    /// With [`LogQuery::grep`]: no line of the newest matching file matches the pattern (in the part
+    /// searched, its last 64 MiB).
+    NoMatchingLine {
+        /// The file's path on the box, control characters dropped (see `strip`).
+        file: String,
+    },
+    /// With [`LogQuery::grep`]: the box's `grep` refused the pattern (not an extended regular
+    /// expression it knows: `(` alone, say).
+    PatternRefused {
+        /// The file's path on the box, control characters dropped (see `strip`).
+        file: String,
     },
     /// The output after the separator carried none of the remote command's markers (the session
     /// dropped mid-way, say): the probe cannot tell what the box holds.
     Unreadable,
+}
+
+/// What `--log` asks of each box: the newest file matching [`LogQuery::path`], and in it the last
+/// non-blank line or, with [`LogQuery::grep`], the last line matching a pattern.
+///
+/// ```
+/// use vast_skopos::probe::LogQuery;
+/// let q = LogQuery::new("/root/runs/*/train.log").grep("initial loss|Traceback");
+/// assert_eq!((q.path.as_str(), q.grep.as_deref()), ("/root/runs/*/train.log", Some("initial loss|Traceback")));
+/// assert_eq!(LogQuery::new("/r/a.log").grep, None);
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct LogQuery {
+    /// A path or a shell glob, expanded by the box's shell: the user's own pattern, sent to the
+    /// user's own box, and left unquoted on purpose.
+    pub path: String,
+    /// A POSIX extended regular expression (`grep -E`, case-sensitive), quoted for the box's shell
+    /// and so never expanded: the last line matching it is shown instead of the last line, searched
+    /// in the file's last 64 MiB, each carriage-return segment (a progress bar's state) a line of
+    /// its own. `None`: the last non-blank line.
+    pub grep: Option<String>,
+}
+
+impl LogQuery {
+    /// The newest file matching `path`, and its last non-blank line.
+    #[must_use]
+    pub fn new(path: impl Into<String>) -> Self {
+        Self {
+            path: path.into(),
+            grep: None,
+        }
+    }
+
+    /// The last line matching `pattern` instead of the last line (see [`LogQuery::grep`]).
+    #[must_use]
+    pub fn grep(mut self, pattern: impl Into<String>) -> Self {
+        self.grep = Some(pattern.into());
+        self
+    }
 }
 
 /// What one probe found.
@@ -203,6 +256,19 @@ const NOT_A_FILE: &str = "vas-not-a-file:";
 /// The line saying that no file matched, after [`SEPARATOR`].
 const NO_FILE: &str = "vas-no-file";
 
+/// The prefix of the line naming the newest matching file when a pattern is searched in it
+/// ([`LogQuery::grep`]): the lines after it are the last match, if any, and [`GREP_EXIT`].
+const GREP_FILE_MARK: &str = "vas-grep-file:";
+
+/// The prefix of the last line of a search: `grep`'s own exit status (0 a line matched, 1 none
+/// did, 2 the pattern was refused), printed by the box's shell AFTER the match, so no line of the
+/// log can stand in for it.
+const GREP_EXIT: &str = "vas-grep-exit:";
+
+/// The bytes searched at the end of the file by [`LogQuery::grep`]: 64 MiB, read in well under a
+/// second, so a log of gigabytes cannot run past the probe's deadline (an older match is not seen).
+const GREP_BYTES: usize = 64 * 1024 * 1024;
+
 /// The lines read from the end of the file: the last non-blank one among them is shown.
 const TAIL_LINES: usize = 20;
 
@@ -243,24 +309,36 @@ pub fn parse_nvidia_smi(csv: &str) -> Vec<GpuReading> {
         .collect()
 }
 
+/// `text` as one word of a POSIX shell, quoted so that nothing in it is expanded: `'...'`, each `'`
+/// written `'\''`.
+fn shell_quoted(text: &str) -> String {
+    format!("'{}'", text.replace('\'', r"'\''"))
+}
+
 /// The command run on the box.
 ///
-/// `nvidia-smi`'s query, then, with `log`, the separator and the NEWEST match of `log` (a path or
-/// a shell glob, expanded on the box): a `vas-file:` line and the file's last lines (at most 20,
+/// `nvidia-smi`'s query, then, with `log`, the separator and the NEWEST match of its path (a path
+/// or a shell glob, expanded on the box): a `vas-file:` line and the file's last lines (at most 20,
 /// capped at 4096 bytes), a `vas-not-a-file:` line when the match is not a regular file, or a
-/// `vas-no-file` line when nothing matched.
+/// `vas-no-file` line when nothing matched. With [`LogQuery::grep`], a `vas-grep-file:` line, the last
+/// line of the file's last 64 MiB that matches (`grep -a -E`, each carriage-return segment a line),
+/// and `vas-grep-exit:` with `grep`'s status.
 ///
 /// ```
-/// use vast_skopos::probe::remote_command;
+/// use vast_skopos::probe::{LogQuery, remote_command};
 /// assert!(remote_command(None).starts_with("timeout 20 nvidia-smi --query-gpu="));
-/// let cmd = remote_command(Some("/root/run/*.log"));
+/// let cmd = remote_command(Some(&LogQuery::new("/root/run/*.log")));
 /// assert!(cmd.contains("ls -dt -- /root/run/*.log"));
 /// assert!(cmd.contains("printf 'vas-file:%s\\n' \"$f\""));
 /// assert!(cmd.contains("tail -c 4096 -- \"$f\" | tail -n 20"));
 /// assert!(cmd.contains("printf 'vas-not-a-file:%s\\n' \"$f\"") && cmd.contains("echo 'vas-no-file'"));
+/// // The pattern is quoted: the box's shell expands nothing in it.
+/// let cmd = remote_command(Some(&LogQuery::new("/r/*.log").grep("it's $HOME")));
+/// assert!(cmd.contains("grep -a -E -e 'it'\\''s $HOME'"));
+/// assert!(cmd.contains("echo \"vas-grep-exit:$?\""));
 /// ```
 #[must_use]
-pub fn remote_command(log: Option<&str>) -> String {
+pub fn remote_command(log: Option<&LogQuery>) -> String {
     // `timeout` on the box guards `nvidia-smi` and `tail`; the glob's expansion and `ls` are bounded
     // only by the local deadline ([`PROBE_TIMEOUT`]), which kills `ssh`.
     let smi = format!(
@@ -279,10 +357,36 @@ pub fn remote_command(log: Option<&str>) -> String {
          --format=csv,noheader,nounits 2>/dev/null && echo '{APPS_OK}'"
     );
     // The glob is left unquoted on purpose so the box's shell expands it: the pattern is the
-    // user's own, sent to the user's own box. Everything else interpolated here is a constant.
+    // user's own, sent to the user's own box. The `grep` pattern is the other value of the user's
+    // interpolated here, and it is quoted ([`shell_quoted`]): nothing in it is expanded. Everything
+    // else is a constant.
     log.map_or_else(
         || smi.clone(),
-        |pattern| {
+        |query| {
+            let pattern = &query.path;
+            // The last line, or the last line matching. `tr` makes each carriage-return segment a
+            // line (a progress bar's matching state is found); `-a` keeps one NUL byte from turning
+            // the answer into "Binary file matches"; `-e` keeps a pattern starting with `-` a
+            // pattern; `$?` after the pipeline is `grep`'s own status; the last two lines (the match
+            // and the status) are kept, cut to their last bytes, so a matching line of megabytes
+            // cannot fill the pipe.
+            let read = query.grep.as_deref().map_or_else(
+                || {
+                    format!(
+                        "printf '{FILE_MARK}%s\\n' \"$f\"; \
+                         timeout 5 tail -c {TAIL_BYTES} -- \"$f\" | tail -n {TAIL_LINES}"
+                    )
+                },
+                |grep| {
+                    let grep = shell_quoted(grep);
+                    let kept = TAIL_BYTES + 128;
+                    format!(
+                        "printf '{GREP_FILE_MARK}%s\\n' \"$f\"; \
+                         {{ timeout 5 tail -c {GREP_BYTES} -- \"$f\" | tr '\\r' '\\n' | grep -a -E -e {grep}; \
+                         echo \"{GREP_EXIT}$?\"; }} | tail -n 2 | tail -c {kept}"
+                    )
+                },
+            );
             // The match is named on its own line before the file's last lines, so the table can
             // say which run wrote it, and "nothing matched", "not a file" and "empty" stay apart.
             // `ls -d` lists a matched directory itself (not its contents); `--` keeps a match
@@ -291,8 +395,7 @@ pub fn remote_command(log: Option<&str>) -> String {
             format!(
                 "{smi}; echo '{SEPARATOR}'; f=$(ls -dt -- {pattern} 2>/dev/null | head -n 1); \
                  if [ -z \"$f\" ]; then echo '{NO_FILE}'; \
-                 elif [ -f \"$f\" ]; then printf '{FILE_MARK}%s\\n' \"$f\"; \
-                 timeout 5 tail -c {TAIL_BYTES} -- \"$f\" | tail -n {TAIL_LINES}; \
+                 elif [ -f \"$f\" ]; then {read}; \
                  else printf '{NOT_A_FILE}%s\\n' \"$f\"; fi"
             )
         },
@@ -488,10 +591,12 @@ fn merge_power(gpus: &mut [GpuReading], power: &str) {
 
 /// Reads the log half of the remote output, what follows the `---vas-log---` separator.
 ///
-/// Its first non-blank line decides: `vas-no-file`, `vas-not-a-file:<path>`, or
-/// `vas-file:<path>` followed by the file's last lines, of which the last non-blank one is shown.
-/// Anything else is [`LogReading::Unreadable`]. A log line cannot forge a state: only the line
-/// right after the separator is read as a marker.
+/// Its first non-blank line decides: `vas-no-file`, `vas-not-a-file:<path>`,
+/// `vas-file:<path>` followed by the file's last lines, of which the last non-blank one is shown, or
+/// `vas-grep-file:<path>` followed by the last match and `vas-grep-exit:<grep's status>` (0: the
+/// line, 1: [`LogReading::NoMatchingLine`], 2: [`LogReading::PatternRefused`]). Anything else is
+/// [`LogReading::Unreadable`]. A log line cannot forge a state: only the line right after the
+/// separator is read as a marker, and the status of a search is its LAST line.
 ///
 /// ```
 /// use vast_skopos::probe::{parse_log, LogReading};
@@ -509,6 +614,16 @@ fn merge_power(gpus: &mut [GpuReading], power: &str) {
 /// let long = format!("/{}/run/train.log", "d".repeat(150));
 /// assert_eq!(parse_log(&format!("\nvas-file:{long}\nx\n")),
 ///     LogReading::Line { file: long, line: "x".to_owned() });
+/// // A search: the match, then grep's status; a forged status line is only a match.
+/// let found = "\nvas-grep-file:/r/a.log\nvas-grep-exit:1\nvas-grep-exit:0\n";
+/// assert_eq!(parse_log(found),
+///     LogReading::Line { file: "/r/a.log".to_owned(), line: "vas-grep-exit:1".to_owned() });
+/// assert_eq!(parse_log("\nvas-grep-file:/r/a.log\nvas-grep-exit:1\n"),
+///     LogReading::NoMatchingLine { file: "/r/a.log".to_owned() });
+/// assert_eq!(parse_log("\nvas-grep-file:/r/a.log\nvas-grep-exit:2\n"),
+///     LogReading::PatternRefused { file: "/r/a.log".to_owned() });
+/// assert_eq!(parse_log("\nvas-grep-file:/r/a.log\ninitial loss 4.2\n"), LogReading::Unreadable,
+///     "no status: the answer was cut short");
 /// assert_eq!(parse_log(""), LogReading::Unreadable);
 /// assert_eq!(parse_log("\nconnection reset\n"), LogReading::Unreadable);
 /// ```
@@ -525,6 +640,9 @@ pub fn parse_log(text: &str) -> LogReading {
     if let Some(path) = first.strip_prefix(NOT_A_FILE) {
         return LogReading::NotAFile { file: strip(path) };
     }
+    if let Some(path) = first.strip_prefix(GREP_FILE_MARK) {
+        return parse_grep(strip(path), lines);
+    }
     let Some(path) = first.strip_prefix(FILE_MARK) else {
         return LogReading::Unreadable;
     };
@@ -533,6 +651,30 @@ pub fn parse_log(text: &str) -> LogReading {
     match lines.map(clean).filter(|l| !l.is_empty()).last() {
         Some(line) => LogReading::Line { file, line },
         None => LogReading::Empty { file },
+    }
+}
+
+/// Reads what follows a `vas-grep-file:` line: the last non-blank line must be `vas-grep-exit:N`,
+/// printed by the box's shell after `grep` was done (a log line cannot stand in for it, since it
+/// always comes last); with a status of 0, the line before it is the match.
+fn parse_grep<'a>(file: String, lines: impl Iterator<Item = &'a str>) -> LogReading {
+    let kept: Vec<&str> = lines.filter(|l| !l.trim().is_empty()).collect();
+    let mut from_end = kept.iter().rev();
+    let status = from_end
+        .next()
+        .and_then(|l| l.trim().strip_prefix(GREP_EXIT))
+        .and_then(|code| code.parse::<u8>().ok());
+    match status {
+        Some(0) => from_end
+            .next()
+            .map_or(LogReading::Unreadable, |line| LogReading::Line {
+                file,
+                line: clean(line),
+            }),
+        Some(1) => LogReading::NoMatchingLine { file },
+        Some(2) => LogReading::PatternRefused { file },
+        // No status line (the session dropped), or one `grep` never gives.
+        _ => LogReading::Unreadable,
     }
 }
 
@@ -597,7 +739,12 @@ fn collect(rx: &mpsc::Receiver<Vec<u8>>, deadline: Instant) -> String {
 /// ```
 #[doc(hidden)]
 #[must_use]
-pub fn ssh_command(host: &str, port: u16, identity: Option<&Path>, log: Option<&str>) -> Command {
+pub fn ssh_command(
+    host: &str,
+    port: u16,
+    identity: Option<&Path>,
+    log: Option<&LogQuery>,
+) -> Command {
     let mut cmd = Command::new("ssh");
     cmd.args(["-p", &port.to_string()]);
     cmd.args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]);
@@ -642,7 +789,7 @@ fn reap(child: &mut Child) {
 pub fn probe_all(
     instances: &[Instance],
     identity: Option<&Path>,
-    log: Option<&str>,
+    log: Option<&LogQuery>,
 ) -> Vec<ProbeOutcome> {
     std::thread::scope(|scope| {
         // EXPLICIT: collected so every probe is SPAWNED before any is joined; a lazy chain would
@@ -691,7 +838,7 @@ pub fn ssh_probe(
     host: &str,
     port: u16,
     identity: Option<&Path>,
-    log: Option<&str>,
+    log: Option<&LogQuery>,
 ) -> Result<Probe> {
     let target = format!("{host}:{port}");
     // Defence in depth: the target is passed as `root@host` after `--`, so a host starting with `-`

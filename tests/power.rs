@@ -12,7 +12,7 @@
 
 use vast_skopos::compact::json_lines;
 use vast_skopos::instance::Instance;
-use vast_skopos::probe::{ProbeOutcome, parse_output, remote_command};
+use vast_skopos::probe::{LogQuery, ProbeOutcome, parse_output, remote_command};
 use vast_skopos::render::{TableOptions, table};
 
 /// What the remote command printed on that box.
@@ -163,7 +163,7 @@ fn the_power_section_and_the_log_section_both_read() {
 
 #[test]
 fn the_remote_command_asks_the_power_apart_so_an_old_driver_costs_only_that() {
-    let command = remote_command(Some("/r/*.log"));
+    let command = remote_command(Some(&LogQuery::new("/r/*.log")));
     let main = command.find("utilization.gpu").unwrap();
     let power = command.find("power.draw").unwrap();
     let log = command.find("---vas-log---").unwrap();

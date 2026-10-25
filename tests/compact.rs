@@ -152,7 +152,7 @@ fn a_box_with_everything_and_a_box_with_nothing_have_the_same_keys() {
 
 #[test]
 fn a_failed_probe_and_every_log_state_are_objects() {
-    let rows: Vec<Instance> = (1..=6)
+    let rows: Vec<Instance> = (1..=8)
         .map(|id| instance(&json!({"id": id, "actual_status": "running"})))
         .collect();
     let log = |tail: &str| {
@@ -170,11 +170,13 @@ fn a_failed_probe_and_every_log_state_are_objects() {
         log("vas-file:/root/runs/s1/train.log\n"),
         log("vas-file:/root/runs/s1/train.log\nlast\n"),
         log("garbage\n"),
+        log("vas-grep-file:/root/runs/s1/train.log\nvas-grep-exit:1\n"),
+        log("vas-grep-file:/root/runs/s1/train.log\nvas-grep-exit:2\n"),
     ];
     let text = json_lines(&rows, &probes, None, None, 0.0);
     assert_eq!(
         text.lines().count(),
-        7,
+        9,
         "one line per object, whatever the text holds"
     );
     let lines = objects(&text);
@@ -191,15 +193,25 @@ fn a_failed_probe_and_every_log_state_are_objects() {
         lines[0]["probe"].get("gpus").is_none(),
         "an error has no readings"
     );
-    let states: Vec<&str> = lines[1..6]
+    let states: Vec<&str> = lines[1..8]
         .iter()
         .map(|l| l["probe"]["log"]["state"].as_str().unwrap())
         .collect();
     assert_eq!(
         states,
-        ["no_match", "not_a_file", "empty", "line", "unreadable"]
+        [
+            "no_match",
+            "not_a_file",
+            "empty",
+            "line",
+            "unreadable",
+            "no_matching_line",
+            "pattern_refused"
+        ]
     );
     assert_eq!(lines[2]["probe"]["log"]["file"], "/root/runs/s1");
+    assert_eq!(lines[6]["probe"]["log"]["file"], "/root/runs/s1/train.log");
+    assert_eq!(lines[7]["probe"]["log"]["file"], "/root/runs/s1/train.log");
 }
 
 #[test]

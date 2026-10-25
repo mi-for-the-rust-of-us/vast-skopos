@@ -63,7 +63,7 @@ need your key, your boxes or the network):
 ```rust,no_run
 use vast_skopos::api::Client;
 use vast_skopos::key::ApiKey;
-use vast_skopos::probe::probe_all;
+use vast_skopos::probe::{LogQuery, probe_all};
 use vast_skopos::render::{TableOptions, table};
 
 fn main() -> vast_skopos::Result<()> {
@@ -72,7 +72,7 @@ fn main() -> vast_skopos::Result<()> {
     let instances = client.instances()?;
     let account = client.account().ok();
     // One `ssh` attempt per running box, all at once: what the GPUs do, and the newest log's last line.
-    let probes = probe_all(&instances, None, Some("/root/runs/*/train.log"));
+    let probes = probe_all(&instances, None, Some(&LogQuery::new("/root/runs/*/train.log")));
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0.0, |d| d.as_secs_f64());
@@ -87,7 +87,7 @@ Or the readings one by one, over your own `ssh` (one attempt, never retried):
 ```rust,no_run
 use vast_skopos::api::Client;
 use vast_skopos::key::ApiKey;
-use vast_skopos::probe::ssh_probe;
+use vast_skopos::probe::{LogQuery, ssh_probe};
 
 fn main() -> vast_skopos::Result<()> {
     let client = Client::new(ApiKey::discover()?);
@@ -96,7 +96,7 @@ fn main() -> vast_skopos::Result<()> {
         println!("{} {:?} at {:?} $/h", i.id, i.gpu_name, i.dph_total);
         if let Some((host, port)) = i.ssh_endpoint() {
             // The GPU as the box itself reads it, not as the dashboard does.
-            let probe = ssh_probe(host, port, None, Some("/root/runs/*/train.log"))?;
+            let probe = ssh_probe(host, port, None, Some(&LogQuery::new("/root/runs/*/train.log")))?;
             for g in &probe.gpus {
                 println!("  GPU {}: {} %, {} MiB used", g.index, g.util_pct, g.mem_used_mib);
             }
@@ -174,6 +174,7 @@ ID        GPU          VRAM  $/H    CUDA  DISK   UP/DOWN Mb/s  REL %  MAX DAYS  
 | `vas` | the table and the money line |
 | `vas --ssh` | also probe every running box over `ssh`, once each, in parallel |
 | `vas --ssh --log PATH_OR_GLOB` | also print, for the newest match of the pattern on each box, its last two path components and its last non-blank line (`s0/train.log: ...`, so a glob whose varying part is among the last two components says which run wrote it); `(empty)` when the file has no line to show, `(not a file)` when the newest match is a directory, `(no file matches)` when nothing matched, `?` when the box's answer was cut short. The pattern is expanded by the box's shell, so quote it locally (and quote a part with spaces again inside, `'"/root/my runs"/*/train.log'`); the line is shown without control characters, at most 120 characters, the path at most 60 |
+| `vas --ssh --log PATH_OR_GLOB --grep PATTERN` | the last line MATCHING `PATTERN` (an extended regular expression, `grep -E`, case-sensitive) instead of the last line: `--grep 'initial loss\|Traceback'` catches a line printed once and buried by the lines after it. Searched in the file's last 64 MiB, each carriage-return segment of a progress bar a line of its own; `(no line matches)` when none does, `(grep refused the pattern)` when `grep` cannot read it. The pattern is quoted for the box's shell: nothing in it is expanded |
 | `vas --ssh -i ~/.ssh/id_ed25519` | use this private key (default: `ssh`'s own choice, agent and `~/.ssh/config`) |
 | `vas --wide` | also show each box's machine id and host id (what a rentals log, `--exclude-machine` and `--exclude-host` need), then its CPU, driver, DLPerf and PCIe bandwidth (`CPU`, `DRIVER`, `DLPERF`, `PCIE GB/s`: what tells it from another machine of its host, as `vas offers --wide` shows them) |
 | `vas --compact` | JSON Lines instead of the table, for scripts and monitors ([below](#vas---compact-json-lines)); not with `--wide` |
@@ -328,7 +329,8 @@ else `gpus` (per GPU: `util_pct`, `mem_used_mib`, `mem_total_mib`, `other_mem_mi
 `power_limit_w`, `power_default_w`, `sm_mhz`, `sm_max_mhz` and `throttle`, each `null` when the box did not
 say), `log`, `util_trend` and `clock_trend` (`null` in a one-shot, else the last GPU samples of a `--watch`,
 see above); `log` is `null` without `--log`, else an object whose `state` is `line`, `empty`,
-`not_a_file`, `no_match` or `unreadable`. `status_msg` is vast.ai's own message on the box, as the API
+`not_a_file`, `no_match` or `unreadable`, and under `--grep` also `no_matching_line` or `pattern_refused`
+(each with its `file`). `status_msg` is vast.ai's own message on the box, as the API
 gives it whatever the status (`null` when it gives none); `cpu_name`, `driver_version`, `dlperf` and
 `pcie_bw` are always there, like the ids (what `--wide` shows). `unsure` counts, by state, the boxes meant to run that read
 otherwise (the burn, above). With `--ssh --watch N`, a change of a GPU's power limit or throttle reasons is an

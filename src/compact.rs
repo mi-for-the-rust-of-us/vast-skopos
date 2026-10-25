@@ -42,6 +42,12 @@ fn log_json(log: Option<&LogReading>) -> Value {
         Some(LogReading::Line { file, line }) => {
             json!({"state": "line", "file": file, "line": line})
         }
+        Some(LogReading::NoMatchingLine { file }) => {
+            json!({"state": "no_matching_line", "file": file})
+        }
+        Some(LogReading::PatternRefused { file }) => {
+            json!({"state": "pattern_refused", "file": file})
+        }
         Some(LogReading::Unreadable) => json!({"state": "unreadable"}),
     }
 }

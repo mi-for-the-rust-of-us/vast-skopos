@@ -15,7 +15,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use vast_skopos::probe::{LogReading, parse_output, remote_command};
+use vast_skopos::probe::{LogQuery, LogReading, parse_output, remote_command};
 
 /// A fresh scratch directory under the system temp dir, one per test.
 fn scratch(name: &str) -> PathBuf {
@@ -29,7 +29,7 @@ fn scratch(name: &str) -> PathBuf {
 fn run_in(cwd: &Path, pattern: &str) -> LogReading {
     let out = Command::new("sh")
         .arg("-c")
-        .arg(remote_command(Some(pattern)))
+        .arg(remote_command(Some(&LogQuery::new(pattern))))
         .current_dir(cwd)
         .output()
         .unwrap();
@@ -278,4 +278,165 @@ fn a_driver_that_knows_the_reasons_by_either_name_or_by_neither_still_gives_the_
         assert_eq!(g.other_user_mib(), Some(16_089), "{mode}");
         let _ = fs::remove_dir_all(&bin);
     }
+}
+
+/// What the remote command reports for `path` searched for `pattern` (`--grep`), run by `sh` in `cwd`.
+fn grep_in(cwd: &Path, path: &str, pattern: &str) -> LogReading {
+    let query = LogQuery::new(path).grep(pattern);
+    let out = Command::new("sh")
+        .arg("-c")
+        .arg(remote_command(Some(&query)))
+        .current_dir(cwd)
+        .output()
+        .unwrap();
+    parse_output(&String::from_utf8_lossy(&out.stdout))
+        .log
+        .expect("the separator is always printed")
+}
+
+#[test]
+fn grep_finds_the_last_matching_line_not_the_last_line() {
+    let d = scratch("grep-last");
+    let root = d.display().to_string();
+    let file = format!("{root}/train.log");
+    fs::write(
+        &file,
+        "initial loss 9.99\nstep 1\ninitial loss 4.21\neval 1\neval 2\n",
+    )
+    .unwrap();
+    assert_eq!(
+        grep_in(&d, &format!("{root}/*.log"), "initial loss"),
+        line(&file, "initial loss 4.21")
+    );
+    // An alternation: wait for success OR failure in one pattern.
+    fs::write(
+        &file,
+        "initial loss 4.21\nTraceback (most recent call last):\n  x\n",
+    )
+    .unwrap();
+    assert_eq!(
+        grep_in(&d, &format!("{root}/*.log"), "initial loss|Traceback"),
+        line(&file, "Traceback (most recent call last):")
+    );
+    let _ = fs::remove_dir_all(&d);
+}
+
+#[test]
+fn grep_reads_each_carriage_return_segment_as_a_line() {
+    let d = scratch("grep-bar");
+    let root = d.display().to_string();
+    let file = format!("{root}/train.log");
+    fs::write(&file, "10%|#\r50%|## eta 3m\r100%|### done\nnext\n").unwrap();
+    assert_eq!(
+        grep_in(&d, &format!("{root}/*.log"), "50%"),
+        line(&file, "50%|## eta 3m")
+    );
+    let _ = fs::remove_dir_all(&d);
+}
+
+#[test]
+fn grep_says_when_no_line_matches_and_when_it_refuses_the_pattern() {
+    let d = scratch("grep-none");
+    let root = d.display().to_string();
+    let file = format!("{root}/train.log");
+    fs::write(&file, "step 1\nstep 2\n").unwrap();
+    assert_eq!(
+        grep_in(&d, &format!("{root}/*.log"), "initial loss"),
+        LogReading::NoMatchingLine { file: file.clone() }
+    );
+    assert_eq!(
+        grep_in(&d, &format!("{root}/*.log"), "("),
+        LogReading::PatternRefused { file: file.clone() }
+    );
+    // An empty file has no line to match.
+    fs::write(&file, "").unwrap();
+    assert_eq!(
+        grep_in(&d, &format!("{root}/*.log"), "step"),
+        LogReading::NoMatchingLine { file }
+    );
+    // And nothing matched by the path is said as before.
+    assert_eq!(
+        grep_in(&d, &format!("{root}/*.txt"), "step"),
+        LogReading::NoMatch
+    );
+    let _ = fs::remove_dir_all(&d);
+}
+
+#[test]
+fn a_nul_byte_does_not_turn_the_answer_into_binary_file_matches() {
+    let d = scratch("grep-nul");
+    let root = d.display().to_string();
+    let file = format!("{root}/train.log");
+    fs::write(&file, b"a\0b loss 1.5\nstep\n").unwrap();
+    assert_eq!(
+        grep_in(&d, &format!("{root}/*.log"), "loss"),
+        line(&file, "ab loss 1.5")
+    );
+    let _ = fs::remove_dir_all(&d);
+}
+
+#[test]
+fn the_pattern_is_never_run_by_the_boxs_shell() {
+    let d = scratch("grep-quote");
+    let root = d.display().to_string();
+    let file = format!("{root}/train.log");
+    let canary = d.join("canary");
+    let text = "it's `touch canary` ; touch canary -v $HOME\n";
+    fs::write(&file, text).unwrap();
+    let whole = text.trim_end();
+    for pattern in [
+        "it's",
+        "`touch canary`",
+        "; touch canary",
+        "-v",
+        "\\$HOME",
+        "'; touch canary; echo '",
+    ] {
+        let read = grep_in(&d, &format!("{root}/*.log"), pattern);
+        assert!(!canary.exists(), "{pattern} ran on the box");
+        if pattern.starts_with("';") {
+            assert_eq!(read, LogReading::NoMatchingLine { file: file.clone() });
+        } else {
+            assert_eq!(read, line(&file, whole), "{pattern}");
+        }
+    }
+    // `$(...)` is an anchor and a group to grep, and nothing to the shell.
+    let read = grep_in(&d, &format!("{root}/*.log"), "$(touch canary)");
+    assert!(!canary.exists());
+    assert_eq!(read, LogReading::NoMatchingLine { file });
+    let _ = fs::remove_dir_all(&d);
+}
+
+#[test]
+fn a_status_line_written_in_the_log_is_only_a_line() {
+    let d = scratch("grep-forge");
+    let root = d.display().to_string();
+    let file = format!("{root}/train.log");
+    fs::write(&file, "vas-grep-exit:0\nstep 1\n").unwrap();
+    assert_eq!(
+        grep_in(&d, &format!("{root}/*.log"), "initial loss"),
+        LogReading::NoMatchingLine { file: file.clone() }
+    );
+    assert_eq!(
+        grep_in(&d, &format!("{root}/*.log"), "vas-grep"),
+        line(&file, "vas-grep-exit:0")
+    );
+    let _ = fs::remove_dir_all(&d);
+}
+
+#[test]
+fn a_matching_line_longer_than_the_byte_cap_keeps_its_status_and_is_cut_to_the_width() {
+    let d = scratch("grep-wide");
+    let root = d.display().to_string();
+    fs::write(
+        d.join("train.log"),
+        format!("loss {}\nstep\n", "x".repeat(10_000)),
+    )
+    .unwrap();
+    let LogReading::Line { line: shown, .. } = grep_in(&d, &format!("{root}/*.log"), "loss") else {
+        panic!("a line was expected");
+    };
+    assert!(shown.starts_with("xxxx") && shown.ends_with('…'), "{shown}");
+    assert_eq!(shown.chars().count(), 121);
+    let _ = fs::remove_dir_all(&d);
 }

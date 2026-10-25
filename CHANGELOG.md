@@ -41,9 +41,20 @@ All notable changes to this project are documented here. The format is based on
   every box. `Offer::cpu_name`, `driver_version`, `dlperf`, `pcie_bw`, `gpu_max_power`,
   `Offer::dlperf_per_dollar`; `Instance::cpu_name`, `driver_version`, `dlperf`, `pcie_bw`;
   `render::OfferColumns`.
+- `vas --ssh --log PATH --grep PATTERN`: the last line MATCHING an extended regular expression (`grep -E`)
+  instead of the last line, so a line printed once and buried by the next ones is caught (note 2: the
+  first training loss of a stage, followed within seconds by its evaluation lines). Searched in the file's
+  last 64 MiB, each carriage-return segment a line (`tr`), NUL bytes read as text (`grep -a`); `(no line
+  matches)` and `(grep refused the pattern)` when that is what happened (`--compact`: `no_matching_line`,
+  `pattern_refused`). The pattern is single-quoted for the box's shell, never expanded (a rule in
+  CONVENTIONS.md), and `grep`'s status is the answer's last line, so no log line can stand in for it.
+  `probe::LogQuery`, `LogReading::NoMatchingLine`, `LogReading::PatternRefused`.
 
 ### Changed
 
+- `probe::remote_command`, `probe::ssh_command`, `probe::ssh_probe` and `probe::probe_all` take an
+  `Option<&LogQuery>` (`LogQuery::new(path)`, `.grep(pattern)`) instead of the `--log` pattern as a
+  `&str`.
 - `render::offers_table` and `render::offers_table_marked` take an `OfferColumns` (after `top`): the
   plain table is `OfferColumns::Plain`.
 - The `LAST LOG / SSH ERROR` cell of a failed probe no longer repeats `failed to probe HOST:PORT over ssh`:

@@ -702,6 +702,35 @@ fn flags_that_make_no_sense_alone_are_refused_before_any_request() {
 }
 
 #[test]
+fn grep_needs_a_log_and_a_pattern_of_one_line() {
+    let home = empty_dir("grep");
+    let env = key_env(&home, ENV_KEY);
+    let lonely = vas_with(account, &["--ssh", "--grep", "loss"], &env, &[]);
+    assert_eq!(
+        lonely.code,
+        Some(2),
+        "--grep needs --log: {}",
+        lonely.stderr
+    );
+    assert!(lonely.stderr.contains("--log"), "{}", lonely.stderr);
+    let base = ["--ssh", "--log", "/r/*.log", "--grep"];
+    let blank = vas_with(account, &[&base[..], &[" "]].concat(), &env, &[]);
+    assert_eq!(blank.code, Some(2), "{}", blank.stderr);
+    assert!(blank.stderr.contains("blank"), "{}", blank.stderr);
+    let two_lines = vas_with(account, &[&base[..], &["loss\nstep"]].concat(), &env, &[]);
+    std::fs::remove_dir_all(&home).unwrap();
+    assert_eq!(two_lines.code, Some(2), "{}", two_lines.stderr);
+    assert!(
+        two_lines.stderr.contains("control character"),
+        "{}",
+        two_lines.stderr
+    );
+    for run in [&lonely, &blank, &two_lines] {
+        assert!(run.seen.lock().unwrap().is_empty(), "no request was made");
+    }
+}
+
+#[test]
 fn a_closed_stdout_ends_a_watch_quietly_instead_of_looping_on() {
     // `vas --watch 60 | head -1`: once the reader is gone, the next write fails, and that is the end.
     let mut child = spawn_watch(account, &["--compact", "--watch", "0"], Some("50"));

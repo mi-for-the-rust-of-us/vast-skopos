@@ -383,8 +383,10 @@ loop, or print and stop).
   `~/.ssh/config` apply unchanged.
 - **Arguments as arguments.** `Command::arg` for every local argument (a key path
   with a space stays one path); only the REMOTE command is a shell string, and only
-  the user's own `--log` pattern is interpolated into it, unquoted on purpose so the
-  box's shell expands the glob.
+  the user's own values are interpolated into it: the `--log` pattern, unquoted on
+  purpose so the box's shell expands the glob, and the `--grep` pattern, ALWAYS
+  single-quoted (`probe::shell_quoted`, each `'` written `'\''`) so the box's shell
+  expands nothing in it. A third value is a change of rule, with its own review.
 - **One attempt.** `BatchMode=yes`, `ConnectTimeout=10`, and no retry loop: a box
   that refuses is reported in its row, and what to do about it is a person's call,
   made from the dashboard. One session per probe too (`ControlMaster=no`,

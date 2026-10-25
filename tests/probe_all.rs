@@ -13,7 +13,7 @@ use std::ffi::OsStr;
 use std::path::Path;
 
 use vast_skopos::instance::Instance;
-use vast_skopos::probe::{probe_all, ssh_command};
+use vast_skopos::probe::{LogQuery, probe_all, ssh_command};
 
 fn instance(row: &serde_json::Value) -> Instance {
     Instance::from_json(row).unwrap()
@@ -42,7 +42,7 @@ fn the_ssh_command_keeps_every_value_a_separate_argument_and_the_target_after_th
         "ssh6.vast.ai",
         36000,
         Some(Path::new("/my keys/id ed25519")),
-        Some("/root/runs/*/train.log"),
+        Some(&LogQuery::new("/root/runs/*/train.log")),
     );
     assert_eq!(cmd.get_program(), "ssh");
     let args: Vec<&OsStr> = cmd.get_args().collect();

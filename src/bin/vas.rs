@@ -15,7 +15,7 @@ use vast_skopos::creditlog::CreditLog;
 use vast_skopos::key::ApiKey;
 use vast_skopos::market::MarketWatch;
 use vast_skopos::offer::{OfferChanges, OfferQuery, OfferSort, country_code, gpu_model, select};
-use vast_skopos::probe::probe_all;
+use vast_skopos::probe::{LogQuery, probe_all};
 use vast_skopos::render::{
     OfferColumns, TableOptions, offers_changes_note, offers_changes_only, offers_footer,
     offers_table, offers_table_marked, offers_variance_note, table,
@@ -58,6 +58,12 @@ struct LookArgs {
     /// or "?" when the box's answer was cut short).
     #[arg(long, value_name = "PATH_OR_GLOB", requires = "ssh", value_parser = non_blank)]
     log: Option<String>,
+    /// With --log: the last line MATCHING this extended regular expression (grep -E, case-sensitive),
+    /// not the last line: "initial loss|Traceback". Searched in the file's last 64 MiB, each
+    /// carriage-return segment a line; "(no line matches)" when none does, "(grep refused the
+    /// pattern)" when it is not one. Quoted for the box's shell: nothing in it is expanded.
+    #[arg(long, value_name = "PATTERN", requires = "log", value_parser = grep_pattern)]
+    grep: Option<String>,
     /// With --ssh: the private key to use (default: ssh's own choice, agent and ~/.ssh/config).
     #[arg(long, short = 'i', value_name = "FILE", requires = "ssh")]
     identity: Option<PathBuf>,
@@ -240,6 +246,23 @@ fn non_blank(pattern: &str) -> Result<String, String> {
     if pattern.trim().is_empty() {
         Err(String::from(
             "the pattern is blank (an unset variable?): name the log file or glob",
+        ))
+    } else {
+        // BORROW: explicit to_owned -- clap stores the parsed value owned
+        Ok(pattern.to_owned())
+    }
+}
+
+/// `--grep`'s pattern, refused when blank (an unset variable?) or holding a control character: a
+/// newline would make two patterns of it on the box.
+fn grep_pattern(pattern: &str) -> Result<String, String> {
+    if pattern.trim().is_empty() {
+        Err(String::from(
+            "the pattern is blank (an unset variable?): name what the line holds",
+        ))
+    } else if pattern.chars().any(char::is_control) {
+        Err(String::from(
+            "the pattern holds a control character (a newline?): one line's pattern only",
         ))
     } else {
         // BORROW: explicit to_owned -- clap stores the parsed value owned
@@ -482,7 +505,8 @@ fn run_looks(
     }
 }
 
-/// One look: the instances, then the account while the probes run, then the table.
+/// One look: the instances, then the account while the probes run (asking `log` of each box, when
+/// given), then the table.
 ///
 /// The account request needs nothing from the probes, which take seconds: the two overlap. With a
 /// `trend` (a watch that probes), this look's GPU samples join the history, and the table and the
@@ -490,6 +514,7 @@ fn run_looks(
 fn look(
     client: &Client,
     args: &LookArgs,
+    log: Option<&LogQuery>,
     trend: Option<&mut Trend>,
     credit_log: Option<&mut CreditLog>,
 ) -> Result<String, vast_skopos::SkoposError> {
@@ -505,7 +530,7 @@ fn look(
     let (account, probes) = std::thread::scope(|scope| {
         let account = scope.spawn(|| client.account());
         let probes = if args.ssh {
-            probe_all(&instances, args.identity.as_deref(), args.log.as_deref())
+            probe_all(&instances, args.identity.as_deref(), log)
         } else {
             Vec::new()
         };
@@ -573,6 +598,14 @@ fn lookout(args: &LookArgs) -> ExitCode {
     let mut trend = Trend::default();
     let tracking = args.ssh && args.watch.is_some();
     let mut credit_log = args.credit_log.as_deref().map(CreditLog::new);
+    let log = args.log.as_deref().map(|path| {
+        let query = LogQuery::new(path);
+        // BORROW: explicit clone -- the query owns its pattern
+        match args.grep.clone() {
+            Some(pattern) => query.grep(pattern),
+            None => query,
+        }
+    });
     run_looks(
         "vas",
         args.watch,
@@ -582,6 +615,7 @@ fn lookout(args: &LookArgs) -> ExitCode {
             let text = look(
                 &client,
                 args,
+                log.as_ref(),
                 tracking.then_some(&mut trend),
                 credit_log.as_mut(),
             )?;

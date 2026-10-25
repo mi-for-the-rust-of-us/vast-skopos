@@ -14,7 +14,7 @@
 
 use vast_skopos::compact::json_lines;
 use vast_skopos::instance::Instance;
-use vast_skopos::probe::{OTHER_MIB_MIN, ProbeOutcome, parse_output, remote_command};
+use vast_skopos::probe::{LogQuery, OTHER_MIB_MIN, ProbeOutcome, parse_output, remote_command};
 use vast_skopos::render::{TableOptions, table};
 use vast_skopos::trend::{GpuChange, Trend};
 
@@ -155,7 +155,7 @@ fn the_log_section_can_follow_the_apps_section() {
 
 #[test]
 fn the_remote_command_asks_the_processes_last_and_apart() {
-    let command = remote_command(Some("/r/*.log"));
+    let command = remote_command(Some(&LogQuery::new("/r/*.log")));
     let power = command.find("power.draw").unwrap();
     let apps = command.find("---vas-apps---").unwrap();
     let by_gpu = command.find("---vas-apps-by-gpu---").unwrap();
