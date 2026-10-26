@@ -100,7 +100,9 @@ fn wide_adds_the_machine_and_the_host_after_ssh_and_before_the_probe_columns() {
             &serde_json::json!({"id": 56_362_434, "actual_status": "running",
             "ssh_host": "ssh6.vast.ai", "ssh_port": 36_000, "machine_id": 100_682, "host_id": 406_325,
             "cpu_name": "AMD EPYC 7K62 48-Core Processor", "driver_version": "580.142",
-            "dlperf": 199.238_301_991, "pcie_bw": 26.9}),
+            "dlperf": 199.238_301_991, "pcie_bw": 26.9, "public_ipaddr": "180.189.55.38",
+            "ports": {"22/tcp": [{"HostIp": "0.0.0.0", "HostPort": "55814"},
+                                 {"HostIp": "::", "HostPort": "55814"}]}}),
         ),
         instance(&serde_json::json!({"id": 2, "actual_status": "exited"})),
     ];
@@ -125,9 +127,9 @@ fn wide_adds_the_machine_and_the_host_after_ssh_and_before_the_probe_columns() {
     let lines: Vec<&str> = text.lines().collect();
     let header: Vec<&str> = lines[0].split_whitespace().collect();
     assert_eq!(
-        &header[8..17],
+        &header[8..18],
         [
-            "SSH", "MACHINE", "HOST", "CPU", "DRIVER", "DLPERF", "PCIE", "GB/s", "GPU%"
+            "SSH", "DIRECT", "MACHINE", "HOST", "CPU", "DRIVER", "DLPERF", "PCIE", "GB/s", "GPU%"
         ],
         "{text}"
     );
@@ -141,14 +143,18 @@ fn wide_adds_the_machine_and_the_host_after_ssh_and_before_the_probe_columns() {
     );
     let first: Vec<&str> = lines[1].split_whitespace().collect();
     assert!(
-        first
-            .windows(3)
-            .any(|w| w == ["ssh6.vast.ai:36000", "100682", "406325"]),
-        "the ids sit under their headers: {text}"
+        first.windows(4).any(|w| w
+            == [
+                "ssh6.vast.ai:36000",
+                "180.189.55.38:55814",
+                "100682",
+                "406325"
+            ]),
+        "the direct address and the ids sit under their headers: {text}"
     );
     let second: Vec<&str> = lines[2].split_whitespace().collect();
     assert!(
-        second.windows(2).any(|w| w == ["-", "-"]),
+        second.windows(3).any(|w| w == ["-", "-", "-"]),
         "a box the API gave no ids for shows dashes: {text}"
     );
 }

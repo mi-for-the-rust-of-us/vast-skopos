@@ -87,7 +87,8 @@ struct LookArgs {
     /// Read the API key from this file (default: VAST_API_KEY, then the vastai CLI's files).
     #[arg(long, value_name = "FILE")]
     key_file: Option<PathBuf>,
-    /// Also show each box's machine id and host id (what a rentals log, --exclude-machine and
+    /// Also show each box's direct ssh address, past the proxy (DIRECT: its public IP and the port
+    /// mapped to 22), its machine id and host id (what a rentals log, --exclude-machine and
     /// --exclude-host need), then its CPU, driver, DLPerf and PCIe bandwidth (what tells it from
     /// another machine, as vas offers --wide shows them).
     #[arg(long)]

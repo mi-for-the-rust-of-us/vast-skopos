@@ -85,13 +85,18 @@ fn wide_shows_the_machine_then_the_host_each_under_its_own_header() {
     let header: Vec<&str> = text.lines().next().unwrap().split_whitespace().collect();
     let at = header.iter().position(|&h| h == "MACHINE").unwrap();
     assert_eq!(header[at + 1], "HOST", "{text}");
-    assert_eq!(header[at - 1], "SSH", "{text}");
-    // Words, not columns: the two ids sit side by side, in this order, after the ssh endpoint.
+    assert_eq!(
+        (header[at - 2], header[at - 1]),
+        ("SSH", "DIRECT"),
+        "{text}"
+    );
+    // Words, not columns: the two ids sit side by side, in this order, after the ssh endpoint and
+    // the direct one (a dash: the fixture has none).
     let first = words_of(&text, "56362434");
     assert!(
         first
-            .windows(3)
-            .any(|w| w == ["ssh6.vast.ai:36000", "100682", "406325"]),
+            .windows(4)
+            .any(|w| w == ["ssh6.vast.ai:36000", "-", "100682", "406325"]),
         "machine 100682 of host 406325: {text}"
     );
     let second = words_of(&text, "56363476");

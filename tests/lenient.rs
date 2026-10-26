@@ -133,6 +133,52 @@ fn what_tells_machines_apart_is_read_leniently_on_an_offer_and_on_a_box() {
 }
 
 #[test]
+fn the_direct_route_is_read_from_the_ports_map_leniently() {
+    let with = |ports: serde_json::Value| {
+        Instance::from_json(
+            &serde_json::json!({"id": 1, "public_ipaddr": "79.117.26.24", "ports": ports}),
+        )
+        .unwrap()
+        .direct_endpoint()
+        .map(|(host, port)| (host.to_owned(), port))
+    };
+    let at = |port: u16| Some((String::from("79.117.26.24"), port));
+    // As read on 2026-10-26: one entry per address family, the port as a string.
+    let real = serde_json::json!({"22/tcp": [{"HostIp": "0.0.0.0", "HostPort": "20674"},
+        {"HostIp": "::", "HostPort": "20674"}], "1111/tcp": [{"HostIp": "0.0.0.0", "HostPort": "20962"}]});
+    assert_eq!(with(real), at(20_674));
+    assert_eq!(
+        with(serde_json::json!({"22/tcp": [{"HostPort": 2222}]})),
+        at(2222)
+    );
+    // The first entry that holds a port wins; garbage costs the column, never the row.
+    assert_eq!(
+        with(
+            serde_json::json!({"22/tcp": [{"HostPort": "x"}, {"HostPort": "0"}, {"HostPort": "22022"}]})
+        ),
+        at(22_022)
+    );
+    for odd in [
+        serde_json::json!({}),
+        serde_json::json!({"22/tcp": []}),
+        serde_json::json!({"22/tcp": [{"HostPort": "70000"}]}),
+        serde_json::json!({"22/tcp": "55814"}),
+        serde_json::json!(null),
+        serde_json::json!({"1111/tcp": [{"HostPort": "20962"}]}),
+    ] {
+        assert_eq!(with(odd.clone()), None, "{odd}");
+    }
+    let no_ip = Instance::from_json(
+        &serde_json::json!({"id": 1, "ports": {"22/tcp": [{"HostPort": "55814"}]}}),
+    )
+    .unwrap();
+    assert_eq!(
+        (no_ip.direct_ssh_port, no_ip.direct_endpoint()),
+        (Some(55_814), None)
+    );
+}
+
+#[test]
 fn a_row_that_says_port_zero_has_no_endpoint_to_probe() {
     let row = |port: u64| {
         Instance::from_json(&serde_json::json!(

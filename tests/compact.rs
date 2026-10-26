@@ -43,7 +43,8 @@ fn a_box_with_everything_and_a_box_with_nothing_have_the_same_keys() {
         "ssh_host": "ssh6.vast.ai", "ssh_port": 36_000, "machine_id": 100_682, "host_id": 406_325,
         "status_msg": "success, running pytorch/pytorch_2.5.1",
         "cpu_name": "AMD EPYC 7K62 48-Core Processor", "driver_version": "580.142",
-        "dlperf": 199.2, "pcie_bw": 26.9}),
+        "dlperf": 199.2, "pcie_bw": 26.9, "public_ipaddr": "180.189.55.38",
+        "ports": {"22/tcp": [{"HostIp": "0.0.0.0", "HostPort": "55814"}]}}),
     );
     let bare = instance(&json!({"id": 2}));
     let probes = vec![
@@ -101,6 +102,11 @@ fn a_box_with_everything_and_a_box_with_nothing_have_the_same_keys() {
         "what tells the machine from another, always, like the ids"
     );
     assert_eq!(
+        (b["direct_host"].as_str(), b["direct_port"].as_u64()),
+        (Some("180.189.55.38"), Some(55_814)),
+        "the direct route past the proxy"
+    );
+    assert_eq!(
         (b["age_s"].as_u64(), b["cost"].as_f64()),
         (Some(8_100), Some(2.025))
     );
@@ -144,6 +150,8 @@ fn a_box_with_everything_and_a_box_with_nothing_have_the_same_keys() {
         "driver_version",
         "dlperf",
         "pcie_bw",
+        "direct_host",
+        "direct_port",
         "probe",
     ] {
         assert!(n[unknown].is_null(), "{unknown} is null, not missing: {n}");

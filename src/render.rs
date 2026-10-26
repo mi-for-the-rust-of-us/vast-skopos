@@ -330,8 +330,9 @@ pub struct TableOptions<'a> {
     /// Show the probe columns (`GPU% (ssh)`, `VRAM`, `OTHER`, `POWER`, `CLOCK`, `LAST LOG / SSH
     /// ERROR`), even when no box was probed.
     pub ssh: bool,
-    /// Show each box's machine id and host id, then its CPU, driver, `DLPerf` and `PCIe` bandwidth: what
-    /// tells one machine from another, and a rented box from an offer (`vas offers --wide`).
+    /// Show each box's direct `ssh` address (past the proxy), its machine id and host id, then its CPU,
+    /// driver, `DLPerf` and `PCIe` bandwidth: what tells one machine from another, and a rented box from an
+    /// offer (`vas offers --wide`).
     pub wide: bool,
     /// The samples a watch has kept: adds `TREND` and `CLOCK TREND` columns after `CLOCK` (with the
     /// probe columns), and prints what changed in the boxes' power under the money line.
@@ -389,7 +390,7 @@ impl<'a> TableOptions<'a> {
 /// let account = Account::from_json(&serde_json::json!({"credit": 5.0}));
 /// let text = table(&[i], &[], Some(&account), TableOptions::new().wide(true), 3600.0);
 /// let header: Vec<&str> = text.lines().next().unwrap().split_whitespace().collect();
-/// assert_eq!(&header[8..], ["SSH", "MACHINE", "HOST", "CPU", "DRIVER", "DLPERF", "PCIE", "GB/s"]);
+/// assert_eq!(&header[8..], ["SSH", "DIRECT", "MACHINE", "HOST", "CPU", "DRIVER", "DLPERF", "PCIE", "GB/s"]);
 /// assert!(text.ends_with("credit $5.00 | burn $0.500/h over 1 running | ~10.0 h left at this rate\n"));
 /// ```
 #[must_use]
@@ -410,7 +411,15 @@ pub fn table(
         "ID", "LABEL", "GPU", "WHERE", "STATUS", "$/H", "AGE", "COST~", "SSH",
     ];
     if wide {
-        header.extend(["MACHINE", "HOST", "CPU", "DRIVER", "DLPERF", "PCIE GB/s"]);
+        header.extend([
+            "DIRECT",
+            "MACHINE",
+            "HOST",
+            "CPU",
+            "DRIVER",
+            "DLPERF",
+            "PCIE GB/s",
+        ]);
     }
     if with_ssh {
         header.extend(["GPU% (ssh)", "VRAM", "OTHER", "POWER", "CLOCK"]);
@@ -435,6 +444,11 @@ pub fn table(
         ];
         if wide {
             row.extend([
+                // The address is capped, never the port after it (as in `SSH`).
+                or_dash(
+                    i.direct_endpoint()
+                        .map(|(h, p)| format!("{}:{p}", capped(h))),
+                ),
                 or_dash(i.machine_id.map(|m| m.to_string())),
                 or_dash(i.host_id.map(|h| h.to_string())),
                 text_cell(i.cpu_name.as_deref()),

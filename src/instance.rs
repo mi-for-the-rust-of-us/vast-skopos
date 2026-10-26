@@ -55,6 +55,12 @@ pub struct Instance {
     pub dlperf: Option<f64>,
     /// The bandwidth between the host and the GPU that vast.ai measured, in GB/s.
     pub pcie_bw: Option<f64>,
+    /// The box's public address (`public_ipaddr`): with [`Instance::direct_ssh_port`], its direct route,
+    /// past vast.ai's `ssh` proxy. A host behind a router that does not forward the port has one that
+    /// refuses (seen 2026-10-26).
+    pub public_ipaddr: Option<String>,
+    /// The host port mapped to the box's port 22 (the row's `ports["22/tcp"]`), for the direct route.
+    pub direct_ssh_port: Option<u16>,
 }
 
 /// Whether `c` must not reach a terminal from someone else's text: a control character, or an
@@ -204,6 +210,8 @@ impl Instance {
             driver_version: text(row, "driver_version"),
             dlperf: number(row, "dlperf"),
             pcie_bw: number(row, "pcie_bw"),
+            public_ipaddr: text(row, "public_ipaddr"),
+            direct_ssh_port: mapped_ssh_port(row),
         })
     }
 
@@ -279,6 +287,38 @@ impl Instance {
             .checked_add(u16::from(jupyter))?;
         Some((self.ssh_host.as_deref()?, port))
     }
+
+    /// The box's direct `ssh` endpoint, past the proxy: its public address and the host port mapped to
+    /// its port 22; `None` without both.
+    ///
+    /// ```
+    /// use vast_skopos::instance::Instance;
+    /// let row = serde_json::json!({"id": 1, "public_ipaddr": "180.189.55.38", "ports": {"22/tcp": [
+    ///   {"HostIp": "0.0.0.0", "HostPort": "55814"}, {"HostIp": "::", "HostPort": "55814"}]}});
+    /// let i = Instance::from_json(&row).unwrap();
+    /// assert_eq!(i.direct_endpoint(), Some(("180.189.55.38", 55814)));
+    /// assert_eq!(Instance::from_json(&serde_json::json!({"id": 2})).unwrap().direct_endpoint(), None);
+    /// ```
+    #[must_use]
+    pub fn direct_endpoint(&self) -> Option<(&str, u16)> {
+        Some((self.public_ipaddr.as_deref()?, self.direct_ssh_port?))
+    }
+}
+
+/// The host port mapped to the box's port 22, from the row's `ports`
+/// (`{"22/tcp": [{"HostIp": "0.0.0.0", "HostPort": "55814"}, {"HostIp": "::", "HostPort": "55814"}]}`, as
+/// read on 2026-10-26: the two entries, one per address family, name the same port): the first entry whose
+/// `HostPort` is a port above 0.
+fn mapped_ssh_port(row: &Value) -> Option<u16> {
+    row.get("ports")?
+        .get("22/tcp")?
+        .as_array()?
+        .iter()
+        .find_map(|entry| {
+            integer(entry, "HostPort")
+                .and_then(|port| u16::try_from(port).ok())
+                .filter(|port| *port != 0)
+        })
 }
 
 /// The account's money, from `/api/v0/users/current/`.

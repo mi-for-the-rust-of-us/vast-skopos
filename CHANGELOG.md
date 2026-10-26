@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- `vas --wide`: a `DIRECT` column after `SSH`, the box's direct `ssh` address past vast.ai's proxy (its
+  `public_ipaddr` and the host port its `ports` map to 22; both read live on 2026-10-26). `--compact` carries
+  it as `direct_host` and `direct_port`. `Instance::public_ipaddr`, `Instance::direct_ssh_port`,
+  `Instance::direct_endpoint`.
+
 ### Documentation
 
 - The FAQ explains why `vas --ssh --log /root/...` typed in Git Bash reads `(no file matches)` (Git Bash rewrites
