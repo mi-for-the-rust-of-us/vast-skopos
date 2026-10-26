@@ -22,7 +22,9 @@ use vast_skopos::render::{
 };
 use vast_skopos::runway::Runway;
 use vast_skopos::trend::Trend;
-use vast_skopos::until::{End, STARTING_LOOKS, UNREAD_LOOKS, Verdict, Wait, verdict};
+use vast_skopos::until::{
+    End, NO_FILE_LOOKS, NO_FILE_WARN_LOOKS, STARTING_LOOKS, UNREAD_LOOKS, Verdict, Wait, verdict,
+};
 
 /// The command line: the lookout's flags, or the `offers` subcommand. (`--help` opens with `about`,
 /// which is Cargo.toml's `description`: one place to say what `vas` is.)
@@ -57,7 +59,8 @@ struct LookArgs {
     ssh: bool,
     /// With --ssh: for the newest file matching this path or glob on each box, print its last two
     /// path components and its last non-blank line ("(empty)", "(not a file)", "(no file matches)",
-    /// or "?" when the box's answer was cut short).
+    /// or "?" when the box's answer was cut short). From Git Bash, a /root/... path that the shell
+    /// rewrote as C:/Program Files/Git/root/... is read as typed again, and said.
     #[arg(long, value_name = "PATH_OR_GLOB", requires = "ssh", value_parser = non_blank)]
     log: Option<String>,
     /// With --log: the last line MATCHING this extended regular expression (grep -E, case-sensitive),
@@ -71,7 +74,8 @@ struct LookArgs {
     /// With --log and --watch: wait for a line matching this pattern (as --grep reads it, which it
     /// replaces) on any box, then exit 0 with that line on stderr. Exits 2 at once when a box's grep
     /// refuses the pattern (and no other box was read), 3 when no box could be read for 2 looks in a
-    /// row (every probe failed or gave no readable log, or none could be made), and 1 when the first
+    /// row (every probe failed or gave no readable log, or none could be made) or no box has had a
+    /// file matching --log for 10 looks in a row (a warning comes after 2), and 1 when the first
     /// look fails or stdout is closed before a match. A box meant to run but not running (loading,
     /// say) keeps the wait going for 10 looks at most since a box was last read.
     #[arg(
@@ -639,6 +643,12 @@ fn wait_stop(end: End) -> Stop {
                 "--until: grep on box {id} refused the pattern (not an extended regular expression it reads, or a grep without -a): no look can match"
             ),
         },
+        End::NoFile => Stop {
+            code: ExitCode::from(GAVE_UP),
+            said: format!(
+                "--until: no box has had a file matching --log for {NO_FILE_LOOKS} looks in a row: giving up (is the path right?)"
+            ),
+        },
         // `End` is `#[non_exhaustive]` and the binary is another crate: an end it does not know is
         // read as a wait that gave up.
         End::GaveUp | _ => Stop {
@@ -650,8 +660,99 @@ fn wait_stop(end: End) -> Stop {
     }
 }
 
+/// Git Bash's root as a Windows path (`C:/Program Files/Git/`), when `vas` was started from Git
+/// Bash: it sets `MSYSTEM`, and `EXEPATH` names its `bin` (`C:\Program Files\Git\bin`); `None`
+/// otherwise.
+fn git_bash_root() -> Option<String> {
+    std::env::var_os("MSYSTEM").filter(|v| !v.is_empty())?;
+    let exe = std::env::var("EXEPATH").ok()?.replace('\\', "/");
+    let exe = exe.trim_end_matches('/');
+    let root = exe
+        .strip_suffix("/usr/bin")
+        .or_else(|| exe.strip_suffix("/bin"))?;
+    Some(format!("{root}/"))
+}
+
+/// What became of a path on the box (or a pattern) on its way to `vas`.
+#[derive(Debug, PartialEq, Eq)]
+enum ForTheBox {
+    /// As typed.
+    As,
+    /// Git Bash had rewritten it under its root: this is the path as typed.
+    Repaired(String),
+    /// A Windows path, which no Linux box can have.
+    Refused,
+}
+
+/// Whether `text` starts with a Windows drive (`C:/`, `D:\`).
+const fn starts_with_drive(text: &str) -> bool {
+    matches!(text.as_bytes(), [letter, b':', b'/' | b'\\', ..] if letter.is_ascii_alphabetic())
+}
+
+/// `typed` as the box should read it. Git Bash rewrites an argument that looks like a POSIX path
+/// (`/root/run.log`) into a Windows one under its own root (`C:/Program Files/Git/root/run.log`)
+/// before a Windows program sees it (seen 2026-10-26: `--log` then matched no file); when `root` (see
+/// [`git_bash_root`]) starts `typed`, it is taken off again. A path that still starts with a drive
+/// letter (`D:/run.log`, or `/tmp/...`, which Git Bash maps outside its root) cannot be a path on a
+/// Linux box: refused when `paths_only` (the `--log` path, not a pattern).
+fn for_the_box(typed: &str, root: Option<&str>, paths_only: bool) -> ForTheBox {
+    if let Some(root) = root
+        && let Some(head) = typed.get(..root.len())
+        && head.eq_ignore_ascii_case(root)
+    {
+        // `head` ended on a character boundary of `typed`, so the rest starts on one.
+        let rest = typed.get(root.len()..).unwrap_or_default();
+        return ForTheBox::Repaired(format!("/{rest}"));
+    }
+    if paths_only && starts_with_drive(typed) {
+        ForTheBox::Refused
+    } else {
+        ForTheBox::As
+    }
+}
+
+/// The `--log` path and the `--grep` / `--until` pattern as the box should read them, each said on
+/// stderr when Git Bash had rewritten it; on a `--log` that cannot be a path on the box, the exit
+/// code 2 (said too), before any request.
+fn typed_for_the_box(args: &LookArgs) -> Result<(Option<String>, Option<String>), ExitCode> {
+    let root = git_bash_root();
+    let take = |flag: &str, typed: &str, paths_only: bool| match for_the_box(
+        typed,
+        root.as_deref(),
+        paths_only,
+    ) {
+        // BORROW: explicit to_owned -- the query owns what it sends
+        ForTheBox::As => Ok(typed.to_owned()),
+        ForTheBox::Repaired(read) => {
+            eprintln!("vas: {flag}: Git Bash rewrote {read} as {typed}; read as {read}");
+            Ok(read)
+        }
+        ForTheBox::Refused => {
+            eprintln!(
+                "vas: {flag} {typed} is not a path on the box (a Linux path starts with /): from Git Bash, write it //root/... or set MSYS_NO_PATHCONV=1"
+            );
+            Err(ExitCode::from(2))
+        }
+    };
+    let path = args
+        .log
+        .as_deref()
+        .map(|p| take("--log", p, true))
+        .transpose()?;
+    let pattern = match (args.grep.as_deref(), args.until.as_deref()) {
+        (Some(p), _) => Some(take("--grep", p, false)?),
+        (None, Some(p)) => Some(take("--until", p, false)?),
+        (None, None) => None,
+    };
+    Ok((path, pattern))
+}
+
 /// `vas` without a subcommand: the lookout, once or every `--watch` seconds.
 fn lookout(args: &LookArgs) -> ExitCode {
+    let (path, pattern) = match typed_for_the_box(args) {
+        Ok(typed) => typed,
+        Err(code) => return code,
+    };
     let key = args
         .key_file
         .as_deref()
@@ -680,10 +781,9 @@ fn lookout(args: &LookArgs) -> ExitCode {
     let tracking = args.ssh && args.watch.is_some();
     let mut credit_log = args.credit_log.as_deref().map(CreditLog::new);
     // `--until` asks for the line it waits for as `--grep` would (the two are refused together).
-    let log = args.log.as_deref().map(|path| {
+    let log = path.map(|path| {
         let query = LogQuery::new(path);
-        // BORROW: explicit clone -- the query owns its pattern
-        match args.grep.clone().or_else(|| args.until.clone()) {
+        match pattern {
             Some(pattern) => query.grep(pattern),
             None => query,
         }
@@ -706,6 +806,11 @@ fn lookout(args: &LookArgs) -> ExitCode {
                 credit_log.as_mut(),
             )?;
             let stop = waited.and_then(|v| wait.record(v)).map(wait_stop);
+            if stop.is_none() && wait.looks_without_file() == NO_FILE_WARN_LOOKS {
+                eprintln!(
+                    "vas: --until: no box has a file matching --log ({NO_FILE_WARN_LOOKS} looks): is the path right? The wait gives up after {NO_FILE_LOOKS} such looks"
+                );
+            }
             // JSON Lines carry their own `at`: a stamp line would not parse.
             let text = if args.watch.is_some() && !args.compact {
                 let secs = SystemTime::now()
@@ -873,10 +978,61 @@ mod tests {
     use vast_skopos::until::UNREAD_LOOKS;
 
     use super::{
-        Cli, GAVE_UP, LOOKOUT_FLOOR_SECS, MARGIN_SECS, MAX_BUDGET_WAIT_SECS, OFFERS_FLOOR_SECS,
-        REFUSED, budget_pause,
+        Cli, ForTheBox, GAVE_UP, LOOKOUT_FLOOR_SECS, MARGIN_SECS, MAX_BUDGET_WAIT_SECS,
+        OFFERS_FLOOR_SECS, REFUSED, budget_pause, for_the_box,
     };
-    use vast_skopos::until::STARTING_LOOKS;
+    use vast_skopos::until::{NO_FILE_LOOKS, NO_FILE_WARN_LOOKS, STARTING_LOOKS};
+
+    const ROOT: Option<&str> = Some("C:/Program Files/Git/");
+
+    #[test]
+    fn a_path_git_bash_rewrote_under_its_root_is_read_as_typed_again() {
+        // As reproduced on 2026-10-26: `--log /root/.../run.log` reached vas rewritten.
+        let typed = "C:/Program Files/Git/root/src/askesis/reference/canvas/data/runs/me38_l12_s1_d1/run.log";
+        assert_eq!(
+            for_the_box(typed, ROOT, true),
+            ForTheBox::Repaired(String::from(
+                "/root/src/askesis/reference/canvas/data/runs/me38_l12_s1_d1/run.log"
+            ))
+        );
+        assert_eq!(
+            for_the_box("c:/program files/git/root/x.log", ROOT, true),
+            ForTheBox::Repaired(String::from("/root/x.log")),
+            "a drive letter's case does not matter"
+        );
+        assert_eq!(
+            for_the_box("C:/Program Files/Git/", ROOT, true),
+            ForTheBox::Repaired(String::from("/"))
+        );
+        // A pattern under the root is repaired too, never refused.
+        assert_eq!(
+            for_the_box("C:/Program Files/Git/epoch", ROOT, false),
+            ForTheBox::Repaired(String::from("/epoch"))
+        );
+    }
+
+    #[test]
+    fn a_windows_path_elsewhere_is_refused_as_a_log_path_and_kept_as_a_pattern() {
+        // `/tmp/...` is mapped outside Git Bash's root (the user's temp folder): no repair is safe.
+        let temp = "C:/Users/me/AppData/Local/Temp/me38_speedcheck/g12_long.log";
+        assert_eq!(for_the_box(temp, ROOT, true), ForTheBox::Refused);
+        assert_eq!(
+            for_the_box("D:\\runs\\x.log", None, true),
+            ForTheBox::Refused
+        );
+        assert_eq!(for_the_box(temp, ROOT, false), ForTheBox::As);
+        // What a box can have is left alone, with or without Git Bash.
+        for path in [
+            "/root/runs/*/run.log",
+            "//root/x.log",
+            "runs/x.log",
+            "C:x",
+            "loss|C:/",
+        ] {
+            assert_eq!(for_the_box(path, ROOT, true), ForTheBox::As, "{path}");
+            assert_eq!(for_the_box(path, None, true), ForTheBox::As, "{path}");
+        }
+    }
 
     #[test]
     fn a_budget_is_waited_for_with_a_margin_and_never_longer_than_a_watch_waits() {
@@ -959,6 +1115,12 @@ mod tests {
         assert!(
             help.contains(&format!(
                 "for {STARTING_LOOKS} looks at most since a box was last read"
+            )),
+            "{help}"
+        );
+        assert!(
+            help.contains(&format!(
+                "no box has had a file matching --log for {NO_FILE_LOOKS} looks in a row (a warning comes after {NO_FILE_WARN_LOOKS})"
             )),
             "{help}"
         );

@@ -127,6 +127,48 @@ fn a_line_already_there_ends_the_wait_at_the_first_look() {
 }
 
 #[test]
+fn a_path_no_box_has_a_file_for_warns_then_gives_up_with_exit_code_3() {
+    // The 2026-10-26 case: a wait whose path matches no file on any box (there, rewritten by Git
+    // Bash) once waited until a harness killed it.
+    let dir = scratch("nofile");
+    let (base, _) = serve(one_box);
+    let path = format!(
+        "{}:{}",
+        dir.0.join("bin").display(),
+        std::env::var("PATH").unwrap()
+    );
+    let missing = format!("{}/runs/s9/run.log", dir.0.display());
+    let child = Command::new(env!("CARGO_BIN_EXE_vas"))
+        .args([
+            "--ssh", "--log", &missing, "--watch", "0", "--until", "loss",
+        ])
+        .env("VAST_URL", &base)
+        .env("VAST_API_KEY", "k3y")
+        .env("HOME", &dir.0)
+        .env("PATH", path)
+        .env("VAS_WATCH_FLOOR_MS", "50")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut child = KillOnDrop(Some(child));
+    let status = exit_within_deadline(&mut child);
+    let stderr = stderr_of(&mut child);
+    let stdout = stdout_of(&mut child);
+    assert_eq!(status.code(), Some(3), "{stderr}");
+    assert_eq!(
+        stderr.matches("no box has a file matching --log").count(),
+        1,
+        "warned once: {stderr}"
+    );
+    assert!(
+        stderr.contains("no box has had a file matching --log for 10 looks in a row: giving up"),
+        "{stderr}"
+    );
+    assert_eq!(stdout.matches("== vas, unix time").count(), 10, "{stdout}");
+}
+
+#[test]
 fn grep_shows_the_last_matching_line_in_the_table() {
     let dir = scratch("grep");
     fs::write(

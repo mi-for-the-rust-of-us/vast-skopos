@@ -4,9 +4,10 @@
 //! Under `--until`, every box is asked for the last line of its log matching the pattern
 //! ([`crate::probe::LogQuery::grep`]), so a [`LogReading::Line`] IS a match. [`verdict`] reads one
 //! look; [`Wait`] keeps the count across looks and says when the wait is over: on a match, on a
-//! pattern the box's `grep` refuses, or after [`UNREAD_LOOKS`] looks in a row with nothing to wait
-//! on (the rule of the hand-written loops `--until` replaces, "stop after two `ssh` failures", kept
-//! in one place).
+//! pattern the box's `grep` refuses, after [`UNREAD_LOOKS`] looks in a row with nothing to wait on
+//! (the rule of the hand-written loops `--until` replaces, "stop after two `ssh` failures", kept in
+//! one place), or after [`NO_FILE_LOOKS`] looks in a row in which no box had a file matching the
+//! path (a path that is wrong, or that the shell rewrote, must not hold a wait forever).
 
 use crate::instance::Instance;
 use crate::probe::{LogReading, ProbeOutcome, outcome_at};
@@ -22,6 +23,18 @@ pub const UNREAD_LOOKS: u32 = 2;
 /// with nothing to read in between does not start the count afresh: a box flipping between
 /// `loading` and unreachable must not hold a wait forever either.
 pub const STARTING_LOOKS: u32 = 10;
+
+/// The looks in a row with no box holding a file that matches the `--log` path after which a wait
+/// warns once that the path may be wrong.
+pub const NO_FILE_WARN_LOOKS: u32 = 2;
+
+/// The looks in a row with no box holding a file that matches the `--log` path after which a wait
+/// gives up ([`End::NoFile`]).
+///
+/// A run may write its log late (a speed check of twenty minutes first), so the bound is not short;
+/// but a path that matches nothing on any box (seen 2026-10-26: Git Bash had rewritten it) must not
+/// hold a wait forever.
+pub const NO_FILE_LOOKS: u32 = 10;
 
 /// What one look says to a wait.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,10 +54,14 @@ pub enum Verdict {
         /// The instance's id: the first such box, in the instances' order.
         id: u64,
     },
-    /// No match yet, and a box was read: its log does not match yet, or no file matches its path
+    /// No match yet, and a box was read that holds a file matching the path: its log does not match
     /// yet. A log the box could not give ([`LogReading::Unreadable`]: the search ran past its
     /// deadline, the file could not be read, the answer was cut short) is NOT a box read.
     Read,
+    /// Boxes were read, but none holds a file matching the path (each read box says "no file
+    /// matches", or that the newest match is not a file): the log is not written yet, or the path
+    /// is wrong.
+    NoFile,
     /// No box was read, but a box meant to run is not running (yet): `loading`, say.
     Starting,
     /// Nothing to wait on: no box was read and none is meant to run but not running. Every probe
@@ -67,11 +84,12 @@ pub enum Verdict {
 /// assert_eq!(verdict(std::slice::from_ref(&running), &[not_yet]), Verdict::Read);
 /// let refused = look("vas-grep-file:/r/run.log\nvas-grep-exit:2\n");
 /// assert_eq!(verdict(std::slice::from_ref(&running), &[refused]), Verdict::Refused { id: 7 });
+/// assert_eq!(verdict(std::slice::from_ref(&running), &[look("vas-no-file\n")]), Verdict::NoFile);
 /// assert_eq!(verdict(&[running], &[None]), Verdict::Unread);
 /// ```
 #[must_use]
 pub fn verdict(instances: &[Instance], probes: &[ProbeOutcome]) -> Verdict {
-    let (mut read, mut refused) = (false, None);
+    let (mut read, mut no_file, mut refused) = (false, false, None);
     // EXPLICIT: an imperative loop: the first match ends the search, and every read box counts.
     for (n, i) in instances.iter().enumerate() {
         let Some(Ok(probe)) = outcome_at(probes, n) else {
@@ -88,13 +106,12 @@ pub fn verdict(instances: &[Instance], probes: &[ProbeOutcome]) -> Verdict {
             Some(LogReading::PatternRefused { .. }) => refused = refused.or(Some(i.id)),
             // EXPLICIT: a log the box could not give is no box read: it must not hold a wait.
             Some(LogReading::Unreadable) => {}
-            Some(
-                LogReading::NoMatch
-                | LogReading::NotAFile { .. }
-                | LogReading::Empty { .. }
-                | LogReading::NoMatchingLine { .. },
-            )
-            | None => read = true,
+            // Read, but without a file to search: the path may be wrong.
+            Some(LogReading::NoMatch | LogReading::NotAFile { .. }) => no_file = true,
+            // Without `--log` there is no path to doubt: a box read is a box read.
+            Some(LogReading::Empty { .. } | LogReading::NoMatchingLine { .. }) | None => {
+                read = true;
+            }
         }
     }
     // A box that took the pattern can still match: one box's refusal ends a wait only alone.
@@ -102,6 +119,8 @@ pub fn verdict(instances: &[Instance], probes: &[ProbeOutcome]) -> Verdict {
         Verdict::Read
     } else if let Some(id) = refused {
         Verdict::Refused { id }
+    } else if no_file {
+        Verdict::NoFile
     } else if instances
         .iter()
         .any(|i| i.is_meant_to_run() && !i.is_running())
@@ -130,6 +149,8 @@ pub enum End {
     },
     /// No box could be read for [`UNREAD_LOOKS`] looks in a row.
     GaveUp,
+    /// No box held a file matching the path for [`NO_FILE_LOOKS`] looks in a row.
+    NoFile,
 }
 
 /// A wait across looks: the looks in a row with nothing to wait on, and those since a box was last
@@ -151,6 +172,8 @@ pub struct Wait {
     /// The looks since a box was last read in which a box meant to run but not running kept the
     /// wait going.
     starting: u32,
+    /// The looks in a row in which boxes were read but none held a file matching the path.
+    no_file: u32,
 }
 
 impl Wait {
@@ -178,6 +201,12 @@ impl Wait {
                 *self = Self::default();
                 return None;
             }
+            // A box was read: ssh works; the path is what may be wrong.
+            Verdict::NoFile => {
+                self.unread = 0;
+                self.no_file = self.no_file.saturating_add(1);
+                return (self.no_file >= NO_FILE_LOOKS).then_some(End::NoFile);
+            }
             Verdict::Starting => {
                 self.starting = self.starting.saturating_add(1);
                 self.starting > STARTING_LOOKS
@@ -190,5 +219,25 @@ impl Wait {
             self.unread = 0;
         }
         (self.unread >= UNREAD_LOOKS).then_some(End::GaveUp)
+    }
+
+    /// The looks in a row so far in which boxes were read but none held a file matching the path:
+    /// the binary warns when it reaches [`NO_FILE_WARN_LOOKS`].
+    ///
+    /// ```
+    /// use vast_skopos::until::{End, NO_FILE_LOOKS, NO_FILE_WARN_LOOKS, Verdict, Wait};
+    /// let mut wait = Wait::default();
+    /// for _ in 0..NO_FILE_WARN_LOOKS {
+    ///     assert_eq!(wait.record(Verdict::NoFile), None);
+    /// }
+    /// assert_eq!(wait.looks_without_file(), NO_FILE_WARN_LOOKS);
+    /// assert_eq!(wait.record(Verdict::Read), None, "a file appeared");
+    /// assert_eq!(wait.looks_without_file(), 0);
+    /// let ends: Vec<_> = (0..NO_FILE_LOOKS).map(|_| wait.record(Verdict::NoFile)).collect();
+    /// assert_eq!(ends.last(), Some(&Some(End::NoFile)));
+    /// ```
+    #[must_use]
+    pub const fn looks_without_file(&self) -> u32 {
+        self.no_file
     }
 }

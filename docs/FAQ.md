@@ -86,8 +86,9 @@ refuses would be another, and the message names the status.
 `--until` wait that found its line), `1` when a look fails or a key file or config file cannot be read or is
 malformed (and when the stdout of a `--until` wait is closed before a match), `2` when a flag or a value is
 refused, on the command line or in a config file (an unknown flag, a value out of range, flags that
-conflict), or when a box's `grep` refuses a `--until` pattern, and `3` when a `--until` wait gave up: no box
-could be read for 2 looks in a row.
+conflict), or when a box's `grep` refuses a `--until` pattern, or when a `--log` path from Git Bash cannot be a
+path on the box, and `3` when a `--until` wait gave up: no box could be read for 2 looks in a row, or no box has
+had a file matching the `--log` path for 10.
 
 ## Searching for offers
 
@@ -308,15 +309,26 @@ Windows program: `--log /root/runs/s1/run.log` reaches `vas` as `C:/Program File
 no box has. A path with a `*` in it is left alone, which is why a glob of the same file works. PowerShell and cmd
 rewrite nothing.
 
-Any one of these gets the path to the box as you typed it:
+**With 0.3.0**, any one of these gets the path to the box as you typed it:
 
 - **a glob:** `--log '/root/runs/s1_*/run.log'`;
 - **a doubled first slash:** `--log //root/runs/s1/run.log` (on the box, `//root` is `/root`);
 - **no rewriting for that command:** `MSYS_NO_PATHCONV=1 vas --ssh --log /root/runs/s1/run.log`.
 
 It matters most under `--until`. In 0.3.0 a wait whose path matches no file on any box neither matches nor gives
-up: on 2026-10-26 one waited until its harness killed it an hour later. The next version reads such a path as
-typed again and says so, and gives up on a path that matches nothing.
+up: on 2026-10-26 one waited until its harness killed it an hour later.
+
+**Since 0.4.0**, `vas` reads such a path as typed again, and says so on stderr:
+
+```text
+vas: --log: Git Bash rewrote /root/runs/s1/run.log as C:/Program Files/Git/root/runs/s1/run.log; read as /root/runs/s1/run.log
+```
+
+- **How it knows:** Git Bash's root comes from the `MSYSTEM` and `EXEPATH` variables Git Bash sets.
+- **A path it can't read back:** one that Git Bash maps somewhere else (`/tmp/...` becomes your temp folder)
+  is refused with exit 2. Use one of the workarounds above.
+- **A wait on a path that matches nothing:** it no longer waits forever. It warns after 2 looks and gives up
+  with exit 3 after 10.
 
 ### What does `--log` show?
 
@@ -349,7 +361,8 @@ are only characters to match.
 `vas --ssh --log PATH --watch 30 --until PATTERN` looks every 30 s and exits `0` as soon as a box's log has a
 line matching `PATTERN` (read as `--grep` reads it), saying which box and which line on stderr. It exits `2` at
 once when a box's `grep` refuses the pattern and no other box was read (no later look could match), `3` when
-no box could be read for 2 looks in a row (every probe failed or gave no readable log, or none could be made),
+no box could be read for 2 looks in a row (every probe failed or gave no readable log, or none could be made)
+or no box has had a file matching the `--log` path for 10 looks in a row (it warns after 2: is the path right?),
 and `1` when the first look fails or its stdout is closed before a match; a box meant to run but not running
 (`loading`, say) keeps the wait going for 10 looks at most since a box was last read, and a look whose
 instances request failed does not count. A pattern

@@ -839,6 +839,47 @@ fn a_closed_stdout_ends_a_wait_with_exit_code_1_not_as_a_match() {
 }
 
 #[test]
+fn a_log_path_git_bash_rewrote_is_read_as_typed_and_a_windows_one_is_refused() {
+    let home = empty_dir("msys");
+    let mut env = key_env(&home, ENV_KEY);
+    env.push(("MSYSTEM", std::ffi::OsStr::new("MINGW64")));
+    env.push((
+        "EXEPATH",
+        std::ffi::OsStr::new("C:\\Program Files\\Git\\bin"),
+    ));
+    let repaired = vas_with(
+        account,
+        &[
+            "--ssh",
+            "--log",
+            "C:/Program Files/Git/root/runs/s1/run.log",
+        ],
+        &env,
+        &[],
+    );
+    assert_eq!(repaired.code, Some(0), "{}", repaired.stderr);
+    assert!(
+        repaired.stderr.contains(
+            "vas: --log: Git Bash rewrote /root/runs/s1/run.log as C:/Program Files/Git/root/runs/s1/run.log; read as /root/runs/s1/run.log"
+        ),
+        "{}",
+        repaired.stderr
+    );
+    let refused = vas_with(account, &["--ssh", "--log", "D:/runs/run.log"], &env, &[]);
+    std::fs::remove_dir_all(&home).unwrap();
+    assert_eq!(refused.code, Some(2), "{}", refused.stderr);
+    assert!(
+        refused.stderr.contains("is not a path on the box") && refused.stderr.contains("//root/"),
+        "{}",
+        refused.stderr
+    );
+    assert!(
+        refused.seen.lock().unwrap().is_empty(),
+        "refused before any request"
+    );
+}
+
+#[test]
 fn grep_needs_a_log_and_a_pattern_of_one_line() {
     let home = empty_dir("grep");
     let env = key_env(&home, ENV_KEY);

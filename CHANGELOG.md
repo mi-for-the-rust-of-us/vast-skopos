@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+
+- `vas --ssh --log /root/...` typed in Git Bash read `(no file matches)` on every box. Git Bash rewrites an
+  argument that looks like a POSIX path before a Windows program sees it (`C:/Program Files/Git/root/...`), and
+  a path with no glob character was always rewritten (reproduced live on 2026-10-26). `vas` now reads such a
+  path as typed again when it starts with Git Bash's own root (known from `MSYSTEM` and `EXEPATH`), and says
+  so on stderr. Another Windows path (`/tmp/...` mapped to the temp folder) is refused with exit 2 and the
+  workarounds (`//tmp/...`, `MSYS_NO_PATHCONV=1`); `--grep` and `--until` patterns get the same repair.
+- `--until` waited forever when no box had a file matching the `--log` path: such a look counted as a box
+  read. It now warns on stderr after 2 such looks (`is the path right?`) and gives up with exit 3 after 10
+  in a row (a file appearing on any box resets the count). `until::Verdict::NoFile`, `until::End::NoFile`,
+  `until::NO_FILE_WARN_LOOKS`, `until::NO_FILE_LOOKS`, `until::Wait::looks_without_file`.
+
 ### Added
 
 - `vas --wide`: a `DIRECT` column after `SSH`, the box's direct `ssh` address past vast.ai's proxy (its

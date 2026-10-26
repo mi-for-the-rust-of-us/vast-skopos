@@ -87,15 +87,61 @@ fn a_log_the_box_could_not_give_is_no_box_read() {
 }
 
 #[test]
-fn a_box_read_without_a_match_yet_is_read_whatever_its_file_says() {
+fn a_box_read_without_a_match_yet_is_read_and_one_without_the_file_is_not() {
     let one = [instance(1, "running", "running")];
     assert_eq!(verdict(&one, &[not_yet()]), Verdict::Read);
     assert_eq!(
         verdict(&one, &[read("vas-no-file\n")]),
-        Verdict::Read,
-        "the file may not be written yet"
+        Verdict::NoFile,
+        "no file matches the path: not written yet, or the path is wrong"
     );
-    assert_eq!(verdict(&one, &[read("vas-not-a-file:/r\n")]), Verdict::Read);
+    assert_eq!(
+        verdict(&one, &[read("vas-not-a-file:/r\n")]),
+        Verdict::NoFile
+    );
+    // An exact path that exists on one box of two (seed 1's log on box 2): the wait goes on.
+    let two = [
+        instance(1, "running", "running"),
+        instance(2, "running", "running"),
+    ];
+    assert_eq!(
+        verdict(&two, &[read("vas-no-file\n"), not_yet()]),
+        Verdict::Read
+    );
+}
+
+#[test]
+fn a_path_no_box_has_a_file_for_warns_then_ends_the_wait() {
+    use vast_skopos::until::{NO_FILE_LOOKS, NO_FILE_WARN_LOOKS};
+    let mut wait = Wait::default();
+    for n in 1..NO_FILE_LOOKS {
+        assert_eq!(wait.record(Verdict::NoFile), None, "look {n}");
+        assert_eq!(wait.looks_without_file(), n);
+    }
+    const {
+        assert!(
+            NO_FILE_WARN_LOOKS < NO_FILE_LOOKS,
+            "the warning comes first"
+        );
+    };
+    assert_eq!(wait.record(Verdict::NoFile), Some(End::NoFile));
+    // A file appearing starts the count afresh, and so the wait goes on.
+    let mut wait = Wait::default();
+    for _ in 1..NO_FILE_LOOKS {
+        let _ = wait.record(Verdict::NoFile);
+    }
+    assert_eq!(wait.record(Verdict::Read), None);
+    assert_eq!(wait.looks_without_file(), 0);
+    assert_eq!(wait.record(Verdict::NoFile), None);
+    // A look of boxes read without the file is no look of nothing to read: ssh works.
+    let mut wait = Wait::default();
+    assert_eq!(wait.record(Verdict::Unread), None);
+    assert_eq!(wait.record(Verdict::NoFile), None);
+    assert_eq!(
+        wait.record(Verdict::Unread),
+        None,
+        "the unread count started afresh"
+    );
 }
 
 #[test]
