@@ -97,6 +97,22 @@ pub enum SkoposError {
         /// The reason (`ssh`'s own last line when it gave one).
         message: String,
     },
+
+    /// The `ssh` probe of one box failed by both routes: the proxy never reached it, and its direct
+    /// address (past the proxy) failed too.
+    #[error(
+        "failed to probe {target} over ssh: {message} (direct {direct_target}: {direct_message})"
+    )]
+    SshRoutes {
+        /// The proxy's `host:port`.
+        target: String,
+        /// Why the proxy failed (it never reached the box).
+        message: String,
+        /// The direct address's `host:port`.
+        direct_target: String,
+        /// Why the direct address failed.
+        direct_message: String,
+    },
 }
 
 /// The crate's result type.
@@ -164,17 +180,41 @@ impl SkoposError {
     /// assert!(ssh("kex_exchange_identification: Connection closed by remote host").is_unreachable());
     /// assert!(!ssh("root@ssh3.vast.ai: Permission denied (publickey).").is_unreachable());
     /// assert!(!SkoposError::Http { endpoint: "/".to_owned(), message: "timed out".to_owned() }.is_unreachable());
+    /// // By both routes: unreachable only if neither reached the box.
+    /// let routes = |direct: &str| SkoposError::SshRoutes { target: "ssh6.vast.ai:10732".to_owned(),
+    ///   message: "Connection refused".to_owned(), direct_target: "79.117.26.24:20674".to_owned(),
+    ///   direct_message: direct.to_owned() };
+    /// assert!(routes("Connection refused").is_unreachable());
+    /// assert!(!routes("Permission denied (publickey).").is_unreachable());
     /// ```
     #[must_use]
     pub fn is_unreachable(&self) -> bool {
-        if let Self::Ssh { message, .. } = self {
-            let reason = message.to_ascii_lowercase();
-            UNREACHABLE_WORDS.iter().any(|words| reason.contains(words))
-                && !SESSION_WORDS.iter().any(|words| reason.contains(words))
-        } else {
-            false
+        match self {
+            Self::Ssh { message, .. } => never_reached(message),
+            // Unreachable by both routes, or the box was reached by one of them.
+            Self::SshRoutes {
+                message,
+                direct_message,
+                ..
+            } => never_reached(message) && never_reached(direct_message),
+            Self::NoApiKey { .. }
+            | Self::KeyFile { .. }
+            | Self::ConfigFile { .. }
+            | Self::ConfigLine { .. }
+            | Self::Status { .. }
+            | Self::RateLimited { .. }
+            | Self::Http { .. }
+            | Self::Json { .. } => false,
         }
     }
+}
+
+/// Whether a probe's `reason` says that `ssh` never reached the box (see
+/// [`SkoposError::is_unreachable`]).
+fn never_reached(reason: &str) -> bool {
+    let reason = reason.to_ascii_lowercase();
+    UNREACHABLE_WORDS.iter().any(|words| reason.contains(words))
+        && !SESSION_WORDS.iter().any(|words| reason.contains(words))
 }
 
 /// What OpenSSH says, lower-cased, of a session that was open and then dropped: a reset or a close

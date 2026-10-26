@@ -198,6 +198,11 @@ fn a_failed_probe_and_every_log_state_are_objects() {
         "a refused connection never reached the box"
     );
     assert!(
+        lines[0]["probe"]["direct_error"].is_null(),
+        "no direct route was tried: the key is there, null"
+    );
+    assert_eq!(lines[1]["probe"]["route"], "proxy");
+    assert!(
         lines[0]["probe"].get("gpus").is_none(),
         "an error has no readings"
     );

@@ -187,8 +187,13 @@ ID        GPU          VRAM  $/H    CUDA  DISK   UP/DOWN Mb/s  REL %  MAX DAYS  
 | `vas offers [FLAGS]` | the offers for rent that pass the flags, cheapest first; no key needed ([below](#vas-offers)) |
 
 `--ssh` uses your system `ssh` with `BatchMode=yes`, `ConnectTimeout=10` and keep-alives, gives
-each probe 30 s in all (and `nvidia-smi` 20 s on the box), and makes **one attempt** per box per
-refresh: a box that refuses is reported in its row, never retried in a loop. The row says what
+each probe 30 s in all (and `nvidia-smi` 20 s on the box), and makes **one attempt per route** per box per
+refresh: vast.ai's proxy (the `SSH` column) and, only when the proxy never reached the box, the box's direct
+address (`DIRECT` under `--wide`). A box that refuses is reported in its row, never retried in a loop.
+Readings that came by the direct route say so (`(direct) s0/train.log: ...`); a box that neither route
+reached says both reasons: `UNREACHABLE 4m: Connection refused (direct 79.117.26.24:20674: Connection
+refused)`. A direct address can be closed by design (on 2026-10-26 one host sat behind a router that does
+not forward it), so its refusal alone says nothing against the box. The row says what
 happened, how old the box is, and `ssh`'s own last error line: `UNREACHABLE 4m: ssh: connect to host
 ssh3.vast.ai port 32456: Connection refused` when `ssh` never reached the box (refused, timed out, no route,
 a name that does not resolve, closed or reset before the session, nothing back within 30 s), `SSH FAILED 4m: ...`
@@ -323,15 +328,17 @@ about two seconds of a $0.19/h box, and vast.ai sends the credit with float nois
 
 ```text
 $ vas --compact --ssh --log '/root/runs/*/train.log'
-{"age_s":8100,"at":1792250000,"cost":2.025,"cpu_name":"AMD EPYC 7K62 48-Core Processor","direct_host":"180.189.55.38","direct_port":55814,"dlperf":199.2,"dph":0.9,"driver_version":"580.142","gpu_name":"RTX 5090","host_id":406325,"id":56362434,"intended":"running","kind":"box","label":"me36 box 2","machine_id":100682,"num_gpus":1,"pcie_bw":26.9,"probe":{"clock_trend":null,"gpus":[{"index":0,"mem_total_mib":32607,"mem_used_mib":29400,"other_mem_mib":10,"power_default_w":575,"power_limit_w":575,"power_w":560,"sm_max_mhz":3090,"sm_mhz":2900,"throttle":[],"util_pct":99}],"log":{"file":"/root/runs/s0/train.log","line":"e41 loss 0.3","state":"line"},"util_trend":null},"ssh_host":"ssh6.vast.ai","ssh_port":36000,"status":"running","status_msg":null,"where":"South Korea, KR"}
+{"age_s":8100,"at":1792250000,"cost":2.025,"cpu_name":"AMD EPYC 7K62 48-Core Processor","direct_host":"180.189.55.38","direct_port":55814,"dlperf":199.2,"dph":0.9,"driver_version":"580.142","gpu_name":"RTX 5090","host_id":406325,"id":56362434,"intended":"running","kind":"box","label":"me36 box 2","machine_id":100682,"num_gpus":1,"pcie_bw":26.9,"probe":{"clock_trend":null,"gpus":[{"index":0,"mem_total_mib":32607,"mem_used_mib":29400,"other_mem_mib":10,"power_default_w":575,"power_limit_w":575,"power_w":560,"sm_max_mhz":3090,"sm_mhz":2900,"throttle":[],"util_pct":99}],"log":{"file":"/root/runs/s0/train.log","line":"e41 loss 0.3","state":"line"},"route":"proxy","util_trend":null},"ssh_host":"ssh6.vast.ai","ssh_port":36000,"status":"running","status_msg":null,"where":"South Korea, KR"}
 {"at":1792250000,"burn":0.9,"credit":12.93,"hours_left":14.4,"kind":"money","running":1,"unsure":{}}
 ```
 
-`probe` is `null` for a box not probed (no `--ssh`, or not running), `{"error": "...", "error_kind": "unreachable"}` when the
-probe failed (`error_kind` is `unreachable` when `ssh` never reached the box, else `failed`),
+`probe` is `null` for a box not probed (no `--ssh`, or not running), `{"error": "...", "error_kind": "unreachable", "direct_error": null}`
+when the probe failed (`error_kind` is `unreachable` when `ssh` never reached the box, else `failed`;
+`direct_error` is why the direct address failed too, `null` when it was not tried),
 else `gpus` (per GPU: `util_pct`, `mem_used_mib`, `mem_total_mib`, `other_mem_mib`, `power_w`,
 `power_limit_w`, `power_default_w`, `sm_mhz`, `sm_max_mhz` and `throttle`, each `null` when the box did not
-say), `log`, `util_trend` and `clock_trend` (`null` in a one-shot, else the last GPU samples of a `--watch`,
+say), `log`, `route` (`proxy`, or `direct` when the readings came past the proxy), `util_trend` and
+`clock_trend` (`null` in a one-shot, else the last GPU samples of a `--watch`,
 see above); `log` is `null` without `--log`, else an object whose `state` is `line`, `empty`,
 `not_a_file`, `no_match` or `unreadable`, and under `--grep` also `no_matching_line` or `pattern_refused`
 (each with its `file`). `status_msg` is vast.ai's own message on the box, as the API

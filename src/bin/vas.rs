@@ -50,8 +50,9 @@ enum Command {
 #[allow(clippy::doc_markdown)]
 #[derive(Debug, clap::Args)]
 struct LookArgs {
-    /// Also ask every running box over ssh (once each): from nvidia-smi, the GPUs' utilisation,
-    /// memory, power limit, clock and throttle reasons, and the memory held by anyone else.
+    /// Also ask every running box over ssh (once each, and once more at its direct address when the
+    /// proxy never reached it): from nvidia-smi, the GPUs' utilisation, memory, power limit, clock
+    /// and throttle reasons, and the memory held by anyone else.
     #[arg(long)]
     ssh: bool,
     /// With --ssh: for the newest file matching this path or glob on each box, print its last two

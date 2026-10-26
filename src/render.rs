@@ -8,7 +8,7 @@ use crate::instance::{Account, Instance, shortened, whole_secs};
 use crate::market::{LEARNING_LOOKS, MarketWatch, OfferKey};
 use crate::offer::{OFFER_CAP, Offer, OfferChanges, OfferPage, OfferQuery, OfferSort};
 use crate::probe::{
-    GpuReading, LOG_WIDTH, LogReading, Probe, ProbeOutcome, mib_to_gib, outcome_at,
+    GpuReading, LOG_WIDTH, LogReading, Probe, ProbeOutcome, Route, mib_to_gib, outcome_at,
 };
 use crate::runway::Runway;
 use crate::trend::Trend;
@@ -294,6 +294,11 @@ pub fn log_cell(log: Option<&LogReading>) -> String {
 ///   "UNREACHABLE 4m: ssh: connect to host ssh3.vast.ai port 32456: Connection refused");
 /// let key = SkoposError::Ssh { target: "h:1".to_owned(), message: "Permission denied (publickey).".to_owned() };
 /// assert_eq!(failure_cell(&key, None), "SSH FAILED: Permission denied (publickey).");
+/// let both = SkoposError::SshRoutes { target: "ssh6.vast.ai:10732".to_owned(),
+///   message: "Connection refused".to_owned(), direct_target: "79.117.26.24:20674".to_owned(),
+///   direct_message: "Connection refused".to_owned() };
+/// assert_eq!(failure_cell(&both, Some(240.0)),
+///   "UNREACHABLE 4m: Connection refused (direct 79.117.26.24:20674: Connection refused)");
 /// ```
 #[doc(hidden)]
 #[must_use]
@@ -303,11 +308,23 @@ pub fn failure_cell(error: &SkoposError, age_secs: Option<f64>) -> String {
     } else {
         "SSH FAILED"
     };
-    let reason = if let SkoposError::Ssh { message, .. } = error {
+    let reason = match error {
         // BORROW: explicit clone -- the cell owns the reason it shows
-        message.clone()
-    } else {
-        error.to_string()
+        SkoposError::Ssh { message, .. } => message.clone(),
+        SkoposError::SshRoutes {
+            message,
+            direct_target,
+            direct_message,
+            ..
+        } => format!("{message} (direct {direct_target}: {direct_message})"),
+        SkoposError::NoApiKey { .. }
+        | SkoposError::KeyFile { .. }
+        | SkoposError::ConfigFile { .. }
+        | SkoposError::ConfigLine { .. }
+        | SkoposError::Status { .. }
+        | SkoposError::RateLimited { .. }
+        | SkoposError::Http { .. }
+        | SkoposError::Json { .. } => error.to_string(),
     };
     let aged = age_secs.map_or_else(String::new, |secs| format!(" {}", age(secs)));
     format!("{label}{aged}: {reason}")
@@ -461,9 +478,16 @@ pub fn table(
             let (cells, last) = match outcome_at(probes, n) {
                 Some(Ok(p)) => {
                     let (util, mem) = gpu_cells(p);
+                    let last = log_cell(p.log.as_ref());
+                    // Readings that came past the proxy say so.
+                    let last = if matches!(p.route, Route::Direct) {
+                        format!("(direct) {last}")
+                    } else {
+                        last
+                    };
                     (
                         [util, mem, other_cell(p), power_cell(p), clock_cell(p)],
-                        log_cell(p.log.as_ref()),
+                        last,
                     )
                 }
                 Some(Err(e)) => (

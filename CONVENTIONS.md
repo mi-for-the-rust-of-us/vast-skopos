@@ -387,9 +387,11 @@ loop, or print and stop).
   purpose so the box's shell expands the glob, and the `--grep` pattern, ALWAYS
   single-quoted (`probe::shell_quoted`, each `'` written `'\''`) so the box's shell
   expands nothing in it. A third value is a change of rule, with its own review.
-- **One attempt.** `BatchMode=yes`, `ConnectTimeout=10`, and no retry loop: a box
-  that refuses is reported in its row, and what to do about it is a person's call,
-  made from the dashboard. One session per probe too (`ControlMaster=no`,
+- **One attempt per route.** `BatchMode=yes`, `ConnectTimeout=10`, and no retry loop: the
+  proxy once and, only when it never reached the box (`SkoposError::is_unreachable`; a
+  refused key will not change with the route), the box's direct address once
+  (`probe::probe_routes`). A box that refuses is reported in its row, with both reasons, and
+  what to do about it is a person's call, made from the dashboard. One session per probe too (`ControlMaster=no`,
   `ControlPath=none`): a shared master of the user's config would hold the pipes open.
 - **One question per `nvidia-smi` query, when a driver may lack the field.** The
   utilisation and memory, the power and clocks, the clock event reasons (asked under

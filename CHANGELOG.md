@@ -12,6 +12,13 @@ All notable changes to this project are documented here. The format is based on
   `public_ipaddr` and the host port its `ports` map to 22; both read live on 2026-10-26). `--compact` carries
   it as `direct_host` and `direct_port`. `Instance::public_ipaddr`, `Instance::direct_ssh_port`,
   `Instance::direct_endpoint`.
+- `vas --ssh` tries the direct route when the proxy never reached a box: one more attempt, at the box's
+  direct address, only when the proxy's failure is a connection one (a refused key would be refused by
+  either route). Readings that came that way say `(direct)` in the last cell, and `--compact`'s probe gains
+  `route` (`proxy` or `direct`). A box neither route reached reads `UNREACHABLE 4m: <proxy reason> (direct
+  HOST:PORT: <reason>)`, and is `UNREACHABLE` only if neither route reached it; `--compact`'s error object
+  gains `direct_error`. One attempt per route, never a loop (CONVENTIONS.md says so). `probe::Route`,
+  `Probe::route`, `SkoposError::SshRoutes`.
 
 ### Documentation
 

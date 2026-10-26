@@ -201,6 +201,18 @@ impl LogQuery {
     }
 }
 
+/// Which way a probe reached the box.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum Route {
+    /// Through vast.ai's `ssh` proxy (the `SSH` column's address).
+    #[default]
+    Proxy,
+    /// Through the box's direct address, past the proxy ([`Instance::direct_endpoint`]), after the
+    /// proxy never reached it.
+    Direct,
+}
+
 /// What one probe found.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[non_exhaustive]
@@ -209,6 +221,8 @@ pub struct Probe {
     pub gpus: Vec<GpuReading>,
     /// What `--log` found; `None` when `--log` was not given.
     pub log: Option<LogReading>,
+    /// Which way the probe reached the box.
+    pub route: Route,
 }
 
 /// What a look learned of one box over `ssh`.
@@ -491,7 +505,11 @@ pub fn parse_output(stdout: &str) -> Probe {
     merge_power(&mut gpus, power);
     merge_throttle(&mut gpus, throttle);
     merge_apps(&mut gpus, apps);
-    Probe { gpus, log }
+    Probe {
+        gpus,
+        log,
+        route: Route::Proxy,
+    }
 }
 
 /// The PCI bus id of GPU `index` in the apps section's first half (`0, 00000000:C1:00.0`), in lower
@@ -808,10 +826,64 @@ fn reap(child: &mut Child) {
     let _ = child.wait();
 }
 
+/// One box's probe over its two routes, `probe_one` being one attempt at one `host:port`: the proxy
+/// once; then, only when the proxy never reached the box ([`SkoposError::is_unreachable`]: a refused
+/// key will not change with the route) and the box has a direct address, that address once. A box
+/// with no proxy endpoint is probed at its direct address. Never a third attempt; `None` without
+/// either endpoint.
+fn probe_routes(
+    proxy: Option<(&str, u16)>,
+    direct: Option<(&str, u16)>,
+    mut probe_one: impl FnMut(&str, u16) -> Result<Probe>,
+) -> ProbeOutcome {
+    let by_direct = |outcome: Result<Probe>| {
+        outcome.map(|mut probe| {
+            probe.route = Route::Direct;
+            probe
+        })
+    };
+    let Some((host, port)) = proxy else {
+        let (host, port) = direct?;
+        return Some(by_direct(probe_one(host, port)));
+    };
+    let first = probe_one(host, port);
+    let Err(proxy_error) = first else {
+        return Some(first);
+    };
+    let Some((direct_host, direct_port)) = direct.filter(|d| *d != (host, port)) else {
+        return Some(Err(proxy_error));
+    };
+    if !proxy_error.is_unreachable() {
+        return Some(Err(proxy_error));
+    }
+    Some(
+        by_direct(probe_one(direct_host, direct_port)).map_err(|direct_error| {
+            SkoposError::SshRoutes {
+                target: format!("{host}:{port}"),
+                message: ssh_reason(&proxy_error),
+                direct_target: format!("{direct_host}:{direct_port}"),
+                direct_message: ssh_reason(&direct_error),
+            }
+        }),
+    )
+}
+
+/// The reason a probe gave (`ssh`'s own words), or the whole error for one that is not a probe's.
+fn ssh_reason(error: &SkoposError) -> String {
+    if let SkoposError::Ssh { message, .. } = error {
+        // BORROW: explicit clone -- the combined error owns its parts
+        message.clone()
+    } else {
+        error.to_string()
+    }
+}
+
 /// Probes every running box that has an `ssh` endpoint, all at once (one thread each).
 ///
 /// Returns one outcome per instance, in the instances' order: `None` for a box that is not running
-/// or has no endpoint. One attempt per box ([`ssh_probe`]).
+/// or has neither endpoint. One attempt per route: the proxy, then, only when it never reached the
+/// box, the box's direct address ([`Instance::direct_endpoint`]); see [`Probe::route`] for which way
+/// the readings came, and [`SkoposError::SshRoutes`] for a box neither route reached.
 #[must_use]
 pub fn probe_all(
     instances: &[Instance],
@@ -826,8 +898,12 @@ pub fn probe_all(
             .iter()
             .map(|i| {
                 scope.spawn(move || {
-                    let (host, port) = i.ssh_endpoint().filter(|_| i.is_running())?;
-                    Some(ssh_probe(host, port, identity, log))
+                    if !i.is_running() {
+                        return None;
+                    }
+                    probe_routes(i.ssh_endpoint(), i.direct_endpoint(), |host, port| {
+                        ssh_probe(host, port, identity, log)
+                    })
                 })
             })
             .collect();
@@ -838,6 +914,7 @@ pub fn probe_all(
                 handle.join().unwrap_or_else(|_| {
                     let target = i
                         .ssh_endpoint()
+                        .or_else(|| i.direct_endpoint())
                         .map_or_else(|| String::from("?"), |(h, p)| format!("{h}:{p}"));
                     Some(Err(SkoposError::ssh(target, "the probe thread panicked")))
                 })
@@ -954,13 +1031,124 @@ pub fn ssh_probe(
 }
 
 #[cfg(test)]
+// EXPLICIT: test code -- a failed unwrap or panic IS the failed assertion; and the fake probers
+// return the `Result` that `probe_routes` takes.
+#[allow(clippy::unwrap_used, clippy::panic, clippy::unnecessary_wraps)]
 mod tests {
-    use super::{no_answer, unfinished};
-    use crate::error::SkoposError;
+    use super::{Probe, Route, no_answer, probe_routes, unfinished};
+    use crate::error::{Result, SkoposError};
 
     #[test]
     fn a_probe_ssh_never_answered_reads_as_unreachable_and_one_cut_short_does_not() {
         assert!(SkoposError::ssh("h:1", no_answer()).is_unreachable());
         assert!(!SkoposError::ssh("h:1", unfinished()).is_unreachable());
+    }
+
+    const PROXY: (&str, u16) = ("ssh6.vast.ai", 10_732);
+    const DIRECT: (&str, u16) = ("79.117.26.24", 20_674);
+
+    /// [`probe_routes`] with a fake one-attempt prober answering `answer(host, port)`; the outcome
+    /// and every attempt made, in order.
+    fn routes(
+        proxy: Option<(&'static str, u16)>,
+        direct: Option<(&'static str, u16)>,
+        answer: impl Fn(&str, u16) -> Result<Probe>,
+    ) -> (Option<Result<Probe>>, Vec<(String, u16)>) {
+        let mut tried = Vec::new();
+        let outcome = probe_routes(proxy, direct, |host, port| {
+            tried.push((host.to_owned(), port));
+            answer(host, port)
+        });
+        (outcome, tried)
+    }
+
+    fn refused(host: &str, port: u16) -> Result<Probe> {
+        Err(SkoposError::ssh(
+            format!("{host}:{port}"),
+            format!("ssh: connect to host {host} port {port}: Connection refused"),
+        ))
+    }
+
+    fn answered(_: &str, _: u16) -> Result<Probe> {
+        Ok(Probe::default())
+    }
+
+    fn tried(attempts: &[(&str, u16)]) -> Vec<(String, u16)> {
+        attempts.iter().map(|&(h, p)| (h.to_owned(), p)).collect()
+    }
+
+    #[test]
+    fn a_proxy_that_answers_is_the_only_attempt() {
+        let (outcome, attempts) = routes(Some(PROXY), Some(DIRECT), answered);
+        assert_eq!(outcome.unwrap().unwrap().route, Route::Proxy);
+        assert_eq!(attempts, tried(&[PROXY]));
+    }
+
+    #[test]
+    fn a_proxy_that_never_reached_the_box_is_followed_by_one_direct_attempt() {
+        let direct_only = |host: &str, port: u16| {
+            if (host, port) == DIRECT {
+                Ok(Probe::default())
+            } else {
+                refused(host, port)
+            }
+        };
+        let (outcome, attempts) = routes(Some(PROXY), Some(DIRECT), direct_only);
+        assert_eq!(outcome.unwrap().unwrap().route, Route::Direct);
+        assert_eq!(attempts, tried(&[PROXY, DIRECT]));
+        // Both refuse: one attempt each, and both reasons.
+        let (outcome, attempts) = routes(Some(PROXY), Some(DIRECT), refused);
+        assert_eq!(attempts, tried(&[PROXY, DIRECT]), "never a third attempt");
+        let error = outcome.unwrap().unwrap_err();
+        assert!(error.is_unreachable(), "{error}");
+        let SkoposError::SshRoutes {
+            target,
+            direct_target,
+            direct_message,
+            ..
+        } = &error
+        else {
+            panic!("both routes: {error:?}");
+        };
+        assert_eq!(
+            (target.as_str(), direct_target.as_str()),
+            ("ssh6.vast.ai:10732", "79.117.26.24:20674")
+        );
+        assert!(
+            direct_message.contains("Connection refused"),
+            "{direct_message}"
+        );
+    }
+
+    #[test]
+    fn a_box_the_proxy_reached_is_not_tried_again_by_another_route() {
+        let key_refused = |host: &str, port: u16| {
+            Err(SkoposError::ssh(
+                format!("{host}:{port}"),
+                "root@ssh6.vast.ai: Permission denied (publickey).",
+            ))
+        };
+        let (outcome, attempts) = routes(Some(PROXY), Some(DIRECT), key_refused);
+        assert_eq!(
+            attempts,
+            tried(&[PROXY]),
+            "a refused key is refused by any route"
+        );
+        assert!(matches!(outcome, Some(Err(SkoposError::Ssh { .. }))));
+    }
+
+    #[test]
+    fn without_a_direct_address_or_without_a_proxy_one_route_is_tried() {
+        let (outcome, attempts) = routes(Some(PROXY), None, refused);
+        assert_eq!(attempts, tried(&[PROXY]));
+        assert!(matches!(outcome, Some(Err(SkoposError::Ssh { .. }))));
+        let (outcome, attempts) = routes(None, Some(DIRECT), answered);
+        assert_eq!(attempts, tried(&[DIRECT]));
+        assert_eq!(outcome.unwrap().unwrap().route, Route::Direct);
+        let (outcome, attempts) = routes(None, None, answered);
+        assert!(outcome.is_none() && attempts.is_empty());
+        // A direct address equal to the proxy's is no second route.
+        let (_, attempts) = routes(Some(PROXY), Some(PROXY), refused);
+        assert_eq!(attempts, tried(&[PROXY]));
     }
 }

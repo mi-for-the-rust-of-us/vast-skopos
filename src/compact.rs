@@ -17,9 +17,10 @@
 use serde_json::{Value, json};
 
 use crate::error::Result;
+use crate::error::SkoposError;
 use crate::instance::whole_secs;
 use crate::instance::{Account, Instance};
-use crate::probe::{LogReading, Probe, ProbeOutcome, outcome_at};
+use crate::probe::{LogReading, Probe, ProbeOutcome, Route, outcome_at};
 use crate::runway::Runway;
 use crate::trend::{GpuChange, Trend};
 
@@ -52,6 +53,21 @@ fn log_json(log: Option<&LogReading>) -> Value {
     }
 }
 
+/// Why the direct address failed, for a probe that failed by both routes; `None` when no direct
+/// route was tried.
+fn direct_error(error: &SkoposError) -> Option<String> {
+    if let SkoposError::SshRoutes {
+        direct_target,
+        direct_message,
+        ..
+    } = error
+    {
+        Some(format!("{direct_target}: {direct_message}"))
+    } else {
+        None
+    }
+}
+
 /// One probe: its GPUs and its log, or the reason it failed; `null` when the box was not probed
 /// (`--ssh` not given, or the box not running).
 fn probe_json(
@@ -64,6 +80,7 @@ fn probe_json(
         Some(Err(e)) => json!({
             "error": e.to_string(),
             "error_kind": if e.is_unreachable() { "unreachable" } else { "failed" },
+            "direct_error": direct_error(e),
         }),
         Some(Ok(p)) => json!({
             "gpus": p.gpus.iter().map(|g| json!({
@@ -80,6 +97,10 @@ fn probe_json(
                 "throttle": g.throttle_words(),
             })).collect::<Vec<_>>(),
             "log": log_json(p.log.as_ref()),
+            "route": match p.route {
+                Route::Proxy => "proxy",
+                Route::Direct => "direct",
+            },
             "util_trend": trend,
             "clock_trend": clock_trend,
         }),
