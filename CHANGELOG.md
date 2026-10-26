@@ -80,6 +80,15 @@ All notable changes to this project are documented here. The format is based on
   cannot say, verified against unverified against deverified, a box that stays `loading`, `UNREACHABLE` and
   `SSH FAILED`, wait or destroy, `--grep`, and waiting with `--until`; the first tutorial uses
   `--exclude-deverified`, the status line and the failure labels.
+- After the 2026-10-26 rental ([its report](docs/dogfooding/2026-10-26.md)):
+  - the FAQ explains a board limited in its firmware: `450W` reads as uncapped while idle, and shows as
+    `+power_cap` and a lower clock under load;
+  - it gives what 575, 500 and 450 W cost per step on one job: +8 % and +15 %, not shown in the price;
+  - it records the idle card reading 100 % again, DLPerf seeing some limits and missing others, and `LIMIT W`
+    matching host 406325's cap on a second day;
+  - it says that `status_msg` stays once a box runs, that a direct route may be closed, that an `ssh` which says
+    nothing reads `SSH FAILED`, and that `--until` ends on the first box that matches (and how to wait for each);
+  - the two tutorials say the same.
 
 ### Security
 
