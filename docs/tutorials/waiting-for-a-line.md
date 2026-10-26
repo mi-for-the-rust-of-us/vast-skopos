@@ -76,6 +76,19 @@ vas: --until: box 57641653 matched: epoch  60 | train 0.1145 | val(ema) 0.1501
 Both boxes reached epoch 60 in the same look; the first box in the table is the one named. (The `TREND` falling
 to `60` is the same moment seen from the GPU: the run is done.)
 
+**The first box ends the wait, not every box.** On 2026-10-26, two runs started four minutes apart, and a wait
+for epoch 10's archive line (`--watch 60 --until 'archived .*_e10\.|Traceback'`) ended after 8 looks
+(09:18:58 to 09:26:28 UTC) on the first box, while the second still read `(no line matches)`:
+
+```text
+... me38_l12_s0_d1/run.log: archived /root/src/askesis/reference/canvas/data/runs/me38_l12_s0_d1/canvas_ema_e10.safetensors
+... me38_l12_s1_d1/run.log: (no line matches)
+vas: --until: box 57787711 matched: archived /root/src/askesis/reference/canvas/data/runs/me38_l12_s0_d1/canvas_ema_e10.safetensors
+```
+
+To wait for every box, start a new wait after each match (the line on stderr names the box), or give each run a
+log path of its own and wait on each path. `vas` has no flag yet to wait on one box only.
+
 The rules, so a script can rely on them:
 
 | Exit code | When |

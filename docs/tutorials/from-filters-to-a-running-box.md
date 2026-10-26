@@ -165,7 +165,8 @@ limit the listing gives (`LIMIT W`); `--host ID` or `--machine ID` keeps only on
 vas offers --wide --host 406325
 ```
 
-(A listed figure is not a reading of the card: step 8 reads the card itself.)
+(A listed figure is not a reading of the card: step 8 reads the card itself. `LIMIT W` did match the cap of one
+host, 406325, on two days; whether it does for others is not known yet.)
 
 ## 6. Rent it, outside `vas`
 
@@ -230,7 +231,12 @@ GPU% (ssh)  VRAM       OTHER  POWER  CLOCK      LAST LOG / SSH ERROR
 - **`POWER`**: the power limit set on the card (`575W` is an RTX 5090 at its default). When the limit is
   lower than the default, the default follows (`400/575W`). `+power_cap` says the card is at its power limit
   right now, which every card is under full load: it is a limit **below the default** and a clock far under
-  its maximum that point at a setting on the box.
+  its maximum that point at a setting on the box. A board limited in its own firmware shows no default
+  (`450W`), and before the run, on an idle card, reads like an uncapped one: compare the number with the
+  model's reference too (575 W for an RTX 5090). Under load it shows, as `+power_cap` with a clock below that of
+  an uncapped card ([FAQ](../FAQ.md#the-gpu-reads-100--but-the-run-is-slower-than-it-should-be)).
+- **`GPU% (ssh)` on a box nobody uses yet** can read `100%`: an idle counter. With `0.0/32G` in `VRAM` and `-` in
+  `OTHER`, nobody is on the card.
 - **`CLOCK`**: the speed of the GPU's compute cores (the SM clock) now, over the highest it reaches, in MHz.
 - **`LAST LOG`**: the newest file matching `--log`, named by its last two path components, and its last
   non-blank line (`(no file matches)`, `(not a file)`, `(empty)` or `?` otherwise).
@@ -272,9 +278,10 @@ To wait for one line of the log (the first loss of a stage, say) rather than wat
 
 ## 10. When something looks wrong
 
-- **The GPU reads 100 % but the run is slow.** Look at `POWER` and `CLOCK`: a limit below the default, or a
-  thermal reason, with a clock far under its maximum (by whom, and why, is not something `vas` can tell), and
-  the clock history shows how much it costs you. Real example, power-capped boxes: [FAQ](../FAQ.md#the-gpu-reads-100--but-the-run-is-slower-than-it-should-be).
+- **The GPU reads 100 % but the run is slow.** Look at `POWER` and `CLOCK`: a limit below the default, a
+  number below the model's reference (a board limited in its firmware), or a thermal reason, with a clock far
+  under its maximum (by whom, and why, is not something `vas` can tell), and the clock history shows how much it
+  costs you. Real example, power-capped boxes: [FAQ](../FAQ.md#the-gpu-reads-100--but-the-run-is-slower-than-it-should-be).
 - **`OTHER` shows gigabytes.** Something outside your container is using the card (probably another user of
   the machine); `vas` cannot name it. The [FAQ](../FAQ.md#what-should-i-do-about-it) says what to gather and
   who to ask.

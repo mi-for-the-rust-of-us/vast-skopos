@@ -141,11 +141,22 @@ own id, deverified, and a DLPerf of 11.
 
 ### Can DLPerf or `LIMIT W` tell me that a host has capped the card?
 
-DLPerf cannot, as far as seen: on 2026-10-25 two RTX 5090s of one host read DLPerf 199.2, the same as an
-uncapped card, and `vas --ssh` read both capped at 500 of 600 W. `LIMIT W` (vast.ai's `gpu_max_power`, the
-power limit the listing gives) may: a third machine of that host listed 500 W the same day, and RTX 5090 offers
-listed anything from 400 to 575 W. That is one host, not a rule. The card's own reading, `vas --ssh`'s
-`POWER`, is the one that says what the run gets: read it on every box you rent.
+Not reliably, as far as seen:
+
+- **DLPerf saw some limits and missed others.** It missed host 406325's: on 2026-10-25 two RTX 5090s of that
+  host read DLPerf 199.2, the same as an uncapped card, and `vas --ssh` read both capped at 500 of 600 W; a
+  third box of that host read 199.2 and `500/600W` again on 10-26. It saw others: on 10-24 a box capped at
+  `475/600W` read 165.6 against an uncapped card's 198.9 (the same ratio as the watts), and on 10-26 a board
+  limited to 450 W in its firmware read 191.0, about 0.96 of 199.2, for a step about 1.06 times as long (see
+  [below](#the-gpu-reads-100--but-the-run-is-slower-than-it-should-be)). Why it sees one and not the other is
+  not known.
+- **`LIMIT W` (vast.ai's `gpu_max_power`, the power limit the listing gives) matched that host's cap twice.**
+  Machines 148820 (10-25) and 148821 (10-26) of host 406325 listed 500 W, the cap read on its rented cards.
+  RTX 5090 offers list anything from 400 to 575 W. That is one host, not a rule; the 450 W board's host had no
+  offer left to compare.
+
+The card's own reading, `vas --ssh`'s `POWER`, is the one that says what the run gets: read it on every box you
+rent.
 
 ### Verified, unverified, deverified: which should I filter?
 
@@ -202,8 +213,9 @@ Read the line under the table: for every box that is not running, `vas` prints v
 `57340012 loading: 46b4edaa8d47: Pull complete`. On 2026-10-24 two boxes read `loading -> running` at 2
 minutes of age while that message named the image's layers arriving: they were progressing, and both read
 `running` at the next look. A box whose message does not move for many minutes is another matter (three
-boxes on one deverified machine read `rebooting -> running` for up to 17 minutes that day). `--compact`
-carries every box's message as `status_msg`.
+boxes on one deverified machine read `rebooting -> running` for up to 17 minutes that day). Once a box runs,
+its message stays (on 2026-10-26: `success, running vastai/pytorch_cuda-13.0.3-auto/ssh`) and the table no
+longer prints it; `--compact` carries every box's message as `status_msg`, whatever its status.
 
 ### What does `--credit-log` write?
 
@@ -269,7 +281,11 @@ was reached, and does not guess. Nothing is retried: what to do about the box is
 The age is there for that choice. Three rentals (2026-10-17, 10-18 and 10-23) met boxes that read `running`
 at about 4 minutes while their `ssh` address refused every connection; each was destroyed unused, for a few
 cents. A box of a minute or two may still be starting: look again. If it still refuses after several minutes,
-try the direct address the dashboard gives (its public IP and the port mapped to 22) before giving up on it.
+try the direct address the dashboard gives before giving up on it: the box's public IP and the host port
+mapped to its port 22 (the API's `public_ipaddr` and `ports["22/tcp"]`; `vas` does not show them yet). It is
+not always open: on 2026-10-26 one healthy box answered on its direct address and the other refused it (its
+host sits behind a home router, by its private address), while both answered through the proxy. So a refused
+direct address alone is not a reason to destroy a box.
 Before you destroy it, run `vas --wide` once and note its `MACHINE`: `vas offers --exclude-machine ID` keeps
 it out of your next search. `SSH FAILED` is different: the box answered, so a refused key is fixed on your
 side (is your public key on your vast.ai account?), not by waiting.
@@ -279,8 +295,11 @@ side (is your public key on your vast.ai account?), not by waiting.
 On 2026-10-15 it read 0 % on boxes running at 97-99 %. `vas` shows what `nvidia-smi` says on the box, and
 not the API's figure. (One `nvidia-smi` sample is not a diagnosis either: it has read 100 % with 0 MiB used
 while nothing held the card, which is why a watch keeps a short history in `TREND`. Seen again on 2026-10-19 on
-an idle rented RTX 5090: 100 %, 2 MiB used, 129 W, 2,925 MHz, and no process listed by `nvidia-smi pmon`. A
-real load draws far more power and holds memory; read `VRAM` and `POWER` beside `GPU%`.)
+an idle rented RTX 5090: 100 %, 2 MiB used, 129 W, 2,925 MHz, and no process listed by `nvidia-smi pmon`. And
+again on 2026-10-26, on a box 2 to 6 minutes old that nobody had used yet: `100%` with `0.0/32G` and `-` in
+`OTHER`, in three looks; one `ssh` read 100 %, 2 MiB, 123 W, 37 °C and no compute process. Its speed check then
+matched the other boxes of its host to the tenth of a millisecond: no one else was on it. A real load draws far
+more power and holds memory; read `VRAM`, `OTHER` and `POWER` beside `GPU%`, not `GPU%` alone.)
 
 ### What does `--log` show?
 
@@ -317,7 +336,9 @@ no box could be read for 2 looks in a row (every probe failed or gave no readabl
 and `1` when the first look fails or its stdout is closed before a match; a box meant to run but not running
 (`loading`, say) keeps the wait going for 10 looks at most since a box was last read, and a look whose
 instances request failed does not count. A pattern
-can wait for success or failure at once: `--until 'initial loss|Traceback'`, then read the line it printed.
+can wait for success or failure at once: `--until 'initial loss|Traceback'`, then read the line it printed. The
+first box whose log matches ends the wait: to wait for each box, give each run a log path of its own and wait
+on each path (a box without the file reads as not matching yet), or start a new wait after each match.
 There is no time limit of its own: `timeout 3600 vas ...` gives one. See the tutorial
 [Waiting for a line](tutorials/waiting-for-a-line.md).
 
@@ -356,6 +377,26 @@ default, and the clock with its maximum, not the word alone. Second, a load that
 is intermittent, makes the watch say `began` and `ended` at each flip: that is what the card did. And the **same cap does not mean the same speed**: on those two boxes both were at
 `400/575W`, one ran at about 1,700 MHz and the other at about 2,100 (different silicon, cooling and
 workload: the cause was not determined). The limit alone does not tell the speed; the clock history does.
+
+**A board limited in its own firmware reads as uncapped while it is idle.** On 2026-10-26 a rented RTX 5090 read
+`450W`, with no default after it: its limit, its default AND its maximum (`power.max_limit`) were all 450 W. The
+board itself is the cap, and nothing on the box compares it with the RTX 5090's reference 575 W, so at the look
+before the run, on an idle card, `POWER` reads like an uncapped one. Under load the limit shows: `450W+power_cap`
+with the clock at about 2,200 of 3,090 MHz, against `500/600W+power_cap` and about 2,420 of 3,105 MHz on a 500 W
+box beside it (`+power_cap` alone is normal; the clock below its peers' is the tell). So read the number against
+the model's reference (575 W for an RTX 5090) before you deploy, not only against the default. (A default can be
+above the reference too: an add-in board read `500/600W`.) What the limits cost on the same job, an askesis
+training step:
+
+| Card | `POWER` | Step | Against 575 W |
+|---|---|---|---|
+| RTX 5090, 2026-10-24 (Texas) | `575W` | 46.9 ms | the reference |
+| RTX 5090, 2026-10-25 and 10-26 (host 406325, three boxes) | `500/600W+power_cap` | 50.6 to 50.8 ms | about +8 % |
+| RTX 5090, 2026-10-26 (Spain, host 205509) | `450W+power_cap` | 54.0 ms | about +15 % |
+
+On a three-hour run, the 450 W board cost about 11 minutes and $0.10 against the 500 W cap: not a reason to
+refuse a box, but worth knowing, since the price did not show it: the 575 W box cost $0.536/h, the 500 W ones
+$0.512 to $0.517/h, the 450 W one $0.521/h.
 
 **Someone else on the GPU.** On one of those boxes the card held 24,809 MiB while the only process of the
 box, the training, held 8,720: about 16 GiB belonged to something outside the container, and in ten one-second
