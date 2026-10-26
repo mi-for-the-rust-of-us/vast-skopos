@@ -185,10 +185,14 @@ fn clock_cell(probe: &Probe) -> String {
 
 /// The GPU-utilisation and memory cells from a probe.
 fn gpu_cells(probe: &Probe) -> (String, String) {
+    // An idle card whose counter is stuck at busy says so: `100%?`.
     let util = probe
         .gpus
         .iter()
-        .map(|g| format!("{}%", g.util_pct))
+        .map(|g| {
+            let doubt = if g.idle_counter() { "?" } else { "" };
+            format!("{}%{doubt}", g.util_pct)
+        })
         .collect::<Vec<_>>()
         .join(" ");
     let mem = probe
@@ -524,6 +528,7 @@ pub fn table(
         out.push_str("(no instances)\n");
     }
     out.push_str(&status_lines(instances));
+    out.push_str(&idle_lines(instances, probes));
     out.push_str(&money_line(instances, account));
     // What moved in the boxes' power since the last look, under the money (a watch that probes).
     for change in trend.map_or(&[][..], Trend::changes) {
@@ -563,6 +568,38 @@ pub fn status_lines(instances: &[Instance]) -> String {
             .as_deref()
             .map_or_else(|| String::from("?"), capped);
         let _ = writeln!(out, "{} {status}: {shown}", i.id);
+    }
+    out
+}
+
+/// A line for each GPU whose busy utilisation looks like an idle counter ([`GpuReading::idle_counter`]).
+///
+/// `57787711 gpu 0: 100% with no memory held and no process (an idle counter?)`; empty when there is
+/// none. `probes` holds one outcome per instance, as for [`table`].
+///
+/// ```
+/// use vast_skopos::{instance::Instance, probe::parse_output, render::idle_lines};
+/// let row = Instance::from_json(&serde_json::json!({"id": 57787711, "actual_status": "running"})).unwrap();
+/// let idle = parse_output("0, 100, 2, 32607\n---vas-power---\n---vas-apps---\n0, 00000000:C1:00.0\n\
+///                          ---vas-apps-by-gpu---\nvas-apps-ok\n");
+/// assert_eq!(idle_lines(std::slice::from_ref(&row), &[Some(Ok(idle))]),
+///   "57787711 gpu 0: 100% with no memory held and no process (an idle counter?)\n");
+/// assert_eq!(idle_lines(&[row], &[None]), "");
+/// ```
+#[must_use]
+pub fn idle_lines(instances: &[Instance], probes: &[ProbeOutcome]) -> String {
+    let mut out = String::new();
+    for (n, i) in instances.iter().enumerate() {
+        let Some(Ok(probe)) = outcome_at(probes, n) else {
+            continue;
+        };
+        for g in probe.gpus.iter().filter(|g| g.idle_counter()) {
+            let _ = writeln!(
+                out,
+                "{} gpu {}: {}% with no memory held and no process (an idle counter?)",
+                i.id, g.index, g.util_pct
+            );
+        }
     }
     out
 }

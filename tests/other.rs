@@ -329,3 +329,80 @@ fn a_gap_that_hovers_around_the_threshold_is_news_each_time_it_crosses_it() {
     trend.record(&[running()], &[outcome(&at(3_000))]);
     assert_eq!(trend.changes().len(), 0);
 }
+
+const BUS: &str = "0, 00000000:C1:00.0\n";
+
+#[test]
+fn a_busy_reading_with_no_memory_and_no_process_is_an_idle_counter() {
+    // 2026-10-26: a box nobody had used yet read 100 %, 2 MiB, and no compute process.
+    let idle = output(2, BUS, "", true);
+    let probe = parse_output(&idle);
+    assert_eq!(probe.gpus[0].processes, Some(0));
+    assert!(probe.gpus[0].idle_counter());
+    let text = table(
+        &[running()],
+        &[outcome(&idle)],
+        None,
+        TableOptions::new().ssh(true),
+        0.0,
+    );
+    let row = text.lines().nth(1).unwrap();
+    assert!(row.contains("100%?"), "{text}");
+    let lines: Vec<&str> = text.lines().collect();
+    let at = lines
+        .iter()
+        .position(|l| l.contains("an idle counter?"))
+        .unwrap();
+    assert_eq!(
+        lines[at],
+        "1 gpu 0: 100% with no memory held and no process (an idle counter?)"
+    );
+    assert!(
+        lines[at + 1].starts_with("credit "),
+        "before the money: {text}"
+    );
+    let json = json_lines(&[running()], &[outcome(&idle)], None, None, 0.0);
+    let first: serde_json::Value = serde_json::from_str(json.lines().next().unwrap()).unwrap();
+    assert_eq!(first["probe"]["gpus"][0]["processes"], 0, "{first}");
+}
+
+#[test]
+fn a_card_at_work_or_one_whose_processes_are_unknown_is_not_an_idle_counter() {
+    let not_idle = |text: &str, why: &str| {
+        let probe = parse_output(text);
+        assert!(!probe.gpus[0].idle_counter(), "{why}: {probe:?}");
+        let table = table(
+            &[running()],
+            &[outcome(text)],
+            None,
+            TableOptions::new().ssh(true),
+            0.0,
+        );
+        assert!(
+            !table.contains("100%?") && !table.contains("idle counter"),
+            "{why}: {table}"
+        );
+    };
+    // The training at work: one process, 7.7 GB.
+    let busy = output(7_700, BUS, "00000000:C1:00.0, 7600\n", true);
+    assert_eq!(parse_output(&busy).gpus[0].processes, Some(1));
+    not_idle(&busy, "a process at work");
+    // No process listed, but the memory is held: someone outside the container (`OTHER`).
+    not_idle(&output(16_000, BUS, "", true), "memory held");
+    // The process query did not end with its success line: unknown, never "no process".
+    let unknown = output(2, BUS, "", false);
+    assert_eq!(parse_output(&unknown).gpus[0].processes, None);
+    not_idle(&unknown, "the process list is unknown");
+    // A GPU whose bus id is not given cannot be matched to its processes.
+    let no_bus = output(2, "", "", true);
+    assert_eq!(parse_output(&no_bus).gpus[0].processes, None);
+    not_idle(&no_bus, "no bus id");
+    // Two processes are counted.
+    let two = output(
+        9_000,
+        BUS,
+        "00000000:C1:00.0, 4000\n00000000:c1:00.0, 4000\n",
+        true,
+    );
+    assert_eq!(parse_output(&two).gpus[0].processes, Some(2));
+}

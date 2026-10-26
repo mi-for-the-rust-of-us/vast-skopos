@@ -93,6 +93,7 @@ fn probe_json(
                 "power_limit_w": g.power_limit_w,
                 "power_default_w": g.power_default_w,
                 "power_max_w": g.power_max_w,
+                "processes": g.processes,
                 "sm_mhz": g.sm_mhz,
                 "sm_max_mhz": g.sm_max_mhz,
                 "throttle": g.throttle_words(),

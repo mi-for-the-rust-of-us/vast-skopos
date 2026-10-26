@@ -300,7 +300,9 @@ an idle rented RTX 5090: 100 %, 2 MiB used, 129 W, 2,925 MHz, and no process lis
 again on 2026-10-26, on a box 2 to 6 minutes old that nobody had used yet: `100%` with `0.0/32G` and `-` in
 `OTHER`, in three looks; one `ssh` read 100 %, 2 MiB, 123 W, 37 °C and no compute process. Its speed check then
 matched the other boxes of its host to the tenth of a millisecond: no one else was on it. A real load draws far
-more power and holds memory; read `VRAM`, `OTHER` and `POWER` beside `GPU%`, not `GPU%` alone.)
+more power and holds memory; read `VRAM`, `OTHER` and `POWER` beside `GPU%`, not `GPU%` alone. Since 0.4.0 `vas`
+does it for you: a GPU at 99 % or more with under 1 GiB in use and no process listed reads `100%?`, with a line
+under the table, `... 100% with no memory held and no process (an idle counter?)`.)
 
 ### `--log` with an exact path says `(no file matches)`, but the file is there
 

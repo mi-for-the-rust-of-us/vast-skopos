@@ -234,8 +234,8 @@ GPU% (ssh)  VRAM       OTHER  POWER  CLOCK      LAST LOG / SSH ERROR
   its maximum that point at a setting on the box. A board limited in its own firmware shows no default,
   but `vas` marks it with its model's reference: `450W<575` is an RTX 5090 board that cannot go above 450 W,
   against the model's 575 ([FAQ](../FAQ.md#the-gpu-reads-100--but-the-run-is-slower-than-it-should-be)).
-- **`GPU% (ssh)` on a box nobody uses yet** can read `100%`: an idle counter. With `0.0/32G` in `VRAM` and `-` in
-  `OTHER`, nobody is on the card.
+- **`GPU% (ssh)` on a box nobody uses yet** can read `100%`: an idle counter. `vas` marks it `100%?`, with a
+  line under the table, when the card holds no memory and lists no process: nobody is on the card.
 - **`CLOCK`**: the speed of the GPU's compute cores (the SM clock) now, over the highest it reaches, in MHz.
 - **`LAST LOG`**: the newest file matching `--log`, named by its last two path components, and its last
   non-blank line (`(no file matches)`, `(not a file)`, `(empty)` or `?` otherwise).

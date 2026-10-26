@@ -122,7 +122,7 @@ fn a_box_with_everything_and_a_box_with_nothing_have_the_same_keys() {
         b["probe"]["gpus"],
         json!([{"index": 0, "util_pct": 99, "mem_used_mib": 29_400, "mem_total_mib": 32_607,
                 "other_mem_mib": null,
-                "power_w": null, "power_limit_w": null, "power_default_w": null, "power_max_w": null,
+                "power_w": null, "power_limit_w": null, "power_default_w": null, "power_max_w": null, "processes": null,
                 "sm_mhz": null, "sm_max_mhz": null, "throttle": null}])
     );
     assert_eq!(

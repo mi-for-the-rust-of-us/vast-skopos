@@ -217,6 +217,12 @@ message of every box as `status_msg`.
 **The probe columns.** Under `--ssh`, in order: `GPU% (ssh)`, `VRAM`, `OTHER`, `POWER`, `CLOCK`, then, under
 `--watch`, `TREND` and `CLOCK TREND`, and `LAST LOG / SSH ERROR` last; each is explained below.
 
+**An idle counter.** A card has read 100 % with almost no memory used and no process three times (2026-10-15,
+10-19 and 10-26) while nothing held it. So a GPU that reads 99 % or more with under 1 GiB in use and no compute
+process listed shows `100%?` in `GPU% (ssh)`, with a line under the table: `57787711 gpu 0: 100% with no memory
+held and no process (an idle counter?)`. It is marked only when the process list came back whole: an unknown
+list is not "no process". `--compact` carries each GPU's `processes` (`null` when unknown).
+
 **The GPU trend.** One `nvidia-smi` sample is not a diagnosis (it has read 100 % with 0 MiB used while
 nothing held the card). Under `vas --ssh --watch N`, the table gains a `TREND` column after `CLOCK`: the
 last six samples of each box, oldest first, as the mean utilisation of its GPUs (`97 99 0 98 99 99`),
@@ -332,7 +338,7 @@ about two seconds of a $0.19/h box, and vast.ai sends the credit with float nois
 
 ```text
 $ vas --compact --ssh --log '/root/runs/*/train.log'
-{"age_s":8100,"at":1792250000,"cost":2.025,"cpu_name":"AMD EPYC 7K62 48-Core Processor","direct_host":"180.189.55.38","direct_port":55814,"dlperf":199.2,"dph":0.9,"driver_version":"580.142","gpu_name":"RTX 5090","host_id":406325,"id":56362434,"intended":"running","kind":"box","label":"me36 box 2","machine_id":100682,"num_gpus":1,"pcie_bw":26.9,"power_reference_w":575,"probe":{"clock_trend":null,"gpus":[{"index":0,"mem_total_mib":32607,"mem_used_mib":29400,"other_mem_mib":10,"power_default_w":575,"power_limit_w":575,"power_max_w":600,"power_w":560,"sm_max_mhz":3090,"sm_mhz":2900,"throttle":[],"util_pct":99}],"log":{"file":"/root/runs/s0/train.log","line":"e41 loss 0.3","state":"line"},"route":"proxy","util_trend":null},"ssh_host":"ssh6.vast.ai","ssh_port":36000,"status":"running","status_msg":null,"where":"South Korea, KR"}
+{"age_s":8100,"at":1792250000,"cost":2.025,"cpu_name":"AMD EPYC 7K62 48-Core Processor","direct_host":"180.189.55.38","direct_port":55814,"dlperf":199.2,"dph":0.9,"driver_version":"580.142","gpu_name":"RTX 5090","host_id":406325,"id":56362434,"intended":"running","kind":"box","label":"me36 box 2","machine_id":100682,"num_gpus":1,"pcie_bw":26.9,"power_reference_w":575,"probe":{"clock_trend":null,"gpus":[{"index":0,"mem_total_mib":32607,"mem_used_mib":29400,"other_mem_mib":10,"power_default_w":575,"power_limit_w":575,"power_max_w":600,"power_w":560,"processes":1,"sm_max_mhz":3090,"sm_mhz":2900,"throttle":[],"util_pct":99}],"log":{"file":"/root/runs/s0/train.log","line":"e41 loss 0.3","state":"line"},"route":"proxy","util_trend":null},"ssh_host":"ssh6.vast.ai","ssh_port":36000,"status":"running","status_msg":null,"where":"South Korea, KR"}
 {"at":1792250000,"burn":0.9,"credit":12.93,"hours_left":14.4,"kind":"money","running":1,"unsure":{}}
 ```
 
@@ -340,8 +346,8 @@ $ vas --compact --ssh --log '/root/runs/*/train.log'
 when the probe failed (`error_kind` is `unreachable` when `ssh` never reached the box, else `failed`;
 `direct_error` is why the direct address failed too, `null` when it was not tried),
 else `gpus` (per GPU: `util_pct`, `mem_used_mib`, `mem_total_mib`, `other_mem_mib`, `power_w`,
-`power_limit_w`, `power_default_w`, `power_max_w`, `sm_mhz`, `sm_max_mhz` and `throttle`, each `null` when the
-box did not say), `log`, `route` (`proxy`, or `direct` when the readings came past the proxy), `util_trend` and
+`power_limit_w`, `power_default_w`, `power_max_w`, `sm_mhz`, `sm_max_mhz`, `throttle` and `processes`, each
+`null` when the box did not say), `log`, `route` (`proxy`, or `direct` when the readings came past the proxy), `util_trend` and
 `clock_trend` (`null` in a one-shot, else the last GPU samples of a `--watch`,
 see above); `log` is `null` without `--log`, else an object whose `state` is `line`, `empty`,
 `not_a_file`, `no_match` or `unreadable`, and under `--grep` also `no_matching_line` or `pattern_refused`

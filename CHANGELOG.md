@@ -39,6 +39,11 @@ All notable changes to this project are documented here. The format is based on
   a model with several figures, or not listed, gets no mark. `--compact` gains `power_max_w` per GPU and
   `power_reference_w` per box. `GpuReading::power_max_w`, `probe::REFERENCE_POWER_W`,
   `probe::reference_power_w`.
+- `GPU% (ssh)` reads `100%?`, with a line under the table (`ID gpu 0: 100% with no memory held and no process
+  (an idle counter?)`), for a GPU at 99 % or more that holds under 1 GiB and lists no process. That is the stuck
+  counter of an idle card, seen on 2026-10-15, 10-19 and 10-26, which reads like "someone else is on it". It is
+  marked only when the process list came back whole. `--compact` gains `processes` per GPU.
+  `GpuReading::processes`, `GpuReading::idle_counter`, `render::idle_lines`.
 
 ### Documentation
 

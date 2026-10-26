@@ -51,6 +51,10 @@ pub struct GpuReading {
     /// is the cap: a 450 W RTX 5090 board read `450W`, like an uncapped card, while idle (2026-10-26).
     /// `None` when the box did not say.
     pub power_max_w: Option<u32>,
+    /// The compute processes `nvidia-smi` lists on the GPU, as the box's container sees them. `None`
+    /// when the process query did not end with its success line or the GPU's bus id is unknown: an
+    /// empty answer is then a failed query, not "no process".
+    pub processes: Option<u32>,
 }
 
 /// The board power NVIDIA gives for a GPU model (its total graphics power), in watts.
@@ -111,6 +115,25 @@ const THROTTLE_WORDS: [(u64, &str); 5] = [
 ];
 
 impl GpuReading {
+    /// Whether the utilisation reads busy (99 % or more) while the card holds no memory to speak of
+    /// (under [`OTHER_MIB_MIN`]) and lists no process: an idle card whose counter is stuck, seen three
+    /// times (2026-10-15, 10-19, 10-26; on 10-26: 100 %, 2 MiB, 123 W, 37 °C, no process). It reads
+    /// like "someone else is on it", which `OTHER` and `VRAM` already deny.
+    ///
+    /// ```
+    /// use vast_skopos::probe::parse_output;
+    /// let idle = parse_output("0, 100, 2, 32607\n---vas-power---\n---vas-apps---\n0, 00000000:C1:00.0\n\
+    ///                          ---vas-apps-by-gpu---\nvas-apps-ok\n");
+    /// assert!(idle.gpus[0].idle_counter());
+    /// let busy = parse_output("0, 99, 7700, 32607\n---vas-power---\n---vas-apps---\n0, 00000000:C1:00.0\n\
+    ///                          ---vas-apps-by-gpu---\n00000000:C1:00.0, 7600\nvas-apps-ok\n");
+    /// assert!(!busy.gpus[0].idle_counter());
+    /// ```
+    #[must_use]
+    pub fn idle_counter(&self) -> bool {
+        self.util_pct >= 99 && self.processes == Some(0) && self.mem_used_mib < OTHER_MIB_MIN
+    }
+
     /// The memory held by processes outside the container, in MiB: [`GpuReading::other_mem_mib`]
     /// when it reaches [`OTHER_MIB_MIN`], else `None`.
     ///
@@ -367,6 +390,7 @@ pub fn parse_nvidia_smi(csv: &str) -> Vec<GpuReading> {
                 sm_max_mhz: None,
                 throttle_mask: None,
                 power_max_w: None,
+                processes: None,
             })
         })
         .collect()
@@ -569,10 +593,12 @@ fn bus_of(buses: &str, index: u32) -> Option<String> {
     })
 }
 
-/// Reads the apps section into each GPU's [`GpuReading::other_mem_mib`]: the device's memory in use
-/// minus the sum of what the compute processes hold on its bus id. Nothing is concluded unless the
-/// processes' query ended with its success line, the GPU's bus id is known, at least one process
-/// is listed on it, and every figure of that GPU's processes parses (`[N/A]` is not zero).
+/// Reads the apps section into each GPU's [`GpuReading::processes`] (how many processes are listed
+/// on its bus id) and [`GpuReading::other_mem_mib`]: the device's memory in use minus the sum of
+/// what the compute processes hold on its bus id. Nothing is concluded unless the processes' query
+/// ended with its success line and the GPU's bus id is known; and no `other_mem_mib` unless at
+/// least one process is listed on it, and every figure of that GPU's processes parses (`[N/A]` is
+/// not zero).
 fn merge_apps(gpus: &mut [GpuReading], apps: &str) {
     let Some((buses, by_gpu)) = apps.split_once(APPS_BY_GPU) else {
         return;
@@ -586,7 +612,7 @@ fn merge_apps(gpus: &mut [GpuReading], apps: &str) {
         };
         let mut accounted: u64 = 0;
         let mut complete = true;
-        let mut listed = false;
+        let mut listed: u32 = 0;
         for line in by_gpu.lines() {
             let Some((on, memory)) = line.split_once(',') else {
                 continue;
@@ -594,7 +620,7 @@ fn merge_apps(gpus: &mut [GpuReading], apps: &str) {
             if on.trim().to_lowercase() != bus {
                 continue;
             }
-            listed = true;
+            listed = listed.saturating_add(1);
             match memory.trim().parse::<u64>() {
                 Ok(mib) => accounted = accounted.saturating_add(mib),
                 Err(_) => complete = false,
@@ -603,8 +629,9 @@ fn merge_apps(gpus: &mut [GpuReading], apps: &str) {
         // A GPU with NO process listed is unknown, not "everyone else's": a run that has just
         // restarted, or a box whose container cannot see its own processes, lists none while the
         // memory is still its own.
+        gpu.processes = Some(listed);
         gpu.other_mem_mib =
-            (complete && listed).then(|| gpu.mem_used_mib.saturating_sub(accounted));
+            (complete && listed > 0).then(|| gpu.mem_used_mib.saturating_sub(accounted));
     }
 }
 
