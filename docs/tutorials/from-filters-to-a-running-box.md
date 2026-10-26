@@ -231,10 +231,9 @@ GPU% (ssh)  VRAM       OTHER  POWER  CLOCK      LAST LOG / SSH ERROR
 - **`POWER`**: the power limit set on the card (`575W` is an RTX 5090 at its default). When the limit is
   lower than the default, the default follows (`400/575W`). `+power_cap` says the card is at its power limit
   right now, which every card is under full load: it is a limit **below the default** and a clock far under
-  its maximum that point at a setting on the box. A board limited in its own firmware shows no default
-  (`450W`), and before the run, on an idle card, reads like an uncapped one: compare the number with the
-  model's reference too (575 W for an RTX 5090). Under load it shows, as `+power_cap` with a clock below that of
-  an uncapped card ([FAQ](../FAQ.md#the-gpu-reads-100--but-the-run-is-slower-than-it-should-be)).
+  its maximum that point at a setting on the box. A board limited in its own firmware shows no default,
+  but `vas` marks it with its model's reference: `450W<575` is an RTX 5090 board that cannot go above 450 W,
+  against the model's 575 ([FAQ](../FAQ.md#the-gpu-reads-100--but-the-run-is-slower-than-it-should-be)).
 - **`GPU% (ssh)` on a box nobody uses yet** can read `100%`: an idle counter. With `0.0/32G` in `VRAM` and `-` in
   `OTHER`, nobody is on the card.
 - **`CLOCK`**: the speed of the GPU's compute cores (the SM clock) now, over the highest it reaches, in MHz.

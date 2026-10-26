@@ -235,6 +235,8 @@ case "$*" in
   *clocks_throttle_reasons*)
     if [ "{mode}" != none ]; then echo "0, 0x0000000000000004"; else echo 'Field "clocks_throttle_reasons.active" is not a valid field to query.'; exit 2; fi ;;
   *pci.bus_id*) echo "0, 00000000:C1:00.0" ;;
+  *power.max_limit*)
+    if [ "{mode}" != none ]; then echo "0, 450.00"; else echo 'Field "power.max_limit" is not a valid field to query.'; exit 2; fi ;;
   *compute-apps*) echo "00000000:C1:00.0, 8720" ;;
 esac
 "#
@@ -276,6 +278,9 @@ fn a_driver_that_knows_the_reasons_by_either_name_or_by_neither_still_gives_the_
             "{mode}: the rest is read whatever the reasons' name"
         );
         assert_eq!(g.other_user_mib(), Some(16_089), "{mode}");
+        // The board's maximum is a query of its own: a driver without the field costs it alone.
+        let max = if mode == "none" { None } else { Some(450) };
+        assert_eq!(g.power_max_w, max, "{mode}");
         let _ = fs::remove_dir_all(&bin);
     }
 }

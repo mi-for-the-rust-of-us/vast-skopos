@@ -408,10 +408,11 @@ is intermittent, makes the watch say `began` and `ended` at each flip: that is w
 `400/575W`, one ran at about 1,700 MHz and the other at about 2,100 (different silicon, cooling and
 workload: the cause was not determined). The limit alone does not tell the speed; the clock history does.
 
-**A board limited in its own firmware reads as uncapped while it is idle.** On 2026-10-26 a rented RTX 5090 read
-`450W`, with no default after it: its limit, its default AND its maximum (`power.max_limit`) were all 450 W. The
-board itself is the cap, and nothing on the box compares it with the RTX 5090's reference 575 W, so at the look
-before the run, on an idle card, `POWER` reads like an uncapped one. Under load the limit shows: `450W+power_cap`
+**A board limited in its own firmware.** On 2026-10-26 a rented RTX 5090 read `450W`, with no default after it:
+its limit, its default AND its maximum (`power.max_limit`) were all 450 W. The board itself is the cap, and
+nothing on the box compares it with the RTX 5090's reference 575 W, so in 0.3.0, at the look before the run, on
+an idle card, `POWER` reads like an uncapped one. Since 0.4.0 it reads `450W<575`: the card's maximum is below its
+model's reference (NVIDIA's figure, for the RTX 5090, 5080, 4090, 4080 and 3090; another model gets no mark). Under load the limit shows: `450W+power_cap`
 with the clock at about 2,200 of 3,090 MHz, against `500/600W+power_cap` and about 2,420 of 3,105 MHz on a 500 W
 box beside it (`+power_cap` alone is normal; the clock below its peers' is the tell). So read the number against
 the model's reference (575 W for an RTX 5090) before you deploy, not only against the default. (A default can be

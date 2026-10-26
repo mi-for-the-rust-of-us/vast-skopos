@@ -20,7 +20,7 @@ use crate::error::Result;
 use crate::error::SkoposError;
 use crate::instance::whole_secs;
 use crate::instance::{Account, Instance};
-use crate::probe::{LogReading, Probe, ProbeOutcome, Route, outcome_at};
+use crate::probe::{LogReading, Probe, ProbeOutcome, Route, outcome_at, reference_power_w};
 use crate::runway::Runway;
 use crate::trend::{GpuChange, Trend};
 
@@ -92,6 +92,7 @@ fn probe_json(
                 "power_w": g.power_w,
                 "power_limit_w": g.power_limit_w,
                 "power_default_w": g.power_default_w,
+                "power_max_w": g.power_max_w,
                 "sm_mhz": g.sm_mhz,
                 "sm_max_mhz": g.sm_max_mhz,
                 "throttle": g.throttle_words(),
@@ -130,6 +131,7 @@ fn box_json(i: &Instance, probe: Option<&Result<Probe>>, trend: Option<&Trend>, 
         "ssh_port": endpoint.map(|(_, port)| port),
         "machine_id": i.machine_id,
         "host_id": i.host_id,
+        "power_reference_w": i.gpu_name.as_deref().and_then(reference_power_w),
         "direct_host": i.direct_endpoint().map(|(host, _)| host),
         "direct_port": i.direct_endpoint().map(|(_, port)| port),
         "cpu_name": i.cpu_name,

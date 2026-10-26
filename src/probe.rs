@@ -46,6 +46,43 @@ pub struct GpuReading {
     /// the box did not give the process list or one of its figures. A few MiB is the driver's own;
     /// gigabytes belong to a process outside the container ([`GpuReading::other_user_mib`]).
     pub other_mem_mib: Option<u64>,
+    /// The most power the board accepts, in watts (rounded): `nvidia-smi`'s `power.max_limit`, above
+    /// which no limit can be set. Below its model's reference ([`reference_power_w`]) the board itself
+    /// is the cap: a 450 W RTX 5090 board read `450W`, like an uncapped card, while idle (2026-10-26).
+    /// `None` when the box did not say.
+    pub power_max_w: Option<u32>,
+}
+
+/// The board power NVIDIA gives for a GPU model (its total graphics power), in watts.
+///
+/// Keyed by the model's name as vast.ai writes it: what a card of that model draws at full load
+/// when nothing holds it lower. Only models with one such figure are listed (an RTX 4060 Ti is 160
+/// or 165 W, by its memory); an add-in board may ship above it (a `500/600W` RTX 5090 was seen on
+/// 2026-10-25).
+pub const REFERENCE_POWER_W: [(&str, u32); 5] = [
+    ("RTX 5090", 575),
+    ("RTX 5080", 360),
+    ("RTX 4090", 450),
+    ("RTX 4080", 320),
+    ("RTX 3090", 350),
+];
+
+/// The reference board power of the GPU model `gpu_name` (vast.ai's name, any ASCII case), in watts;
+/// `None` for a model not in [`REFERENCE_POWER_W`].
+///
+/// ```
+/// use vast_skopos::probe::reference_power_w;
+/// assert_eq!(reference_power_w("RTX 5090"), Some(575));
+/// assert_eq!(reference_power_w("rtx 4090"), Some(450));
+/// assert_eq!((reference_power_w("RTX 4060 Ti"), reference_power_w("RTX 5090 D")), (None, None));
+/// ```
+#[must_use]
+pub fn reference_power_w(gpu_name: &str) -> Option<u32> {
+    let name = gpu_name.trim();
+    REFERENCE_POWER_W
+        .iter()
+        .find(|(model, _)| model.eq_ignore_ascii_case(name))
+        .map(|&(_, watts)| watts)
 }
 
 /// The least memory, in MiB, that no process of the box accounts for before it is called the work
@@ -258,6 +295,10 @@ const APPS_BY_GPU: &str = "---vas-apps-by-gpu---";
 /// be a failed query, and the memory would be wrongly all "someone else's".
 const APPS_OK: &str = "vas-apps-ok";
 
+/// The line opening the power-maximum section (`index,power.max_limit`): asked on its own, after
+/// every other section, so a driver that lacks the field costs this reading and nothing else.
+const POWER_MAX_SEPARATOR: &str = "---vas-power-max---";
+
 /// The line separating the main `nvidia-smi` query from the power query that follows it. The power
 /// query is asked on its own, so a driver that lacks one of its fields costs the power readings
 /// and nothing else.
@@ -325,6 +366,7 @@ pub fn parse_nvidia_smi(csv: &str) -> Vec<GpuReading> {
                 sm_mhz: None,
                 sm_max_mhz: None,
                 throttle_mask: None,
+                power_max_w: None,
             })
         })
         .collect()
@@ -376,7 +418,9 @@ pub fn remote_command(log: Option<&LogQuery>) -> String {
          timeout 20 nvidia-smi --query-gpu=index,pci.bus_id --format=csv,noheader,nounits 2>/dev/null; \
          echo '{APPS_BY_GPU}'; \
          timeout 20 nvidia-smi --query-compute-apps=gpu_bus_id,used_gpu_memory \
-         --format=csv,noheader,nounits 2>/dev/null && echo '{APPS_OK}'"
+         --format=csv,noheader,nounits 2>/dev/null && echo '{APPS_OK}'; \
+         echo '{POWER_MAX_SEPARATOR}'; \
+         timeout 20 nvidia-smi --query-gpu=index,power.max_limit --format=csv,noheader,nounits 2>/dev/null"
     );
     // The glob is left unquoted on purpose so the box's shell expands it: the pattern is the
     // user's own, sent to the user's own box. The `grep` pattern is the other value of the user's
@@ -494,6 +538,9 @@ pub fn parse_output(stdout: &str) -> Probe {
         Some((smi, log)) => (smi, Some(parse_log(log))),
         None => (stdout, None),
     };
+    let (gpus_and_power, power_max) = gpus_and_power
+        .split_once(POWER_MAX_SEPARATOR)
+        .unwrap_or((gpus_and_power, ""));
     let (smi, rest) = gpus_and_power
         .split_once(POWER_SEPARATOR)
         .unwrap_or((gpus_and_power, ""));
@@ -505,6 +552,7 @@ pub fn parse_output(stdout: &str) -> Probe {
     merge_power(&mut gpus, power);
     merge_throttle(&mut gpus, throttle);
     merge_apps(&mut gpus, apps);
+    merge_power_max(&mut gpus, power_max);
     Probe {
         gpus,
         log,
@@ -597,6 +645,23 @@ fn merge_throttle(gpus: &mut [GpuReading], throttle: &str) {
         };
         if let Some(gpu) = gpus.iter_mut().find(|g| g.index == index) {
             gpu.throttle_mask = Some(mask);
+        }
+    }
+}
+
+/// Reads the power-maximum query (`index,power.max_limit`) into the GPUs it names; lines that do not
+/// parse (an error `nvidia-smi` printed for a field its driver lacks, say) or name a GPU the main
+/// query did not are skipped.
+fn merge_power_max(gpus: &mut [GpuReading], power_max: &str) {
+    for line in power_max.lines() {
+        let Some((index, watts)) = line.split_once(',') else {
+            continue;
+        };
+        let (Ok(index), Some(watts)) = (index.trim().parse::<u32>(), rounded_u32(watts)) else {
+            continue;
+        };
+        if let Some(gpu) = gpus.iter_mut().find(|g| g.index == index) {
+            gpu.power_max_w = Some(watts);
         }
     }
 }

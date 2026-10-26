@@ -9,6 +9,7 @@ use crate::market::{LEARNING_LOOKS, MarketWatch, OfferKey};
 use crate::offer::{OFFER_CAP, Offer, OfferChanges, OfferPage, OfferQuery, OfferSort};
 use crate::probe::{
     GpuReading, LOG_WIDTH, LogReading, Probe, ProbeOutcome, Route, mib_to_gib, outcome_at,
+    reference_power_w,
 };
 use crate::runway::Runway;
 use crate::trend::Trend;
@@ -146,17 +147,24 @@ fn other_cell(probe: &Probe) -> String {
 }
 
 /// The power cell from a probe: the limit set on each GPU, with the default when it is lower
-/// (`400/575W`), and what holds its clocks down (`400/575W+power_cap`).
+/// (`400/575W`), the model's reference when the board's maximum is below it (`450W<575`: the board
+/// itself is the cap, see [`GpuReading::power_max_w`]), and what holds its clocks down
+/// (`450W<575+power_cap`). `reference_w` is the box's model's reference ([`reference_power_w`]).
 ///
 /// A GPU whose limit the box did not give shows `-` for it, and still shows what holds it down
 /// (`-+thermal`): a slowdown must not hide behind a missing limit.
-fn power_cell(probe: &Probe) -> String {
+fn power_cell(probe: &Probe, reference_w: Option<u32>) -> String {
     per_gpu(probe, |g| {
         let mut cell = match (g.power_limit_w, g.power_default_w) {
             (Some(limit), Some(default)) if default > limit => format!("{limit}/{default}W"),
             (Some(limit), _) => format!("{limit}W"),
             (None, _) => String::from("-"),
         };
+        if let (Some(max), Some(reference)) = (g.power_max_w, reference_w)
+            && max < reference
+        {
+            let _ = write!(cell, "<{reference}");
+        }
         for word in g.throttle_words().unwrap_or_default() {
             cell.push('+');
             cell.push_str(word);
@@ -486,7 +494,13 @@ pub fn table(
                         last
                     };
                     (
-                        [util, mem, other_cell(p), power_cell(p), clock_cell(p)],
+                        [
+                            util,
+                            mem,
+                            other_cell(p),
+                            power_cell(p, i.gpu_name.as_deref().and_then(reference_power_w)),
+                            clock_cell(p),
+                        ],
                         last,
                     )
                 }

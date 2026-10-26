@@ -32,6 +32,13 @@ All notable changes to this project are documented here. The format is based on
   HOST:PORT: <reason>)`, and is `UNREACHABLE` only if neither route reached it; `--compact`'s error object
   gains `direct_error`. One attempt per route, never a loop (CONVENTIONS.md says so). `probe::Route`,
   `Probe::route`, `SkoposError::SshRoutes`.
+- `POWER` marks a board whose maximum is below its model's reference board power: `450W<575` (seen on
+  2026-10-26: a 450 W RTX 5090 board read `450W`, like an uncapped card, while idle). The probe asks
+  `power.max_limit` in a query of its own (a driver without it costs that reading alone). The references are
+  NVIDIA's total graphics power for the RTX 5090 (575 W), 5080 (360), 4090 (450), 4080 (320) and 3090 (350);
+  a model with several figures, or not listed, gets no mark. `--compact` gains `power_max_w` per GPU and
+  `power_reference_w` per box. `GpuReading::power_max_w`, `probe::REFERENCE_POWER_W`,
+  `probe::reference_power_w`.
 
 ### Documentation
 

@@ -416,3 +416,51 @@ fn the_reasons_are_asked_apart_from_the_power_under_both_names_of_the_field() {
         "{command}"
     );
 }
+
+/// A probe's output with the power query and the power-maximum section, for one GPU.
+fn with_power_max(limit: &str, default: &str, max: &str) -> String {
+    format!(
+        "0, 99, 7700, 32607\n---vas-power---\n0, 449.2, {limit}, {default}, 2190, 3090\n\
+         ---vas-throttle---\n0, 0x0000000000000004\n---vas-power-max---\n{max}"
+    )
+}
+
+/// The `POWER` cell of a one-GPU box of model `gpu` whose probe printed `output`.
+fn power_of(gpu: &str, output: &str) -> String {
+    let row = Instance::from_json(&serde_json::json!({"id": 1, "actual_status": "running",
+        "gpu_name": gpu, "num_gpus": 1}))
+    .unwrap();
+    let text = table(
+        &[row],
+        &[Some(Ok(parse_output(output)))],
+        None,
+        TableOptions::new().ssh(true),
+        0.0,
+    );
+    let header = text.lines().next().unwrap();
+    let at = header.find("POWER").unwrap();
+    let line = text.lines().nth(1).unwrap();
+    line[at..].split_whitespace().next().unwrap().to_owned()
+}
+
+#[test]
+fn a_board_whose_maximum_is_below_its_models_reference_is_marked() {
+    // 2026-10-26, Spain: limit, default and maximum all 450 W on an RTX 5090 (575 W reference).
+    let spain = with_power_max("450.00", "450.00", "0, 450.00\n");
+    assert_eq!(parse_output(&spain).gpus[0].power_max_w, Some(450));
+    assert_eq!(power_of("RTX 5090", &spain), "450W<575+power_cap");
+    // Korea: a 600 W add-in board capped at 500 W by its host: the cap shows, no reference mark.
+    let korea = with_power_max("500.00", "600.00", "0, 600.00\n");
+    assert_eq!(power_of("RTX 5090", &korea), "500/600W+power_cap");
+    // A card at its reference, a model not in the table, and a box that did not say: no mark.
+    let texas = with_power_max("575.00", "575.00", "0, 575.00\n");
+    assert_eq!(power_of("RTX 5090", &texas), "575W+power_cap");
+    assert_eq!(power_of("RTX 4060 Ti", &spain), "450W+power_cap");
+    let silent = with_power_max(
+        "450.00",
+        "450.00",
+        "Field \"power.max_limit\" is not a valid field to query.\n",
+    );
+    assert_eq!(parse_output(&silent).gpus[0].power_max_w, None);
+    assert_eq!(power_of("RTX 5090", &silent), "450W+power_cap");
+}
