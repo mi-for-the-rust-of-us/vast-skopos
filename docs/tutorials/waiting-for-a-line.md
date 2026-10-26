@@ -103,6 +103,10 @@ a box was last read: you can start the wait right after renting, and a box whose
 hold it forever (after the ten, its looks count as looks with nothing to read). A box read without a match yet keeps it going too, even
 before its log file exists.
 
+**From Git Bash, check the path.** Git Bash rewrites `/root/...` into `C:/Program Files/Git/root/...` before
+`vas` sees it. In 0.3.0 the wait then reads `(no file matches)` on every box, and waits forever. Use a glob,
+`//root/...` or `MSYS_NO_PATHCONV=1` ([FAQ](../FAQ.md#--log-with-an-exact-path-says-no-file-matches-but-the-file-is-there)).
+
 ## 4. Wait for success or failure at once
 
 The `|` of a regular expression lets one wait end on either line:

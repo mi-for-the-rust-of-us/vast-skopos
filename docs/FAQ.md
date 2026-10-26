@@ -301,6 +301,23 @@ again on 2026-10-26, on a box 2 to 6 minutes old that nobody had used yet: `100%
 matched the other boxes of its host to the tenth of a millisecond: no one else was on it. A real load draws far
 more power and holds memory; read `VRAM`, `OTHER` and `POWER` beside `GPU%`, not `GPU%` alone.)
 
+### `--log` with an exact path says `(no file matches)`, but the file is there
+
+You typed it in **Git Bash**, then. Git Bash rewrites an argument that looks like a POSIX path before it starts a
+Windows program: `--log /root/runs/s1/run.log` reaches `vas` as `C:/Program Files/Git/root/runs/s1/run.log`, which
+no box has. A path with a `*` in it is left alone, which is why a glob of the same file works. PowerShell and cmd
+rewrite nothing.
+
+Any one of these gets the path to the box as you typed it:
+
+- **a glob:** `--log '/root/runs/s1_*/run.log'`;
+- **a doubled first slash:** `--log //root/runs/s1/run.log` (on the box, `//root` is `/root`);
+- **no rewriting for that command:** `MSYS_NO_PATHCONV=1 vas --ssh --log /root/runs/s1/run.log`.
+
+It matters most under `--until`. In 0.3.0 a wait whose path matches no file on any box neither matches nor gives
+up: on 2026-10-26 one waited until its harness killed it an hour later. The next version reads such a path as
+typed again and says so, and gives up on a path that matches nothing.
+
 ### What does `--log` show?
 
 For the newest file matching the path or glob on each box: its last two path components (so a glob over

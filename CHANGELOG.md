@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Documentation
+
+- The FAQ explains why `vas --ssh --log /root/...` typed in Git Bash reads `(no file matches)` (Git Bash rewrites
+  the path into a Windows one before `vas` sees it), and the three ways around it: a glob, `//root/...`, or
+  `MSYS_NO_PATHCONV=1`. The waiting tutorial points to it, since a 0.3.0 `--until` wait on such a path never
+  ends (seen 2026-10-26).
+
 ## [0.3.0] - 2026-10-26
 
 ### Added
