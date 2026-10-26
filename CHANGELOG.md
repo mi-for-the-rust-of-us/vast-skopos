@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-26
+
 ### Added
 
 - vast.ai's status message for a box that is not running, on a line under the table before the money
@@ -65,11 +67,13 @@ All notable changes to this project are documented here. The format is based on
 
 ### Changed
 
-- `probe::remote_command`, `probe::ssh_command`, `probe::ssh_probe` and `probe::probe_all` take an
-  `Option<&LogQuery>` (`LogQuery::new(path)`, `.grep(pattern)`) instead of the `--log` pattern as a
-  `&str`.
-- `render::offers_table` and `render::offers_table_marked` take an `OfferColumns` (after `top`): the
-  plain table is `OfferColumns::Plain`.
+- BREAKING for library users: `probe::remote_command`, `probe::ssh_command`, `probe::ssh_probe` and
+  `probe::probe_all` take an `Option<&LogQuery>` (`LogQuery::new(path)`, `.grep(pattern)`) instead of the
+  `--log` pattern as a `&str`.
+- BREAKING for library users: `render::offers_table` and `render::offers_table_marked` take an
+  `OfferColumns` (after `top`): the plain table is `OfferColumns::Plain`.
+- `LogReading` gains `NoMatchingLine` and `PatternRefused`, and `Instance` and `Offer` gain fields: all are
+  `#[non_exhaustive]`, so a `match` already had a wildcard and no struct was built field by field.
 - The `LAST LOG / SSH ERROR` cell of a failed probe no longer repeats `failed to probe HOST:PORT over ssh`:
   the `SSH` column already names the target. `--compact`'s `error` keeps the whole text.
 
@@ -80,7 +84,7 @@ All notable changes to this project are documented here. The format is based on
   cannot say, verified against unverified against deverified, a box that stays `loading`, `UNREACHABLE` and
   `SSH FAILED`, wait or destroy, `--grep`, and waiting with `--until`; the first tutorial uses
   `--exclude-deverified`, the status line and the failure labels.
-- After the 2026-10-26 rental ([its report](docs/dogfooding/2026-10-26.md)):
+- After the 2026-10-26 rental ([its report](https://github.com/mi-for-the-rust-of-us/vast-skopos/blob/main/docs/dogfooding/2026-10-26.md)):
   - the FAQ explains a board limited in its firmware: `450W` reads as uncapped while idle, and shows as
     `+power_cap` and a lower clock under load;
   - it gives what 575, 500 and 450 W cost per step on one job: +8 % and +15 %, not shown in the price;

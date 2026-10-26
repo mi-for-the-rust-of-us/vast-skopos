@@ -1,9 +1,9 @@
 # Frequently asked questions
 
 **Not affiliated with vast.ai.** `vas` is an independent, read-only tool. Everything here was observed
-on real rentals or read from the code; where something is a guess, it says so. It describes the code as
-it is now, on its way to **0.3.0**: 0.2.0 has no status line under the table, no `UNREACHABLE`, no
-`--grep` or `--until`, no `--exclude-deverified`, `--host`, `--machine` or `--wide` on `vas offers`; 0.1.0
+on real rentals or read from the code; where something is a guess, it says so. It describes **0.3.0**:
+0.2.0 has no status line under the table, no `UNREACHABLE`, no `--grep` or `--until`, no
+`--exclude-deverified`, `--host`, `--machine` or `--wide` on `vas offers`; 0.1.0
 has no `--credit-log`, `--wide`, `--compact`, `--exclude-machine`, probe columns beyond utilisation and
 memory, `--watch` on `vas offers` or rate-limit handling.
 
@@ -447,7 +447,7 @@ A `--watch` under the floor is raised to it, and `vas` says so on stderr. The fl
 service (vast.ai's own limits are obeyed whatever it says), and a table every few seconds scrolls past
 unread in a terminal. For a person watching offers, `--changes` (one line per look and per change) reads
 best; for a script, `vas --compact --watch N` prints JSON Lines. A screen that redraws in place, and
-faster offers, are waiting for a text interface (see the [roadmap](roadmap-v0.2.0.md)).
+faster offers, are waiting for a text interface (see the [roadmap](roadmap-v0.3.0.md)).
 
 ### Why is nothing marked in the first looks of `vas offers --watch`?
 
