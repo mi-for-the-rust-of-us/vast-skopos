@@ -8,6 +8,10 @@ All notable changes to this project are documented here. The format is based on
 
 ### Fixed
 
+- A line break in the API's text (vast.ai's status message holds the lines of an image's download) was dropped,
+  gluing two lines together: `Verifying Checksumc455daa85bb6:` (seen on the 2026-10-28 test rental). A line break
+  or a tab now becomes one space, with the spaces around it; every other control or invisible character is still
+  dropped. This applies to all the API's text: the status message, labels, locations.
 - `vas --ssh --log /root/...` typed in Git Bash read `(no file matches)` on every box. Git Bash rewrites an
   argument that looks like a POSIX path before a Windows program sees it (`C:/Program Files/Git/root/...`), and
   a path with no glob character was always rewritten (reproduced live on 2026-10-26). `vas` now reads such a
