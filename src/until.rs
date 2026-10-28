@@ -61,11 +61,6 @@ pub enum Verdict {
     /// yet. A log the box could not give ([`LogReading::Unreadable`]: the search ran past its
     /// deadline, the file could not be read, the answer was cut short) is NOT a box read.
     Read,
-    /// No match, no box was read with a file to search, and a box answered without one (it says "no
-    /// file matches", or that the newest match is not a file): the log is not written yet, or the
-    /// path is wrong. Whatever the other boxes say (loading, a log they could not give, a refused
-    /// pattern): [`Wait`] bounds this by a time, and a box read with the file starts it afresh.
-    NoFile,
     /// No box answered with or without the file, but a box meant to run is not running (yet):
     /// `loading`, say.
     Starting,
@@ -73,6 +68,12 @@ pub enum Verdict {
     /// running. Every probe failed or gave no readable log, or none could be made (no box running,
     /// or none with an `ssh` endpoint).
     Unread,
+    /// No match, no box was read with a file to search, and a box answered without one (it says "no
+    /// file matches", or that the newest match is not a file): the log is not written yet, or the
+    /// path is wrong. Whatever the other boxes say (loading, a log they could not give, a refused
+    /// pattern): [`Wait`] bounds this by a time, and a box read with the file starts it afresh.
+    /// (Last of the variants, after those of 0.3.0, so theirs keep their places.)
+    NoFile,
 }
 
 /// What the look of `instances` and their `probes` (one outcome per instance, in the instances'

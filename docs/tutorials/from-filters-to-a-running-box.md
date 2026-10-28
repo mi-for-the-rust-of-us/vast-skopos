@@ -1,6 +1,6 @@
 # From filters to a running box
 
-A walk through one rental with `vas` (vast-skopos 0.3): you write down what you want, search the market
+A walk through one rental with `vas` (vast-skopos 0.4): you write down what you want, search the market
 without a key, watch it for a few minutes, rent a box **outside `vas`**, then watch the box until you are
 done with it. Steps 1 to 5 take about twenty minutes; steps 7 to 11 last as long as your rental.
 
@@ -304,4 +304,4 @@ invoice.
 - [FAQ](../FAQ.md): the questions that came up on real rentals.
 - [README](../../README.md): every flag, the JSON format, the key and file rules.
 - [`vas` and `vastai`](../comparison-with-vastai.md): which tool for which job.
-- [Roadmap](../roadmap-v0.3.0.md): what 0.3.0 contains and what may come after.
+- [Roadmap](../roadmap-v0.4.0.md): what 0.4.0 contains and what may come after.

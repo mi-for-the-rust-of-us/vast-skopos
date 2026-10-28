@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-28
+
 ### Added
 
 - `vas --wide`: a `DIRECT` column after `SSH`, the box's direct `ssh` address past vast.ai's proxy (its

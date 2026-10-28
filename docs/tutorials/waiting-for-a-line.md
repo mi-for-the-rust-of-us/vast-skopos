@@ -2,7 +2,7 @@
 
 A run prints the line you need once (the first loss of a stage, a final score, a `Traceback`), and then
 other lines bury it. This tutorial replaces the loop you would write for that (`ssh` every two minutes,
-`grep`, stop after a few failures) with two flags of `vas` (vast-skopos 0.3): `--grep` to see the line,
+`grep`, stop after a few failures) with two flags of `vas` (vast-skopos 0.4): `--grep` to see the line,
 `--until` to wait for it. It assumes a rented box that `vas --ssh` can already read (see
 [From filters to a running box](from-filters-to-a-running-box.md), steps 7 and 8).
 

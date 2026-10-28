@@ -8,8 +8,8 @@
 at `42c3a47`, read that day, not checked against the 1.9.1 wheel). Where a cell says "not verified", we
 did not check it.
 
-On the `vas` side, a cell marked *(0.4.0)* describes what is built on the way to 0.4.0 but not released yet; the rest
-is in 0.3.0, released on 2026-10-26.
+On the `vas` side, a cell marked *(0.4.0)* describes what is new in 0.4.0, released on 2026-10-28; the rest
+was in 0.3.0 already.
 
 **In one sentence:** `vastai` is the full tool to rent and manage boxes; `vas` is a read-only
 lookout that tells you what your rented boxes are actually doing and what they cost. They are
@@ -41,7 +41,7 @@ complements, not alternatives: rent with `vastai` (or the dashboard), watch with
 | **Key hygiene** | the key is printed by nothing that we saw, but the CLI accepts it on the command line | redacted `Debug`, no `Display`, never in an error; the `users/current` answer, which contains the key, is never parsed beyond `credit` and `balance` |
 | **HTTP redirects** | followed (`requests`' default) | **never** followed, so the key is never re-sent elsewhere. This is why `vas` requests the canonical `/api/v0/users/current/`: the bare path answers 301 |
 | **Least-privilege key** | needs Write scopes for its write commands | works with **User Read + Instances Read** only |
-| **Maturity** | Vast.ai's own, actively released (1.9.1 on 2026-10-23; 1.8.3 on 2026-10-02) | 0.3.0, released on 2026-10-26 (0.2.0 on 2026-10-19, 0.1.0 on 2026-10-17), with 0.4.0 under way; dogfooded on real rentals (Me35, Me36, the RTX 3090 and RTX 5090 rentals of 2026-10-17 and 18, askesis's Me38 rentals of 2026-10-22 to 25, Me41 on 2026-10-26), and checked on a test rental of two RTX 3080s on 2026-10-28 |
+| **Maturity** | Vast.ai's own, actively released (1.9.1 on 2026-10-23; 1.8.3 on 2026-10-02) | 0.4.0, released on 2026-10-28 (0.3.0 on 2026-10-26, 0.2.0 on 2026-10-19, 0.1.0 on 2026-10-17); dogfooded on real rentals (Me35, Me36, the RTX 3090 and RTX 5090 rentals of 2026-10-17 and 18, askesis's Me38 rentals of 2026-10-22 to 25, Me41 on 2026-10-26), and checked on a test rental of two RTX 3080s on 2026-10-28 |
 
 ## When to use which
 
