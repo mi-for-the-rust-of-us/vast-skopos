@@ -159,11 +159,13 @@ fn event_json(change: &GpuChange, now: f64) -> Value {
     })
 }
 
-/// The money's object.
-fn money_json(money: &Runway, now: f64) -> Value {
+/// The money's object, over `boxes` boxes of which `shown` were shown.
+fn money_json(money: &Runway, boxes: usize, shown: usize, now: f64) -> Value {
     json!({
         "kind": "money",
         "at": whole_secs(now),
+        "boxes": boxes,
+        "shown": shown,
         "credit": money.credit.map(|c| rounded(c, 4)),
         "burn": rounded(money.burn, 4),
         "running": money.running,
@@ -200,6 +202,37 @@ pub fn json_lines(
     account: Option<&Account>,
     now: f64,
 ) -> String {
+    json_lines_of(instances, instances, probes, trend, account, now)
+}
+
+/// The look of some of the account's boxes as JSON Lines (`vas --instance`).
+///
+/// One object per instance of `shown`, then the money's over `all` of them (the credit is spent by
+/// every box), whose `boxes` and `shown` say how many there are and how many were shown. `probes` holds one outcome per instance of `shown`,
+/// as for [`json_lines`]; `shown` is expected to be part of `all` (`vas --instance`).
+///
+/// ```
+/// use vast_skopos::{compact::json_lines_of, instance::Instance};
+/// let row = |id: u64| Instance::from_json(&serde_json::json!({"id": id,
+///   "actual_status": "running", "dph_total": 0.5})).unwrap();
+/// let all = [row(1), row(2)];
+/// let text = json_lines_of(&all[1..], &all, &[], None, None, 0.0);
+/// let lines: Vec<serde_json::Value> =
+///     text.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+/// assert_eq!((lines.len(), lines[0]["id"].as_u64()), (2, Some(2)));
+/// assert_eq!((lines[1]["burn"].as_f64(), lines[1]["boxes"].as_u64(), lines[1]["shown"].as_u64()),
+///   (Some(1.0), Some(2), Some(1)));
+/// ```
+#[must_use]
+pub fn json_lines_of(
+    shown: &[Instance],
+    all: &[Instance],
+    probes: &[ProbeOutcome],
+    trend: Option<&Trend>,
+    account: Option<&Account>,
+    now: f64,
+) -> String {
+    let instances = shown;
     let mut out = String::new();
     for (n, i) in instances.iter().enumerate() {
         let probe = outcome_at(probes, n);
@@ -211,7 +244,8 @@ pub fn json_lines(
         out.push_str(&event_json(change, now).to_string());
         out.push('\n');
     }
-    out.push_str(&money_json(&Runway::of(instances, account), now).to_string());
+    let money = money_json(&Runway::of(all, account), all.len(), shown.len(), now);
+    out.push_str(&money.to_string());
     out.push('\n');
     out
 }

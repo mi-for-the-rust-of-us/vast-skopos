@@ -9,16 +9,17 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use clap::{Parser, Subcommand, ValueEnum};
 use vast_skopos::api::{Client, DEFAULT_BASE, SearchClient};
-use vast_skopos::compact::json_lines;
+use vast_skopos::compact::json_lines_of;
 use vast_skopos::config::{default_offers_file, read_flag_file};
 use vast_skopos::creditlog::CreditLog;
+use vast_skopos::instance::Instance;
 use vast_skopos::key::ApiKey;
 use vast_skopos::market::MarketWatch;
 use vast_skopos::offer::{OfferChanges, OfferQuery, OfferSort, country_code, gpu_model, select};
 use vast_skopos::probe::{LogQuery, probe_all};
 use vast_skopos::render::{
     OfferColumns, TableOptions, offers_changes_note, offers_changes_only, offers_footer,
-    offers_table, offers_table_marked, offers_variance_note, table,
+    offers_table, offers_table_marked, offers_variance_note, table_of,
 };
 use vast_skopos::runway::Runway;
 use vast_skopos::trend::Trend;
@@ -111,6 +112,11 @@ struct LookArgs {
     /// Refresh every N seconds (at least 10) until Ctrl+C.
     #[arg(long, value_name = "SECONDS")]
     watch: Option<u64>,
+    /// Only this box (repeatable): the rows, the probes, the trend and --until follow the boxes named.
+    /// The money line stays the whole account's (the credit is spent by every box) and says how many
+    /// boxes are shown; --credit-log too. An id that is not in the account is said on stderr.
+    #[arg(long, value_name = "ID")]
+    instance: Vec<u64>,
 }
 
 /// The order of the offers.
@@ -570,20 +576,39 @@ fn look(
     log: Option<&LogQuery>,
     trend: Option<&mut Trend>,
     credit_log: Option<&mut CreditLog>,
+    missing_said: &mut Vec<u64>,
 ) -> Result<(String, Option<Verdict>), vast_skopos::SkoposError> {
     // The list pages by 25 and its budget is one call per window: between two pages a short wait is
     // sat out (said aloud), a long one ends the look like any other rate limit.
-    let instances = client.instances_with(|wait| {
+    let all = client.instances_with(|wait| {
         let sit = wait <= PATIENCE_SECS;
         if sit {
             sit_out("vas", wait, " before the next page of instances");
         }
         sit
     })?;
+    // `--instance`: the boxes named, in the API's order; the money stays the whole account's.
+    let named: Vec<Instance>;
+    let instances: &[Instance] = if args.instance.is_empty() {
+        &all
+    } else {
+        named = all
+            .iter()
+            .filter(|i| args.instance.contains(&i.id))
+            // BORROW: explicit clone -- the rows shown are kept beside the whole list
+            .cloned()
+            .collect();
+        &named
+    };
+    let missing = missing_ids(&args.instance, &all);
+    if missing != *missing_said {
+        eprintln!("vas: {}", missing_note(&missing, all.len()));
+        *missing_said = missing;
+    }
     let (account, probes) = std::thread::scope(|scope| {
         let account = scope.spawn(|| client.account());
         let probes = if args.ssh {
-            probe_all(&instances, args.identity.as_deref(), log)
+            probe_all(instances, args.identity.as_deref(), log)
         } else {
             Vec::new()
         };
@@ -603,25 +628,53 @@ fn look(
     // One time for the whole look: the log's row, the table and the JSON all carry it.
     let at = now();
     if let Some(log) = credit_log
-        && let Some(failure) = log.record(&Runway::of(&instances, account.as_ref()), at)
+        && let Some(failure) = log.record(&Runway::of(&all, account.as_ref()), at)
     {
         eprintln!("vas: {failure}; the credit log is not written any more");
     }
     let trend: Option<&Trend> = trend.map(|history| {
-        history.record(&instances, &probes);
+        history.record(instances, &probes);
         &*history
     });
-    let waited = args.until.is_some().then(|| verdict(&instances, &probes));
+    let waited = args.until.is_some().then(|| verdict(instances, &probes));
     let text = if args.compact {
-        json_lines(&instances, &probes, trend, account.as_ref(), at)
+        json_lines_of(instances, &all, &probes, trend, account.as_ref(), at)
     } else {
         let mut options = TableOptions::new().ssh(args.ssh).wide(args.wide);
         if let Some(history) = trend {
             options = options.trend(history);
         }
-        table(&instances, &probes, account.as_ref(), options, at)
+        table_of(instances, &all, &probes, account.as_ref(), options, at)
     };
     Ok((text, waited))
+}
+
+/// The ids `named` (`--instance`) that no box of `all` has, sorted, each once.
+fn missing_ids(named: &[u64], all: &[Instance]) -> Vec<u64> {
+    let mut missing: Vec<u64> = named
+        .iter()
+        .copied()
+        .filter(|id| !all.iter().any(|i| i.id == *id))
+        .collect();
+    missing.sort_unstable();
+    missing.dedup();
+    missing
+}
+
+/// What is said when the ids `--instance` named that the account lacks change to `missing`, the
+/// account holding `boxes` boxes: said when the set changes, so a watch does not repeat it.
+fn missing_note(missing: &[u64], boxes: usize) -> String {
+    match missing {
+        [] => String::from("--instance: every box named is in the account now"),
+        [id] => format!("--instance: no box {id} in the account (it has {boxes})"),
+        ids => {
+            let ids: Vec<String> = ids.iter().map(u64::to_string).collect();
+            format!(
+                "--instance: no boxes {} in the account (it has {boxes})",
+                ids.join(", ")
+            )
+        }
+    }
 }
 
 /// How a wait's end ends the run: exit 0 on a match, [`REFUSED`] on a refused pattern, [`GAVE_UP`]
@@ -789,6 +842,7 @@ fn lookout(args: &LookArgs) -> ExitCode {
         }
     });
     let mut wait = Wait::default();
+    let mut missing_said: Vec<u64> = Vec::new();
     run_looks(
         "vas",
         args.watch,
@@ -804,6 +858,7 @@ fn lookout(args: &LookArgs) -> ExitCode {
                 log.as_ref(),
                 tracking.then_some(&mut trend),
                 credit_log.as_mut(),
+                &mut missing_said,
             )?;
             let stop = waited.and_then(|v| wait.record(v)).map(wait_stop);
             if stop.is_none() && wait.looks_without_file() == NO_FILE_WARN_LOOKS {
@@ -984,6 +1039,39 @@ mod tests {
     use vast_skopos::until::{NO_FILE_LOOKS, NO_FILE_WARN_LOOKS, STARTING_LOOKS};
 
     const ROOT: Option<&str> = Some("C:/Program Files/Git/");
+
+    #[test]
+    fn the_ids_named_that_the_account_lacks_are_found_sorted_and_once() {
+        use super::{missing_ids, missing_note};
+        use vast_skopos::instance::Instance;
+        let all: Vec<Instance> = [56_362_434_u64, 56_363_476]
+            .iter()
+            .map(|id| Instance::from_json(&serde_json::json!({ "id": id })).unwrap())
+            .collect();
+        assert_eq!(missing_ids(&[], &all), Vec::<u64>::new());
+        assert_eq!(
+            missing_ids(&[56_363_476, 56_362_434], &all),
+            Vec::<u64>::new()
+        );
+        assert_eq!(missing_ids(&[9, 1, 56_363_476, 9], &all), [1, 9]);
+        assert_eq!(
+            missing_ids(&[5], &[]),
+            [5],
+            "an empty account lacks every box"
+        );
+        assert_eq!(
+            missing_note(&[1], 2),
+            "--instance: no box 1 in the account (it has 2)"
+        );
+        assert_eq!(
+            missing_note(&[1, 9], 2),
+            "--instance: no boxes 1, 9 in the account (it has 2)"
+        );
+        assert_eq!(
+            missing_note(&[], 3),
+            "--instance: every box named is in the account now"
+        );
+    }
 
     #[test]
     fn a_path_git_bash_rewrote_under_its_root_is_read_as_typed_again() {

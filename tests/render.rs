@@ -803,6 +803,65 @@ fn a_label_a_status_and_a_host_from_the_api_are_capped_and_the_port_survives() {
 }
 
 #[test]
+fn some_boxes_shown_keep_the_money_of_the_whole_account_and_say_how_many() {
+    use vast_skopos::render::table_of;
+    let row = |id: u64, status: &str, dph: f64| {
+        instance(&serde_json::json!({"id": id, "actual_status": status,
+            "intended_status": "running", "dph_total": dph, "status_msg": "pulling"}))
+    };
+    let all = [
+        row(1, "running", 0.5),
+        row(2, "loading", 0.25),
+        row(3, "running", 1.0),
+    ];
+    let account = Account::from_json(&serde_json::json!({"credit": 7.0}));
+    // Box 1 only: one row, but the burn of all three (two running, one loading).
+    let text = table_of(
+        &all[..1],
+        &all,
+        &[],
+        Some(&account),
+        TableOptions::new(),
+        0.0,
+    );
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 3, "the header, box 1, the money: {text}");
+    assert!(lines[1].starts_with("1 "), "{text}");
+    assert_eq!(
+        lines[2],
+        "credit $7.00 | burn $1.750/h over 2 running + 1 loading (meant to run, billing unknown) \
+         | ~4.0 h left at this rate | 1 of 3 boxes shown"
+    );
+    assert!(
+        !text.contains("pulling"),
+        "only a box shown has its status line: {text}"
+    );
+    // Box 2 only: its status line is there.
+    let text = table_of(&all[1..2], &all, &[], None, TableOptions::new(), 0.0);
+    assert!(text.contains("2 loading: pulling"), "{text}");
+    // None of them: said, and the money is still the account's.
+    let text = table_of(&[], &all, &[], None, TableOptions::new(), 0.0);
+    assert!(
+        text.contains("(none of the account's 3 boxes shown)"),
+        "{text}"
+    );
+    assert!(text.ends_with("| 0 of 3 boxes shown\n"), "{text}");
+    let one = &all[..1];
+    let text = table_of(&[], one, &[], None, TableOptions::new(), 0.0);
+    assert!(
+        text.contains("(none of the account's 1 box shown)")
+            && text.ends_with("| 0 of 1 box shown\n"),
+        "{text}"
+    );
+    // Every box shown: no note, and the table is the plain one.
+    assert_eq!(
+        table_of(&all, &all, &[], Some(&account), TableOptions::new(), 0.0),
+        table(&all, &[], Some(&account), TableOptions::new(), 0.0)
+    );
+    assert!(table(&[], &[], None, TableOptions::new(), 0.0).contains("(no instances)"));
+}
+
+#[test]
 fn a_box_that_is_not_running_says_vast_ais_message_under_the_table_before_the_money() {
     let row = |id: u64, status: &str, message: &str| {
         instance(&serde_json::json!({"id": id, "actual_status": status,

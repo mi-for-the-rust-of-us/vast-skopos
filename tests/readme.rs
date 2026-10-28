@@ -114,6 +114,16 @@ fn the_compact_example_has_the_keys_the_json_has() {
         keys(&real["probe"]["log"]),
         "the log object"
     );
+    let money_example: serde_json::Value = serde_json::from_str(
+        readme
+            .lines()
+            .find(|l| l.starts_with("{\"at\"") && l.contains("\"kind\":\"money\""))
+            .expect("the money example is in the README"),
+    )
+    .unwrap();
+    let real_money: serde_json::Value = serde_json::from_str(out.lines().last().unwrap()).unwrap();
+    assert_eq!(real_money["kind"], "money");
+    assert_eq!(keys(&money_example), keys(&real_money), "the money object");
     // The README names the three kinds (the code prints `box` and `money` here, and `event` under
     // `--ssh --watch`, which tests/power.rs and tests/other.rs check).
     for kind in ["box", "event", "money"] {

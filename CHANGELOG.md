@@ -44,6 +44,13 @@ All notable changes to this project are documented here. The format is based on
   counter of an idle card, seen on 2026-10-15, 10-19 and 10-26, which reads like "someone else is on it". It is
   marked only when the process list came back whole. `--compact` gains `processes` per GPU.
   `GpuReading::processes`, `GpuReading::idle_counter`, `render::idle_lines`.
+- `vas --instance ID` (repeatable): the rows, the probes, the trend and `--until` follow the boxes named, so a
+  wait can follow one box when several write the same log (on 2026-10-26 a wait ended on the first of two
+  runs). The money line stays the whole account's, since the credit is spent by every box, and says how many
+  are shown (`| 1 of 3 boxes shown`); `--credit-log` writes the account's money as before. An id the account
+  lacks is said on stderr, once, and again only when that changes. `--compact`'s money object gains `boxes` and
+  `shown`, with or without `--instance`. `render::table_of`, `compact::json_lines_of` (`table` and `json_lines`
+  are unchanged).
 
 ### Documentation
 

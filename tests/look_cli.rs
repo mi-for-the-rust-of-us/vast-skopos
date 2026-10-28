@@ -1063,6 +1063,113 @@ fn log_dir(name: &str) -> PathBuf {
 }
 
 #[test]
+fn instance_shows_the_boxes_named_and_keeps_the_money_of_the_whole_account() {
+    // An exited box named alone: one row, yet the burn of the account's running box.
+    let out = vas_output(&[OsStr::new("--instance"), OsStr::new("56363476")]);
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let rows: Vec<&str> = stdout.lines().filter(|l| l.starts_with("5636")).collect();
+    assert_eq!(rows.len(), 1, "{stdout}");
+    assert!(rows[0].starts_with("56363476"), "{stdout}");
+    assert!(
+        stdout.ends_with("credit $12.93 | burn $0.900/h over 1 running | ~14.4 h left at this rate | 1 of 3 boxes shown\n"),
+        "{stdout}"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !stderr.contains("--instance"),
+        "every box named is in the account: {stderr}"
+    );
+    // Named twice, and beside one that is not in the account: said on stderr.
+    let out = vas_output(&[
+        OsStr::new("--instance"),
+        OsStr::new("56363476"),
+        OsStr::new("--instance"),
+        OsStr::new("1"),
+        OsStr::new("--instance"),
+        OsStr::new("56363476"),
+    ]);
+    assert!(out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let said: Vec<&str> = stderr
+        .lines()
+        .filter(|l| l.contains("--instance"))
+        .collect();
+    assert_eq!(
+        said,
+        ["vas: --instance: no box 1 in the account (it has 3)"],
+        "{stderr}"
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(
+        stdout.lines().filter(|l| l.starts_with("5636")).count(),
+        1,
+        "a box named twice is one row: {stdout}"
+    );
+}
+
+#[test]
+fn instance_in_compact_and_in_the_credit_log_keeps_the_money_of_the_whole_account() {
+    let out = vas_output(&[
+        OsStr::new("--compact"),
+        OsStr::new("--instance"),
+        OsStr::new("56366414"),
+    ]);
+    assert!(out.status.success());
+    let objects: Vec<serde_json::Value> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(objects.len(), 2, "one box and the money: {objects:?}");
+    assert_eq!(objects[0]["id"], 56_366_414);
+    let money = &objects[1];
+    assert_eq!(
+        (
+            money["boxes"].as_u64(),
+            money["shown"].as_u64(),
+            money["burn"].as_f64()
+        ),
+        (Some(3), Some(1), Some(0.9))
+    );
+    let dir = log_dir("instance");
+    let file = dir.join("credit.csv");
+    let out = vas_output(&[
+        OsStr::new("--instance"),
+        OsStr::new("56366414"),
+        OsStr::new("--credit-log"),
+        file.as_os_str(),
+    ]);
+    assert!(out.status.success());
+    let text = std::fs::read_to_string(&file).unwrap();
+    let row: Vec<&str> = text.lines().nth(1).unwrap().split(',').collect();
+    assert_eq!(
+        row[1..],
+        ["12.9300", "0.9000", "1", "0"],
+        "the account's money: {text}"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_watch_says_an_id_the_account_lacks_once_not_at_every_look() {
+    let mut child = spawn_watch(account, &["--instance", "1", "--watch", "0"], Some("50"));
+    let lines = read_lines_until(&mut child, "== vas, unix time", 3);
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.contains("(none of the account's 3 boxes shown)")),
+        "{lines:#?}"
+    );
+    let mut stderr = String::new();
+    std::io::Read::read_to_string(&mut child.stderr.take().unwrap(), &mut stderr).unwrap();
+    assert_eq!(
+        stderr.matches("no box 1 in the account").count(),
+        1,
+        "three looks, said once: {stderr}"
+    );
+}
+
+#[test]
 fn a_credit_log_gets_a_header_once_and_a_row_per_run() {
     let dir = log_dir("rows");
     let file = dir.join("credit.csv");

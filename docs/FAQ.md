@@ -369,8 +369,10 @@ and `1` when the first look fails or its stdout is closed before a match; a box 
 (`loading`, say) keeps the wait going for 10 looks at most since a box was last read, and a look whose
 instances request failed does not count. A pattern
 can wait for success or failure at once: `--until 'initial loss|Traceback'`, then read the line it printed. The
-first box whose log matches ends the wait: to wait for each box, give each run a log path of its own and wait
-on each path (a box without the file reads as not matching yet), or start a new wait after each match.
+first box whose log matches ends the wait. To wait for one box, name it: `--instance ID` (repeatable) makes
+the rows, the probes and the wait follow the boxes named, while the money line stays the whole account's. In
+0.3.0, which has no `--instance`, give each run a log path of its own and wait on each path, or start a new wait
+after each match.
 There is no time limit of its own: `timeout 3600 vas ...` gives one. See the tutorial
 [Waiting for a line](tutorials/waiting-for-a-line.md).
 

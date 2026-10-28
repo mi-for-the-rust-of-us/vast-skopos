@@ -160,6 +160,44 @@ fn a_box_with_everything_and_a_box_with_nothing_have_the_same_keys() {
 }
 
 #[test]
+fn the_money_says_how_many_boxes_there_are_and_how_many_were_shown() {
+    use vast_skopos::compact::json_lines_of;
+    let row = |id: u64, dph: f64| {
+        instance(&json!({"id": id, "actual_status": "running", "dph_total": dph}))
+    };
+    let all = [row(1, 0.5), row(2, 0.25)];
+    let every = objects(&json_lines(&all, &[], None, None, 0.0));
+    let money = &every[2];
+    assert_eq!(
+        (
+            money["kind"].as_str(),
+            money["boxes"].as_u64(),
+            money["shown"].as_u64()
+        ),
+        (Some("money"), Some(2), Some(2))
+    );
+    let some = objects(&json_lines_of(&all[1..], &all, &[], None, None, 0.0));
+    assert_eq!(some.len(), 2, "one box and the money");
+    assert_eq!(some[0]["id"], 2);
+    let money = &some[1];
+    assert_eq!(
+        (money["boxes"].as_u64(), money["shown"].as_u64()),
+        (Some(2), Some(1))
+    );
+    assert_eq!(
+        money["burn"],
+        json!(0.75),
+        "the money is the whole account's"
+    );
+    assert_eq!(money["running"], 2);
+    assert_eq!(
+        keys(money),
+        keys(&every[2]),
+        "the same keys, whatever is shown"
+    );
+}
+
+#[test]
 fn a_failed_probe_and_every_log_state_are_objects() {
     let rows: Vec<Instance> = (1..=8)
         .map(|id| instance(&json!({"id": id, "actual_status": "running"})))

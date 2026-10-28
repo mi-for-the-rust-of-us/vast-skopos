@@ -183,6 +183,7 @@ ID        GPU          VRAM  $/H    CUDA  DISK   UP/DOWN Mb/s  REL %  MAX DAYS  
 | `vas --wide` | also show each box's direct `ssh` address past the proxy (`DIRECT`: its public IP and the host port mapped to its port 22, from the API's `public_ipaddr` and `ports`), its machine id and host id (what a rentals log, `--exclude-machine` and `--exclude-host` need), then its CPU, driver, DLPerf and PCIe bandwidth (`CPU`, `DRIVER`, `DLPERF`, `PCIE GB/s`: what tells it from another machine of its host, as `vas offers --wide` shows them) |
 | `vas --compact` | JSON Lines instead of the table, for scripts and monitors ([below](#vas---compact-json-lines)); not with `--wide` |
 | `vas --watch 60` | refresh every 60 s (at least 10) until Ctrl+C |
+| `vas --instance ID` | only this box, repeatable: the rows, the probes, the trend and `--until` follow the boxes named. The money line stays the whole account's, since the credit is spent by every box, and says how many boxes are shown (`... \| 1 of 3 boxes shown`); so does `--credit-log`. An id the account lacks is said on stderr, once, and again only when that changes |
 | `vas --credit-log FILE` | append one CSV row per look to `FILE`: the credit as a curve ([below](#the-credit-history)) |
 | `vas --key-file FILE` | read the key from `FILE` |
 | `vas offers [FLAGS]` | the offers for rent that pass the flags, cheapest first; no key needed ([below](#vas-offers)) |
@@ -339,7 +340,7 @@ about two seconds of a $0.19/h box, and vast.ai sends the credit with float nois
 ```text
 $ vas --compact --ssh --log '/root/runs/*/train.log'
 {"age_s":8100,"at":1792250000,"cost":2.025,"cpu_name":"AMD EPYC 7K62 48-Core Processor","direct_host":"180.189.55.38","direct_port":55814,"dlperf":199.2,"dph":0.9,"driver_version":"580.142","gpu_name":"RTX 5090","host_id":406325,"id":56362434,"intended":"running","kind":"box","label":"me36 box 2","machine_id":100682,"num_gpus":1,"pcie_bw":26.9,"power_reference_w":575,"probe":{"clock_trend":null,"gpus":[{"index":0,"mem_total_mib":32607,"mem_used_mib":29400,"other_mem_mib":10,"power_default_w":575,"power_limit_w":575,"power_max_w":600,"power_w":560,"processes":1,"sm_max_mhz":3090,"sm_mhz":2900,"throttle":[],"util_pct":99}],"log":{"file":"/root/runs/s0/train.log","line":"e41 loss 0.3","state":"line"},"route":"proxy","util_trend":null},"ssh_host":"ssh6.vast.ai","ssh_port":36000,"status":"running","status_msg":null,"where":"South Korea, KR"}
-{"at":1792250000,"burn":0.9,"credit":12.93,"hours_left":14.4,"kind":"money","running":1,"unsure":{}}
+{"at":1792250000,"boxes":1,"burn":0.9,"credit":12.93,"hours_left":14.4,"kind":"money","running":1,"shown":1,"unsure":{}}
 ```
 
 `probe` is `null` for a box not probed (no `--ssh`, or not running), `{"error": "...", "error_kind": "unreachable", "direct_error": null}`
@@ -356,7 +357,8 @@ gives it whatever the status (`null` when it gives none); `cpu_name`, `driver_ve
 `pcie_bw` are always there, like the ids (what `--wide` shows), as is `power_reference_w` (the model's reference
 board power, `null` for a model not in the table), and so are `direct_host` and `direct_port`, the
 box's direct `ssh` address past the proxy (`null` when the API gives none). `unsure` counts, by state, the boxes meant to run that read
-otherwise (the burn, above). With `--ssh --watch N`, a change of a GPU's power limit or throttle reasons is an
+otherwise (the burn, above). The money is always the whole account's; `boxes` counts the account's boxes and
+`shown` those printed, fewer under `--instance`. With `--ssh --watch N`, a change of a GPU's power limit or throttle reasons is an
 `event` object, between the boxes and the money (see the power cap, above). With `--watch N`, a look is printed every N seconds with no separator line (the table form of `--watch`
 stamps each look with `== vas, unix time N`; JSON lines would not parse with it): the `at`
 tells looks apart. `jq` does the rest, for example `vas --compact | jq -r 'select(.kind=="money").hours_left'`.

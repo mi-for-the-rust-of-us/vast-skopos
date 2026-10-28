@@ -86,8 +86,17 @@ for epoch 10's archive line (`--watch 60 --until 'archived .*_e10\.|Traceback'`)
 vas: --until: box 57787711 matched: archived /root/src/askesis/reference/canvas/data/runs/me38_l12_s0_d1/canvas_ema_e10.safetensors
 ```
 
-To wait for every box, start a new wait after each match (the line on stderr names the box), or give each run a
-log path of its own and wait on each path. `vas` has no flag yet to wait on one box only.
+To wait for one box, name it with `--instance` (repeatable). Its line then ends the wait, whatever the other
+boxes print, and the money line stays the account's:
+
+```sh
+vas --ssh --log '/root/src/askesis/reference/canvas/data/runs/*/run.log' --watch 60 \
+    --until 'archived .*_e10\.' --instance 57787806
+```
+
+To wait for every box, start one wait per box, each with its own `--instance`. In 0.3.0, which has no
+`--instance`, start a new wait after each match (the line on stderr names the box), or give each run a log path of
+its own and wait on each path.
 
 The rules, so a script can rely on them:
 

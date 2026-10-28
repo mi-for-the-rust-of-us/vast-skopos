@@ -430,6 +430,36 @@ pub fn table(
     options: TableOptions<'_>,
     now: f64,
 ) -> String {
+    table_of(instances, instances, probes, account, options, now)
+}
+
+/// The table of some of the account's boxes (`vas --instance`).
+///
+/// One row per instance of `shown`, then the money line over `all` of them (the credit is spent by
+/// every box), which then says how many are shown: `| 1 of 3 boxes shown`. `probes` holds one outcome per instance of `shown`, as for [`table`];
+/// `shown` is expected to be part of `all` (`vas --instance`).
+///
+/// ```
+/// use vast_skopos::{instance::{Account, Instance}, render::{table_of, TableOptions}};
+/// let row = |id: u64, status: &str| Instance::from_json(&serde_json::json!({"id": id,
+///   "actual_status": status, "intended_status": "running", "dph_total": 0.5})).unwrap();
+/// let all = [row(1, "running"), row(2, "running")];
+/// let account = Account::from_json(&serde_json::json!({"credit": 5.0}));
+/// let text = table_of(&all[1..], &all, &[], Some(&account), TableOptions::new(), 0.0);
+/// assert_eq!(text.lines().count(), 3, "the header, one row, the money");
+/// assert!(text.ends_with("credit $5.00 | burn $1.000/h over 2 running | ~5.0 h left at this rate \
+///   | 1 of 2 boxes shown\n"));
+/// ```
+#[must_use]
+pub fn table_of(
+    shown: &[Instance],
+    all: &[Instance],
+    probes: &[ProbeOutcome],
+    account: Option<&Account>,
+    options: TableOptions<'_>,
+    now: f64,
+) -> String {
+    let instances = shown;
     let TableOptions {
         ssh: with_ssh,
         wide,
@@ -525,11 +555,21 @@ pub fn table(
     }
     let mut out = layout(&header, &rows);
     if instances.is_empty() {
-        out.push_str("(no instances)\n");
+        if all.is_empty() {
+            out.push_str("(no instances)\n");
+        } else {
+            let _ = writeln!(out, "(none of the account's {} shown)", boxes(all.len()));
+        }
     }
     out.push_str(&status_lines(instances));
     out.push_str(&idle_lines(instances, probes));
-    out.push_str(&money_line(instances, account));
+    let mut money = money_line(all, account);
+    if shown.len() != all.len() {
+        // The line ends in a newline: the note goes before it.
+        money.pop();
+        let _ = writeln!(money, " | {} of {} shown", shown.len(), boxes(all.len()));
+    }
+    out.push_str(&money);
     // What moved in the boxes' power since the last look, under the money (a watch that probes).
     for change in trend.map_or(&[][..], Trend::changes) {
         out.push_str(&change.line());
@@ -602,6 +642,15 @@ pub fn idle_lines(instances: &[Instance], probes: &[ProbeOutcome]) -> String {
         }
     }
     out
+}
+
+/// `1 box`, `3 boxes`.
+fn boxes(n: usize) -> String {
+    if n == 1 {
+        String::from("1 box")
+    } else {
+        format!("{n} boxes")
+    }
 }
 
 /// The money line: the credit, the burn rate of the instances that bill or may, and the hours that
