@@ -17,7 +17,8 @@ All notable changes to this project are documented here. The format is based on
   either route). Readings that came that way say `(direct)` in the last cell, and `--compact`'s probe gains
   `route` (`proxy` or `direct`). A box neither route reached reads `UNREACHABLE 4m: <proxy reason> (direct
   HOST:PORT: <reason>)`, and is `UNREACHABLE` only if neither route reached it; `--compact`'s error object
-  gains `direct_error`. One attempt per route, never a loop (CONVENTIONS.md says so). `probe::Route`,
+  gains `direct_error`. A box with no proxy address but a direct one is probed at its direct address.
+  One attempt per route, never a loop (CONVENTIONS.md says so). `probe::Route`,
   `Probe::route`, `SkoposError::SshRoutes`.
 - `POWER` marks a board whose maximum is below its model's reference board power: `450W<575` (seen on
   2026-10-26: a 450 W RTX 5090 board read `450W`, like an uncapped card, while idle). The probe asks
@@ -63,8 +64,9 @@ All notable changes to this project are documented here. The format is based on
 - `--until` waited forever when no box had a file matching the `--log` path: such a look counted as a box
   read. It now warns on stderr once, after 2 such looks (`is the path right?`), and gives up with exit 3 when
   the boxes have answered without the file for `--log-wait SECONDS`, 900 (15 minutes) by default, counted
-  from the first such look on the clock (a file appearing on any box starts it afresh). A box whose log could
-  not be read, or one still loading, may have the file: such a look does not count against it.
+  from the first such look on the clock (a file appearing on any box starts it afresh), whatever the other
+  boxes say: one still loading, one whose log could not be read, or one whose `grep` refused the pattern (a box
+  without the file may take it once the file is written, so a refusal no longer ends the wait beside it).
   `until::Verdict::NoFile`, `until::End::NoFile`, `until::NO_FILE_WARN_LOOKS`, `until::NO_FILE_SECS`,
   `Wait::no_file_secs`, `Wait::record_at` (a look at a given time; `Wait::record` takes the clock's),
   `Wait::warns_of_no_file`.

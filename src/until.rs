@@ -51,7 +51,8 @@ pub enum Verdict {
     },
     /// No match, a box's `grep` refused the pattern (one it cannot read as an extended regular
     /// expression, or a `grep` that lacks the options the probe gives it), and no other box was read
-    /// that could still match.
+    /// that could still match: none took the pattern, and none answered without the file (it may
+    /// take the pattern once the file is written).
     Refused {
         /// The instance's id: the first such box, in the instances' order.
         id: u64,
@@ -60,17 +61,17 @@ pub enum Verdict {
     /// yet. A log the box could not give ([`LogReading::Unreadable`]: the search ran past its
     /// deadline, the file could not be read, the answer was cut short) is NOT a box read.
     Read,
-    /// Boxes were read, but none holds a file matching the path (each read box says "no file
-    /// matches", or that the newest match is not a file), no box's log was unreadable (it may hold
-    /// the file), and every box meant to run is running: the log is not written yet, or the path is
-    /// wrong.
+    /// No match, no box was read with a file to search, and a box answered without one (it says "no
+    /// file matches", or that the newest match is not a file): the log is not written yet, or the
+    /// path is wrong. Whatever the other boxes say (loading, a log they could not give, a refused
+    /// pattern): [`Wait`] bounds this by a time, and a box read with the file starts it afresh.
     NoFile,
-    /// No box was read with a file to search, but a box meant to run is not running (yet):
-    /// `loading`, say. Its log may come once it runs.
+    /// No box answered with or without the file, but a box meant to run is not running (yet):
+    /// `loading`, say.
     Starting,
-    /// Nothing to wait on: no box was read with a file to search, none is meant to run but not
-    /// running, and not every box read can be said to lack the file. Every probe failed or gave no
-    /// readable log, or none could be made (no box running, or none with an `ssh` endpoint).
+    /// Nothing to wait on: no box answered with or without the file, and none is meant to run but not
+    /// running. Every probe failed or gave no readable log, or none could be made (no box running,
+    /// or none with an `ssh` endpoint).
     Unread,
 }
 
@@ -93,7 +94,7 @@ pub enum Verdict {
 /// ```
 #[must_use]
 pub fn verdict(instances: &[Instance], probes: &[ProbeOutcome]) -> Verdict {
-    let (mut read, mut no_file, mut unreadable, mut refused) = (false, false, false, None);
+    let (mut read, mut no_file, mut refused) = (false, false, None);
     // EXPLICIT: an imperative loop: the first match ends the search, and every read box counts.
     for (n, i) in instances.iter().enumerate() {
         let Some(Ok(probe)) = outcome_at(probes, n) else {
@@ -108,9 +109,8 @@ pub fn verdict(instances: &[Instance], probes: &[ProbeOutcome]) -> Verdict {
                 };
             }
             Some(LogReading::PatternRefused { .. }) => refused = refused.or(Some(i.id)),
-            // A log the box could not give is no box read, and it may hold the file: it says
-            // nothing either way.
-            Some(LogReading::Unreadable) => unreadable = true,
+            // EXPLICIT: a log the box could not give is no box read: it must not hold a wait.
+            Some(LogReading::Unreadable) => {}
             // Read, but without a file to search: the path may be wrong.
             Some(LogReading::NoMatch | LogReading::NotAFile { .. }) => no_file = true,
             // Without `--log` there is no path to doubt: a box read is a box read.
@@ -119,19 +119,19 @@ pub fn verdict(instances: &[Instance], probes: &[ProbeOutcome]) -> Verdict {
             }
         }
     }
-    // A box that took the pattern can still match: one box's refusal ends a wait only alone.
+    // A box that took the pattern, or that may take it once its file is written, can still match:
+    // one box's refusal ends a wait only alone.
     if read {
         Verdict::Read
+    } else if no_file {
+        Verdict::NoFile
     } else if let Some(id) = refused {
         Verdict::Refused { id }
     } else if instances
         .iter()
         .any(|i| i.is_meant_to_run() && !i.is_running())
     {
-        // A box still starting may write the file once it runs.
         Verdict::Starting
-    } else if no_file && !unreadable {
-        Verdict::NoFile
     } else {
         Verdict::Unread
     }

@@ -295,7 +295,8 @@ pub fn log_cell(log: Option<&LogReading>) -> String {
 /// `UNREACHABLE` when `ssh` never reached the box ([`SkoposError::is_unreachable`]), else `SSH
 /// FAILED`; the age is the box's (`age_secs`, left out when unknown), since the age is what the
 /// choice between waiting and destroying rests on. The reason is `ssh`'s own: the target is already
-/// in the `SSH` column.
+/// in the `SSH` column (in `DIRECT`, under `--wide`, for a box with no proxy address, probed at its
+/// direct one only).
 ///
 /// ```
 /// use vast_skopos::{SkoposError, render::failure_cell};

@@ -59,6 +59,8 @@ fn vas(args: &[&str]) -> String {
         .env("HOME", &home)
         .env("USERPROFILE", &home)
         .env_remove("XDG_CONFIG_HOME")
+        .env_remove("MSYSTEM")
+        .env_remove("EXEPATH")
         .output()
         .unwrap();
     std::fs::remove_dir_all(&home).unwrap();
@@ -189,6 +191,8 @@ fn spawn_watch_at(base: &str, args: &[&str], floor_ms: Option<&str>) -> Watch {
         .env("HOME", &home)
         .env("USERPROFILE", &home)
         .env_remove("XDG_CONFIG_HOME")
+        .env_remove("MSYSTEM")
+        .env_remove("EXEPATH")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     match floor_ms {
@@ -339,7 +343,12 @@ fn vas_in(
         .args(args)
         .env("VAST_URL", &base)
         .env_remove("VAST_API_KEY")
-        .env_remove("XDG_CONFIG_HOME");
+        .env_remove("XDG_CONFIG_HOME")
+        .env_remove("MSYSTEM")
+        .env_remove("EXEPATH")
+        // Git Bash's own variables, from a developer's shell: a test sets them when it means to.
+        .env_remove("MSYSTEM")
+        .env_remove("EXEPATH");
     if let Some(dir) = cwd {
         command.current_dir(dir);
     }
@@ -883,6 +892,21 @@ fn a_log_path_git_bash_rewrote_is_read_as_typed_and_a_windows_one_is_refused() {
         refused.seen.lock().unwrap().is_empty(),
         "refused before any request"
     );
+    // Outside Git Bash the refusal names no Git Bash workaround.
+    let home = empty_dir("no-msys");
+    let plain = vas_with(
+        box_on_loopback,
+        &["--ssh", "--log", "D:/runs/run.log"],
+        &key_env(&home, ENV_KEY),
+        &[],
+    );
+    std::fs::remove_dir_all(&home).unwrap();
+    assert_eq!(plain.code, Some(2), "{}", plain.stderr);
+    assert!(
+        plain.stderr.contains("is not a path on the box") && !plain.stderr.contains("Git Bash"),
+        "{}",
+        plain.stderr
+    );
     // A pattern that starts with a drive letter is the user's to send, but said.
     let home = empty_dir("msys-grep");
     let mut env = key_env(&home, ENV_KEY);
@@ -1001,6 +1025,8 @@ fn the_lookout_waits_out_a_short_rate_limit_once_and_says_so() {
         .env("HOME", &home)
         .env("USERPROFILE", &home)
         .env_remove("XDG_CONFIG_HOME")
+        .env_remove("MSYSTEM")
+        .env_remove("EXEPATH")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -1074,6 +1100,8 @@ fn vas_output_with(respond: common::Respond, args: &[&OsStr]) -> std::process::O
         .env("HOME", &home)
         .env("USERPROFILE", &home)
         .env_remove("XDG_CONFIG_HOME")
+        .env_remove("MSYSTEM")
+        .env_remove("EXEPATH")
         .output()
         .unwrap();
     std::fs::remove_dir_all(&home).unwrap();
@@ -1424,6 +1452,8 @@ fn the_lookout_sits_out_a_short_budget_between_two_pages_of_the_list_and_says_so
         .env("HOME", &home)
         .env("USERPROFILE", &home)
         .env_remove("XDG_CONFIG_HOME")
+        .env_remove("MSYSTEM")
+        .env_remove("EXEPATH")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -1531,6 +1561,8 @@ fn a_rate_limit_longer_than_the_patience_ends_the_lookout_with_the_wait_named_an
         .env("HOME", &home)
         .env("USERPROFILE", &home)
         .env_remove("XDG_CONFIG_HOME")
+        .env_remove("MSYSTEM")
+        .env_remove("EXEPATH")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()

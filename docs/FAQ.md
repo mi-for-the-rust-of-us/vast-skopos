@@ -88,7 +88,7 @@ malformed (and when the stdout of a `--until` wait is closed before a match), `2
 refused, on the command line or in a config file (an unknown flag, a value out of range, flags that
 conflict), or when a box's `grep` refuses a `--until` pattern, or when a `--log` path from Git Bash cannot be a
 path on the box, and `3` when a `--until` wait gave up: no box could be read for 2 looks in a row, or no box has
-had a file matching the `--log` path for 10.
+had a file matching the `--log` path for `--log-wait` seconds (900, 15 minutes, by default).
 
 ## Searching for offers
 
@@ -330,7 +330,7 @@ vas: --log: Git Bash rewrote /root/runs/s1/run.log as C:/Program Files/Git/root/
 - **A path it can't read back:** one that Git Bash maps somewhere else (`/tmp/...` becomes your temp folder)
   is refused with exit 2. Use one of the workarounds above.
 - **A wait on a path that matches nothing:** it no longer waits forever. It warns after 2 looks and gives up
-  with exit 3 after 10.
+  with exit 3 after `--log-wait` seconds (900, 15 minutes, by default).
 
 ### What does `--log` show?
 

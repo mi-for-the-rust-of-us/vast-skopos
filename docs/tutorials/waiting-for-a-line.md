@@ -112,8 +112,8 @@ a box was last read: you can start the wait right after renting, and a box whose
 hold it forever (after the ten, its looks count as looks with nothing to read). A box read without a match yet keeps it going too, and so does a box with no file matching the path yet, for
 `--log-wait` seconds (15 minutes by default; `--log-wait 1800` for a run that sets up for half an hour first):
 a run may write its log late, but a path that matches nothing on any box must not keep a script waiting while
-the boxes cost. A box whose log could not be read (`?`), or one still `loading`, may have the file: such a look
-does not count against it.
+the boxes cost. The time runs while any box answers without the file and none is read with it, whatever the
+other boxes say (`loading`, `?`, a failed `ssh`, a refused pattern); a box read with the file starts it afresh.
 
 **From Git Bash, check the path.** Git Bash rewrites `/root/...` into `C:/Program Files/Git/root/...` before
 `vas` sees it. Since 0.4.0, `vas` reads it as typed again and says so. In 0.3.0 such a wait reads `(no file

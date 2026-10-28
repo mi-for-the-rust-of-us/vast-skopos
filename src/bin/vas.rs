@@ -806,8 +806,13 @@ fn typed_for_the_box(args: &LookArgs) -> Result<(Option<String>, Option<String>)
             Ok(read)
         }
         ForTheBox::Refused => {
+            let help = if root.is_some() {
+                ": from Git Bash, write it //root/... or set MSYS_NO_PATHCONV=1"
+            } else {
+                ""
+            };
             eprintln!(
-                "vas: {flag} {typed} is not a path on the box (a Linux path starts with /): from Git Bash, write it //root/... or set MSYS_NO_PATHCONV=1"
+                "vas: {flag} {typed} is not a path on the box (a Linux path starts with /){help}"
             );
             Err(ExitCode::from(2))
         }

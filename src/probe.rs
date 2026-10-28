@@ -63,7 +63,7 @@ pub struct GpuReading {
 /// when nothing holds it lower. Only models with one such figure are listed (an RTX 4060 Ti is 160
 /// or 165 W, by its memory); an add-in board may ship above it (a `500/600W` RTX 5090 was seen on
 /// 2026-10-25).
-pub const REFERENCE_POWER_W: [(&str, u32); 5] = [
+pub const REFERENCE_POWER_W: &[(&str, u32)] = &[
     ("RTX 5090", 575),
     ("RTX 5080", 360),
     ("RTX 4090", 450),

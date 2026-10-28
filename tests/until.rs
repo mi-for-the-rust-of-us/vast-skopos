@@ -196,43 +196,52 @@ fn looks_with_nothing_to_read_neither_restart_the_time_nor_warn_again() {
 }
 
 #[test]
-fn a_box_without_the_file_is_no_no_file_while_another_may_still_have_it() {
+fn a_box_without_the_file_runs_the_clock_whatever_the_other_boxes_say() {
     let running = instance(1, "running", "running");
     let other = instance(2, "running", "running");
     let loading = instance(3, "loading", "running");
-    let cut = read(
-        "vas-grep-file:/r/run.log
-vas-grep-exit:124
-",
-    );
-    assert_eq!(
-        verdict(
-            &[running.clone(), other],
-            &[
-                read(
-                    "vas-no-file
-"
-                ),
-                cut
-            ]
+    let no_file = || read("vas-no-file\n");
+    let cut = || read("vas-grep-file:/r/run.log\nvas-grep-exit:124\n");
+    let looks: [(&str, Vec<Instance>, Vec<ProbeOutcome>); 4] = [
+        (
+            "box 2's log was cut short",
+            vec![running.clone(), other.clone()],
+            vec![no_file(), cut()],
         ),
-        Verdict::Unread,
-        "box 2's log was cut short: it may hold the file"
-    );
-    assert_eq!(
-        verdict(
-            &[running, loading],
-            &[
-                read(
-                    "vas-no-file
-"
-                ),
-                None
-            ]
+        (
+            "box 3 is loading",
+            vec![running.clone(), loading],
+            vec![no_file(), None],
         ),
-        Verdict::Starting,
-        "box 3 may write the file once it runs"
-    );
+        (
+            "box 2's ssh failed",
+            vec![running.clone(), other.clone()],
+            vec![no_file(), ssh_refused()],
+        ),
+        (
+            "box 2's grep refused the pattern: box 1's may take it once its file is written",
+            vec![running, other],
+            vec![no_file(), grep_refused()],
+        ),
+    ];
+    for (why, boxes, probes) in looks {
+        assert_eq!(verdict(&boxes, &probes), Verdict::NoFile, "{why}");
+        // Such looks a minute apart end the wait at --log-wait, never sooner (the 2026-10-28 review:
+        // two of them once gave up at the second look, "no box could be read").
+        let mut wait = Wait::default().no_file_secs(600);
+        for n in 0..10 {
+            assert_eq!(
+                wait.record_at(verdict(&boxes, &probes), n * 60),
+                None,
+                "{why}: look {n}"
+            );
+        }
+        assert_eq!(
+            wait.record_at(verdict(&boxes, &probes), 600),
+            Some(End::NoFile),
+            "{why}"
+        );
+    }
 }
 
 #[test]
