@@ -407,7 +407,9 @@ limit, which every card reaches. On 2026-10-19 a default-limit RTX 4060 Ti (`165
 about 2,565 of 3,105 MHz while a matrix-multiply loop ran on it, and `165W` again afterwards, with the lines
 `! ... power_cap began` and `power_cap ended` under the money. What was unusual on 2026-10-18 was the limit
 **below the default** (`400/575W`) together with a clock far under the maximum: compare the limit with the
-default, and the clock with its maximum, not the word alone. Second, a load that starts and stops, or a cap that
+default, and the clock with its maximum, not the word alone. (Some cards report it even while idle: on
+2026-10-28 an RTX 3080 at 0 % and 210 MHz read `320W+power_cap`, and a watch then said only `power_cap ended`
+when a load stopped, never `began`.) Second, a load that starts and stops, or a cap that
 is intermittent, makes the watch say `began` and `ended` at each flip: that is what the card did. And the **same cap does not mean the same speed**: on those two boxes both were at
 `400/575W`, one ran at about 1,700 MHz and the other at about 2,100 (different silicon, cooling and
 workload: the cause was not determined). The limit alone does not tell the speed; the clock history does.

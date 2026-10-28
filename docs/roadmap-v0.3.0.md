@@ -65,7 +65,9 @@ CHANGELOG.
 
 ## Candidates for later
 
-Not a priority order, and none promised.
+Not a priority order, and none promised. *Since written (2026-10-28):* candidates 1, 2, 3 and 5, and the
+library half of 8, are built for the next version, and its CHANGELOG's Unreleased section says how; 4 has a
+second host's agreement (2026-10-28).
 
 1. **The direct route (note 1b).** The instance row carries it: `public_ipaddr` and the host port mapped to 22
    (`ports["22/tcp"]`). Show it, and probe it when the proxy refuses. *Open:* on 2026-10-26 it was open on one

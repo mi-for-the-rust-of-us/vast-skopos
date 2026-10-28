@@ -6,23 +6,6 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
-### Fixed
-
-- A line break in the API's text (vast.ai's status message holds the lines of an image's download) was dropped,
-  gluing two lines together: `Verifying Checksumc455daa85bb6:` (seen on the 2026-10-28 test rental). A line break
-  or a tab now becomes one space, with the spaces around it; every other control or invisible character is still
-  dropped. This applies to all the API's text: the status message, labels, locations.
-- `vas --ssh --log /root/...` typed in Git Bash read `(no file matches)` on every box. Git Bash rewrites an
-  argument that looks like a POSIX path before a Windows program sees it (`C:/Program Files/Git/root/...`), and
-  a path with no glob character was always rewritten (reproduced live on 2026-10-26). `vas` now reads such a
-  path as typed again when it starts with Git Bash's own root (known from `MSYSTEM` and `EXEPATH`), and says
-  so on stderr. Another Windows path (`/tmp/...` mapped to the temp folder) is refused with exit 2 and the
-  workarounds (`//tmp/...`, `MSYS_NO_PATHCONV=1`); `--grep` and `--until` patterns get the same repair.
-- `--until` waited forever when no box had a file matching the `--log` path: such a look counted as a box
-  read. It now warns on stderr after 2 such looks (`is the path right?`) and gives up with exit 3 after 10
-  in a row (a file appearing on any box resets the count). `until::Verdict::NoFile`, `until::End::NoFile`,
-  `until::NO_FILE_WARN_LOOKS`, `until::NO_FILE_LOOKS`, `until::Wait::looks_without_file`.
-
 ### Added
 
 - `vas --wide`: a `DIRECT` column after `SSH`, the box's direct `ssh` address past vast.ai's proxy (its
@@ -63,12 +46,34 @@ All notable changes to this project are documented here. The format is based on
   without a box. The `config` module and `key::txt_hint` stay hidden: they follow the binary's flags and
   wording, and are not promised.
 
+### Fixed
+
+- A line break in the API's text (vast.ai's status message holds the lines of an image's download) was dropped,
+  gluing two lines together: `Verifying Checksumc455daa85bb6:` (seen on the 2026-10-28 test rental). A line break
+  or a tab now becomes one space, with the spaces around it; every other control or invisible character is still
+  dropped. This applies to all the API's text: the status message, labels, locations.
+- `vas --ssh --log /root/...` typed in Git Bash read `(no file matches)` on every box. Git Bash rewrites an
+  argument that looks like a POSIX path before a Windows program sees it (`C:/Program Files/Git/root/...`), and
+  a path with no glob character was always rewritten (reproduced live on 2026-10-26). `vas` now reads such a
+  path as typed again when it starts with Git Bash's own root (known from `MSYSTEM` and `EXEPATH`), and says
+  so on stderr. Another Windows path (`/tmp/...` mapped to the temp folder) is refused with exit 2 and the
+  workarounds (`//tmp/...`, `MSYS_NO_PATHCONV=1`); `--grep` and `--until` patterns get the same repair.
+- `--until` waited forever when no box had a file matching the `--log` path: such a look counted as a box
+  read. It now warns on stderr after 2 such looks (`is the path right?`) and gives up with exit 3 after 10
+  in a row (a file appearing on any box resets the count). `until::Verdict::NoFile`, `until::End::NoFile`,
+  `until::NO_FILE_WARN_LOOKS`, `until::NO_FILE_LOOKS`, `until::Wait::looks_without_file`.
+
 ### Documentation
 
 - The FAQ explains why `vas --ssh --log /root/...` typed in Git Bash reads `(no file matches)` (Git Bash rewrites
   the path into a Windows one before `vas` sees it), and the three ways around it: a glob, `//root/...`, or
   `MSYS_NO_PATHCONV=1`. The waiting tutorial points to it, since a 0.3.0 `--until` wait on such a path never
   ends (seen 2026-10-26).
+- A report of the 2026-10-28 test rental (two RTX 3080s), which saw the status line, `SSH FAILED`, the `!` power
+  line, `DIRECT` and `--instance` with `--until` on real boxes for the first time. The FAQ notes that some cards
+  report `power_cap` even while idle; the comparison with `vastai` says where 0.4.0 stands, row by row
+  (marked *(0.4.0)*), and that `vastai`'s `ssh-url` tries the direct port first where `vas` tries the proxy
+  first; the 0.3.0 roadmap says which of its candidates are built.
 
 ## [0.3.0] - 2026-10-26
 
