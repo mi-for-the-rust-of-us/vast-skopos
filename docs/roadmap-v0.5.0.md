@@ -16,11 +16,12 @@ there easy to learn, for a person and for an agent.
 
 - **`vas --help` is 684 words, and `vas -h` prints the same.** Every flag's help is a full paragraph; the one
   for `--until` alone holds five exit-code rules. `vas offers --help` is 501 words.
-- **The help has no examples,** never names the environment variables (`VAST_API_KEY`, `VAST_URL`), and says
-  the exit codes only inside `--until`.
+- **The help has no examples.** It names `VAST_API_KEY` once, inside `--key-file`, and never `VAST_URL` or
+  `XDG_CONFIG_HOME`. It says the exit codes only inside `--until`; `vas offers --help` never mentions them.
 - **The README is 7,900 words.** It opens with three release banners in a row (0.3.0, 0.2.0, 0.1.0), and
-  0.4.0 would add a fourth. The FAQ has 39 questions (5,700 words), and the two tutorials have 4,200 words.
-  A newcomer has to dig to find the three commands they need first.
+  0.4.0 will add a fourth. Its "Try it" section, with a `vas --ssh` and a `vas offers` sample, comes after
+  80 lines of "Usage". The FAQ has 39 questions (5,700 words), and the two tutorials have 4,200 words. A
+  newcomer has to dig to find the three commands they need first.
 - **For an AI assistant, the precision is an asset,** since an agent that reads `vas --help` gets the exact
   behaviour. What it lacks is the overall picture:
   - which command answers which question;
@@ -33,19 +34,23 @@ there easy to learn, for a person and for an agent.
 ### 1. Two levels of help
 
 clap takes the first paragraph of each flag's doc comment for `-h`, and the whole comment for `--help`.
+Today every flag's comment is a single paragraph, which is why the two print the same.
 
-- **Each flag opens with a one-line summary,** so `vas -h` and `vas offers -h` fit on one screen. The
-  detail stays in `--help`, unchanged.
+- **Each flag opens with a one-line summary, then a blank line,** so `vas -h` and `vas offers -h` fit on one
+  screen. The detail stays in `--help`, unchanged.
 - **`--help` ends with three blocks** (clap's `after_long_help`):
   - **examples:** "watch my boxes", "is any GPU idle or capped?", "wait for the first loss on one box",
     "find a verified RTX 5090 under $0.50/h";
   - **the exit codes,** in one table: 0, 1, 2, 3, and what each means for a one-shot, a watch and a wait;
-  - **the environment variables:** `VAST_API_KEY`, `VAST_URL`, and where the key is otherwise looked for.
-- **Tests:**
-  - every example is accepted by the current flags, as `tests/readme.rs` checks the README's commands;
-  - each `-h` line stays under a width, so it cannot grow back into a paragraph unnoticed;
-  - the exit codes block uses the same constants as the code (`GAVE_UP`, `REFUSED`), as the `--until` help
-    already does.
+  - **the environment variables:** `VAST_API_KEY`, `VAST_URL` (and that the key is then sent there),
+    `XDG_CONFIG_HOME`; where the key is otherwise looked for (the `vastai` CLI's files) and where `vas
+    offers` finds its config file. `VAS_WATCH_FLOOR_MS` is the tests' seam and stays undocumented.
+- **Tests,** in the binary's own test module, since `Cli` is private to it:
+  - every example parses (`Cli::try_parse_from`). `tests/readme.rs` already holds the README's samples to the
+    columns and keys the code prints; this holds the help's commands to its flags;
+  - each flag's short help stays one line long, so it cannot grow back into a paragraph unnoticed;
+  - the exit codes block is pinned to the code's constants (`GAVE_UP`, `REFUSED`) by a test, as the
+    `--until` help already is (`the_help_of_until_says_the_looks_and_the_exit_code_the_code_uses`).
 
 ### 2. A skill for agents, shipped in the repository
 
@@ -64,19 +69,28 @@ clap takes the first paragraph of each flag's doc comment for `-h`, and the whol
   - **the rules:**
     - never print or log the API key;
     - `vas` sends only GETs, and any action on a box is the human's;
-    - a watch costs nothing, but the boxes cost every minute;
-  - **the traps:** Git Bash rewriting `/root/...` (and `//root/...` or `MSYS_NO_PATHCONV=1` around it); a
-    `--log` glob that matches several runs on one box.
-- **A test,** like the README's: every `vas ...` line in the skill is accepted by the current flags, and
-  every `--compact` key it names is one the code writes. The skill then cannot drift from the code.
+    - a watch spends no credit (a few API calls per look), but the boxes cost every minute;
+  - **the traps:**
+    - Git Bash rewriting `/root/...` (`vas` repairs it and says so; `//root/...` or `MSYS_NO_PATHCONV=1`
+      avoid it);
+    - a `--log` glob that matches several runs on one box: only the newest file is read.
+- **A test,** in the binary's test module like the help's: every `vas ...` line in the skill parses with the
+  current flags, and every `--compact` key it names is one the code writes (as `tests/readme.rs` checks the
+  README's). The skill then cannot drift from the code.
 - **Pointers:** the README and the end of `vas --help` say where the skill is.
+- **Open, to settle while writing it:** how the skill reaches an agent. Copying the folder into a project's
+  `.claude/skills/` or the user's `~/.claude/skills/` works for Claude Code today. Other agents may read the
+  file directly. The crate's package includes `skills/` (`Cargo.toml` excludes only `.github/`, `deny.toml`
+  and two `docs/` folders), so it ships with the source.
 
 ### 3. A lighter README top
 
 - **One "What's new" line** pointing to the CHANGELOG, in place of the stacked banners. The banners' stories
   move to the CHANGELOG or the dogfooding reports, where they already are in full.
 - **A quick start of three commands** right after Install: `vas`, `vas --ssh --log ...`, `vas offers ...`,
-  each with what it shows.
+  each with what it shows. "Try it" already has the samples; it moves up and gains the third command.
+  `tests/readme.rs` finds its sample by the `$ vas --ssh` line wherever it stands, so the move costs the test
+  nothing.
 - **The long flag reference** moves lower, or into a page of its own (`docs/reference.md`), linked from the
   top.
 - How much to cut is Éric's call; nothing is removed that a test or a link relies on.
@@ -84,7 +98,11 @@ clap takes the first paragraph of each flag's doc comment for `-h`, and the whol
 ### 4. Measure the learning curve
 
 Not a guess but a test. A fresh agent gets only `vas --help` (and, in a second run, only the skill), a mock
-vast.ai server and a fake `ssh` like the test suite's, and real tasks:
+vast.ai server and a fake `ssh`, and real tasks. `VAST_URL` points both `vas` and `vas offers` at the mock,
+and the fake `ssh` comes first on the `PATH`, as in `tests/until_cli.rs`. The test suite's mock lives in
+`tests/common` and serves only a test, so the harness is part of the work: a small mock that keeps running,
+its fixtures, and the fake `ssh` (Linux or WSL, like the tests that use one). Nothing in it reaches vast.ai
+or a real box.
 
 - "Is any box idle?" (one reads `100%?`, one is at work);
 - "Is a card capped?" (a `450/575W+power_cap` and a `450W<575`);
@@ -107,7 +125,8 @@ vast.ai server and a fake `ssh` like the test suite's, and real tasks:
 
 ## Not in 0.5.0
 
-- New lookouts, or new flags beyond what the help's examples need.
+- New lookouts or new flags. One exception may come from the skill's open question: a flag that prints the
+  skill, if copying a folder proves too awkward. It would be decided then.
 - The items still open from earlier versions stay where they are, to be seen at a rental when they turn up:
   - `UNREACHABLE` and the direct-route fallback on a real refusing proxy;
   - `100%?` on an idle box;
