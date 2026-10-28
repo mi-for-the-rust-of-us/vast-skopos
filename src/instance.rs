@@ -112,16 +112,39 @@ pub(crate) fn shortened(text: &str, max: usize) -> Option<String> {
     })
 }
 
-/// A string field, hidden characters dropped ([`is_hidden`]: the text comes from the API and from
-/// other people's hosts, and never reaches the terminal raw); `None` when absent, null, empty or
-/// not a string.
+/// Whether `c` breaks a line or a cell: a line feed, a carriage return, a tab, a vertical tab, a form
+/// feed, or the line and paragraph separators. In text shown on one line it becomes a space.
+const fn is_break(c: char) -> bool {
+    matches!(
+        c,
+        '\n' | '\r' | '\t' | '\u{0B}' | '\u{0C}' | '\u{2028}' | '\u{2029}'
+    )
+}
+
+/// A string field, as one line: a line break or a tab becomes one space ([`is_break`]; a run of them,
+/// and the spaces around it, make a single space), and every other hidden character is dropped
+/// ([`is_hidden`]: the text comes from the API and from other people's hosts, and never reaches the
+/// terminal raw); `None` when absent, null, empty or not a string.
+///
+/// vast.ai's status message holds the lines of an image's download: dropping the breaks glued them
+/// (`Verifying Checksumc455daa85bb6:`, seen 2026-10-28).
 pub(crate) fn text(row: &Value, field: &str) -> Option<String> {
-    let kept: String = row
-        .get(field)
-        .and_then(Value::as_str)?
-        .chars()
-        .filter(|&c| !is_hidden(c))
-        .collect();
+    let mut kept = String::new();
+    // After a break, the spaces around it are held back: the next visible character gets one.
+    let mut broken = false;
+    // EXPLICIT: an imperative loop: whether a space goes in depends on what came before.
+    for c in row.get(field).and_then(Value::as_str)?.chars() {
+        if is_break(c) {
+            kept.truncate(kept.trim_end_matches(' ').len());
+            broken = true;
+        } else if !is_hidden(c) && (!broken || c != ' ') {
+            if broken && !kept.is_empty() {
+                kept.push(' ');
+            }
+            broken = false;
+            kept.push(c);
+        }
+    }
     let kept = kept.trim();
     // BORROW: explicit to_owned -- the row outlives the response it was read from
     (!kept.is_empty()).then(|| kept.to_owned())
@@ -177,7 +200,11 @@ impl Instance {
     /// let i = Instance::from_json(&row).unwrap();
     /// assert_eq!((i.id, i.ssh_port, i.label), (56053340, Some(23484), None));
     /// assert!(Instance::from_json(&serde_json::json!({"label": "x"})).is_none());
-    /// // Text loses its control and invisible characters; a number must be finite.
+    /// // A line break becomes a space; other control and invisible characters are dropped; a number
+    /// // must be finite.
+    /// let lines = serde_json::json!({"id": 3, "status_msg": "c455daa85bb6: Verifying Checksum\r\nc455daa85bb6: Download complete\n"});
+    /// assert_eq!(Instance::from_json(&lines).unwrap().status_msg.as_deref(),
+    ///   Some("c455daa85bb6: Verifying Checksum c455daa85bb6: Download complete"));
     /// let odd = serde_json::json!({"id": 1, "geolocation": "Tex\u{1b}[2Jas, US", "dph_total": "NaN",
     ///   "gpu_name": "RTX\u{202e} 5090\u{200b}"});
     /// let i = Instance::from_json(&odd).unwrap();
