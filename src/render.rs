@@ -21,7 +21,6 @@ use crate::trend::Trend;
 /// assert_eq!((age(30.0), age(4.0 * 3600.0 + 900.0), age(2.0 * 86400.0 + 3.0 * 3600.0)),
 ///   ("0m".to_owned(), "4h 15m".to_owned(), "2d 3h".to_owned()));
 /// ```
-#[doc(hidden)]
 #[must_use]
 pub fn age(secs: f64) -> String {
     let s = whole_secs(secs);
@@ -229,7 +228,6 @@ const PATH_WIDTH: usize = 60;
 /// let cut = short_path(&format!("/r/{}/train.log", "d".repeat(80)));
 /// assert!(cut.starts_with('…') && cut.ends_with("d/train.log") && cut.chars().count() == 61);
 /// ```
-#[doc(hidden)]
 #[must_use]
 pub fn short_path(path: &str) -> String {
     let mut parts = path.rsplit('/').filter(|c| !c.is_empty());
@@ -271,7 +269,6 @@ pub fn short_path(path: &str) -> String {
 ///     "s1/train.log: (grep refused the pattern)");
 /// assert_eq!(log_cell(Some(&LogReading::Unreadable)), "?");
 /// ```
-#[doc(hidden)]
 #[must_use]
 pub fn log_cell(log: Option<&LogReading>) -> String {
     match log {
@@ -293,10 +290,12 @@ pub fn log_cell(log: Option<&LogReading>) -> String {
     }
 }
 
-/// The cell of a probe that failed: `UNREACHABLE 4m: <reason>` when `ssh` never reached the box
-/// ([`SkoposError::is_unreachable`]), else `SSH FAILED 4m: <reason>`; the age is the box's
-/// (`age_secs`, left out when unknown), since the age is what the choice between waiting and
-/// destroying rests on. The reason is `ssh`'s own: the target is already in the `SSH` column.
+/// The cell of a probe that failed: `UNREACHABLE 4m: <reason>` or `SSH FAILED 4m: <reason>`.
+///
+/// `UNREACHABLE` when `ssh` never reached the box ([`SkoposError::is_unreachable`]), else `SSH
+/// FAILED`; the age is the box's (`age_secs`, left out when unknown), since the age is what the
+/// choice between waiting and destroying rests on. The reason is `ssh`'s own: the target is already
+/// in the `SSH` column.
 ///
 /// ```
 /// use vast_skopos::{SkoposError, render::failure_cell};
@@ -312,7 +311,6 @@ pub fn log_cell(log: Option<&LogReading>) -> String {
 /// assert_eq!(failure_cell(&both, Some(240.0)),
 ///   "UNREACHABLE 4m: Connection refused (direct 79.117.26.24:20674: Connection refused)");
 /// ```
-#[doc(hidden)]
 #[must_use]
 pub fn failure_cell(error: &SkoposError, age_secs: Option<f64>) -> String {
     let label = if error.is_unreachable() {

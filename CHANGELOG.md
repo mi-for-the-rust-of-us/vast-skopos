@@ -55,6 +55,13 @@ All notable changes to this project are documented here. The format is based on
   lacks is said on stderr, once, and again only when that changes. `--compact`'s money object gains `boxes` and
   `shown`, with or without `--instance`. `render::table_of`, `compact::json_lines_of` (`table` and `json_lines`
   are unchanged).
+- For library users: ten helpers that were public but hidden are now documented and promised: the text
+  cleaners `probe::strip` and `probe::clean`, `probe::parse_log`, `probe::ssh_command`, the cells
+  `render::age`, `render::short_path`, `render::log_cell` and `render::failure_cell`, and the flags' parsers
+  `offer::gpu_model` and `offer::country_code`. `GpuReading::new` and its setters (`power`, `power_max`, `clocks`,
+  `throttle`, `other_mem`, `processes`) build a reading outside the crate, to drive a `Trend` or a table
+  without a box. The `config` module and `key::txt_hint` stay hidden: they follow the binary's flags and
+  wording, and are not promised.
 
 ### Documentation
 

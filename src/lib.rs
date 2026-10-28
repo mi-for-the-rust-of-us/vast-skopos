@@ -31,9 +31,18 @@
 //! - [`until`]: whether a look found the line `vas --until` waits for;
 //! - [`creditlog`]: the credit history, one CSV row per look, in the file `--credit-log` names;
 //! - [`error`]: [`SkoposError`] and the [`Result`] alias every fallible call returns.
+//!
+//! What a monitor of its own needs is public and documented, the helpers `vas` uses for what it
+//! prints included: the text cleaners ([`probe::strip`], [`probe::clean`]), the readers of a box's
+//! answer ([`probe::parse_output`], [`probe::parse_log`]), the `ssh` command ([`probe::ssh_command`]),
+//! the cells ([`render::age`], [`render::short_path`], [`render::log_cell`], [`render::failure_cell`]),
+//! the flags' parsers ([`offer::gpu_model`], [`offer::country_code`]), and [`probe::GpuReading::new`]
+//! to build a reading by hand (to drive a [`trend::Trend`] in a test, say).
 
 pub mod api;
 pub mod compact;
+// Hidden, not promised: the reader of `vas offers`'s config file, which follows the binary's flags;
+// public only so the integration tests can drive it.
 #[doc(hidden)]
 pub mod config;
 pub mod creditlog;

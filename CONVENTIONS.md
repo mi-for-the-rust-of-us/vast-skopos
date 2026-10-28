@@ -139,7 +139,7 @@ readers (`Instance::from_json`), and pure queries (`Instance::cost_so_far`,
   `Offer`, `OfferQuery`, `OfferPage`, `OfferChanges`, `Probe`, `TableOptions`, `Runway`) — the API
   grows, and so will what `vas` shows. A caller builds one with its constructor (`from_json`,
   `Default`, `new`, a parser) and, for a query or an options struct, by assigning fields after
-  `default()`; a type a downstream crate has no way to build (`GpuReading`, today) is a known gap.
+  `default()`, or with a constructor and setters (`GpuReading::new(..).power(..)`).
 - Internal dispatch enums matched exhaustively by this crate:
   `#[allow(clippy::exhaustive_enums)] // EXHAUSTIVE: <reason>`.
 

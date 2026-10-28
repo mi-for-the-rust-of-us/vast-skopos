@@ -740,7 +740,6 @@ impl OfferChanges {
 /// assert_eq!(gpu_model("H100 SXM").as_deref(), Some("H100 SXM"));
 /// assert_eq!((gpu_model(""), gpu_model("\"RTX 5090\"")), (None, None));
 /// ```
-#[doc(hidden)]
 #[must_use]
 pub fn gpu_model(name: &str) -> Option<String> {
     let model = name.trim().replace('_', " ");
@@ -754,7 +753,6 @@ pub fn gpu_model(name: &str) -> Option<String> {
 /// assert_eq!(country_code(" cn ").as_deref(), Some("CN"));
 /// assert_eq!((country_code("China"), country_code("C1")), (None, None));
 /// ```
-#[doc(hidden)]
 #[must_use]
 pub fn country_code(code: &str) -> Option<String> {
     let code = code.trim();

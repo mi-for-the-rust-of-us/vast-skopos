@@ -198,6 +198,8 @@ pub fn candidate_files() -> Vec<PathBuf> {
 /// assert!(hint.contains("vast_api_key.txt") && hint.contains("rename it to vast_api_key"));
 /// assert_eq!(txt_hint(&candidates, |_| false), "");
 /// ```
+// Hidden, not promised: the wording of `vas`'s own error, public only so the integration tests
+// can drive it without a filesystem.
 #[doc(hidden)]
 #[must_use]
 pub fn txt_hint(candidates: &[PathBuf], is_file: impl Fn(&Path) -> bool) -> String {

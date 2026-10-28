@@ -115,6 +115,86 @@ const THROTTLE_WORDS: [(u64, &str); 5] = [
 ];
 
 impl GpuReading {
+    /// A reading of GPU `index` at `util_pct` percent (0-100), with `mem_used_mib` of `mem_total_mib`
+    /// MiB in use, and nothing else known: the other readings are `None` until set
+    /// ([`GpuReading::power`], [`GpuReading::power_max`], [`GpuReading::clocks`],
+    /// [`GpuReading::throttle`], [`GpuReading::other_mem`], [`GpuReading::processes`]).
+    ///
+    /// What [`parse_output`] gives from a box's answer; built by hand, a reading can drive a
+    /// [`crate::trend::Trend`] or a table without a box.
+    ///
+    /// ```
+    /// use vast_skopos::probe::GpuReading;
+    /// let g = GpuReading::new(0, 99, 7_700, 32_607).power(449, 450, 450).power_max(450)
+    ///     .clocks(2_190, 3_090).throttle(0x4).processes(1);
+    /// assert_eq!((g.util_pct, g.power_limit_w, g.power_max_w, g.sm_mhz), (99, Some(450), Some(450), Some(2_190)));
+    /// assert_eq!(g.throttle_words(), Some(vec!["power_cap"]));
+    /// assert_eq!(GpuReading::new(0, 0, 0, 1).other_mem_mib, None);
+    /// ```
+    #[must_use]
+    pub const fn new(index: u32, util_pct: u32, mem_used_mib: u64, mem_total_mib: u64) -> Self {
+        Self {
+            index,
+            util_pct,
+            mem_used_mib,
+            mem_total_mib,
+            power_w: None,
+            power_limit_w: None,
+            power_default_w: None,
+            sm_mhz: None,
+            sm_max_mhz: None,
+            throttle_mask: None,
+            other_mem_mib: None,
+            power_max_w: None,
+            processes: None,
+        }
+    }
+
+    /// With the power drawn now, the limit set and the default limit, in watts.
+    #[must_use]
+    pub const fn power(mut self, draw_w: u32, limit_w: u32, default_w: u32) -> Self {
+        self.power_w = Some(draw_w);
+        self.power_limit_w = Some(limit_w);
+        self.power_default_w = Some(default_w);
+        self
+    }
+
+    /// With the board's maximum power, in watts ([`GpuReading::power_max_w`]).
+    #[must_use]
+    pub const fn power_max(mut self, max_w: u32) -> Self {
+        self.power_max_w = Some(max_w);
+        self
+    }
+
+    /// With the SM clock now and the highest it reaches, in MHz.
+    #[must_use]
+    pub const fn clocks(mut self, sm_mhz: u32, sm_max_mhz: u32) -> Self {
+        self.sm_mhz = Some(sm_mhz);
+        self.sm_max_mhz = Some(sm_max_mhz);
+        self
+    }
+
+    /// With `nvidia-smi`'s mask of clock event reasons ([`GpuReading::throttle_mask`]).
+    #[must_use]
+    pub const fn throttle(mut self, mask: u64) -> Self {
+        self.throttle_mask = Some(mask);
+        self
+    }
+
+    /// With the memory no process of the box accounts for, in MiB ([`GpuReading::other_mem_mib`]).
+    #[must_use]
+    pub const fn other_mem(mut self, mib: u64) -> Self {
+        self.other_mem_mib = Some(mib);
+        self
+    }
+
+    /// With the compute processes listed on the GPU ([`GpuReading::processes`]).
+    #[must_use]
+    pub const fn processes(mut self, count: u32) -> Self {
+        self.processes = Some(count);
+        self
+    }
+
     /// Whether the utilisation reads busy (99 % or more) while the card holds no memory to speak of
     /// (under [`OTHER_MIB_MIN`]) and lists no process: an idle card whose counter is stuck, seen three
     /// times (2026-10-15, 10-19, 10-26; on 10-26: 100 %, 2 MiB, 123 W, 37 °C, no process). It reads
@@ -377,21 +457,12 @@ pub fn parse_nvidia_smi(csv: &str) -> Vec<GpuReading> {
     csv.lines()
         .filter_map(|line| {
             let mut f = line.split(',').map(str::trim);
-            Some(GpuReading {
-                index: f.next()?.parse().ok()?,
-                util_pct: f.next()?.parse().ok()?,
-                mem_used_mib: f.next()?.parse().ok()?,
-                mem_total_mib: f.next()?.parse().ok()?,
-                other_mem_mib: None,
-                power_w: None,
-                power_limit_w: None,
-                power_default_w: None,
-                sm_mhz: None,
-                sm_max_mhz: None,
-                throttle_mask: None,
-                power_max_w: None,
-                processes: None,
-            })
+            Some(GpuReading::new(
+                f.next()?.parse().ok()?,
+                f.next()?.parse().ok()?,
+                f.next()?.parse().ok()?,
+                f.next()?.parse().ok()?,
+            ))
         })
         .collect()
 }
@@ -517,7 +588,6 @@ pub fn remote_command(log: Option<&LogQuery>) -> String {
 /// assert_eq!(strip(&"x".repeat(200)).chars().count(), 200);
 /// assert_eq!(strip("\r \r"), "");
 /// ```
-#[doc(hidden)]
 #[must_use]
 pub fn strip(text: &str) -> String {
     text.rsplit('\r')
@@ -538,7 +608,6 @@ pub fn strip(text: &str) -> String {
 /// assert_eq!(clean("10%\r55%\r100% done"), "100% done");
 /// assert_eq!(clean(&"x".repeat(200)).chars().count(), 121);
 /// ```
-#[doc(hidden)]
 #[must_use]
 pub fn clean(line: &str) -> String {
     let kept = strip(line);
@@ -759,7 +828,6 @@ fn merge_power(gpus: &mut [GpuReading], power: &str) {
 /// assert_eq!(parse_log(""), LogReading::Unreadable);
 /// assert_eq!(parse_log("\nconnection reset\n"), LogReading::Unreadable);
 /// ```
-#[doc(hidden)]
 #[must_use]
 pub fn parse_log(text: &str) -> LogReading {
     let mut lines = text.lines().skip_while(|l| l.trim().is_empty());
@@ -857,9 +925,11 @@ fn collect(rx: &mpsc::Receiver<Vec<u8>>, deadline: Instant) -> String {
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
-/// The `ssh` command for one probe, before its pipes are set: every option and every value is its
-/// own argument, never a shell string, so a path with a space stays one path and nothing the box or
-/// the user supplied can be read as an option.
+/// The `ssh` command for one probe of `root@host:port`, before its pipes are set.
+///
+/// Every option and every value is its own argument, never a shell string, so a path with a space
+/// stays one path and nothing the box or the user supplied can be read as an option; the remote
+/// command ([`remote_command`]) is the last argument.
 ///
 /// ```
 /// use std::ffi::OsStr;
@@ -874,7 +944,6 @@ fn collect(rx: &mpsc::Receiver<Vec<u8>>, deadline: Instant) -> String {
 /// assert_eq!(args[end + 1], "root@ssh6.vast.ai", "the target comes after `--`");
 /// assert_eq!(args.len(), end + 3, "and the remote command is the last argument");
 /// ```
-#[doc(hidden)]
 #[must_use]
 pub fn ssh_command(
     host: &str,
