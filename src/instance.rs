@@ -113,11 +113,12 @@ pub(crate) fn shortened(text: &str, max: usize) -> Option<String> {
 }
 
 /// Whether `c` breaks a line or a cell: a line feed, a carriage return, a tab, a vertical tab, a form
-/// feed, or the line and paragraph separators. In text shown on one line it becomes a space.
+/// feed, the next-line character (`U+0085`), or the line and paragraph separators. In text shown on
+/// one line it becomes a space.
 const fn is_break(c: char) -> bool {
     matches!(
         c,
-        '\n' | '\r' | '\t' | '\u{0B}' | '\u{0C}' | '\u{2028}' | '\u{2029}'
+        '\n' | '\r' | '\t' | '\u{0B}' | '\u{0C}' | '\u{85}' | '\u{2028}' | '\u{2029}'
     )
 }
 

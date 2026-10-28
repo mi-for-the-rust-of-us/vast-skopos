@@ -4,9 +4,11 @@
 //! picture. Every object has a `kind` (`box`, `event` or `money`) and `at` (Unix seconds, the
 //! look's own clock, the same on every line of one look), so a line read alone says what it is and
 //! when. The top-level keys of each `kind` are always the same: a value not known is `null`, never
-//! a missing key. (`probe` has three shapes: `null` for a box not probed, `{"error": .., "error_kind": ..}`
-//! for a probe that failed (`unreachable` when `ssh` never reached the box, else `failed`), else the
-//! readings; `log` likewise has a `state` and what that state carries.)
+//! a missing key. (`probe` has three shapes: `null` for a box not probed,
+//! `{"error": .., "error_kind": .., "direct_error": ..}` for a probe that failed (`unreachable` when
+//! `ssh` never reached the box, else `failed`; `direct_error` when the direct address was tried
+//! after the proxy), else the readings and the `route` they came by (`proxy` or `direct`); `log`
+//! likewise has a `state` and what that state carries.)
 //!
 //! A look is the boxes, then one `event` per change of a GPU's power or other users (only under
 //! `--ssh --watch`, see [`crate::trend::GpuChange`]), then the money, which closes the look.
@@ -54,7 +56,8 @@ fn log_json(log: Option<&LogReading>) -> Value {
 }
 
 /// Why the direct address failed, for a probe that failed by both routes; `None` when no direct
-/// route was tried.
+/// route was tried after the proxy. (A box with no proxy address is probed at its direct address
+/// only: the probe's own error says why that failed.)
 fn direct_error(error: &SkoposError) -> Option<String> {
     if let SkoposError::SshRoutes {
         direct_target,

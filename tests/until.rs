@@ -111,36 +111,127 @@ fn a_box_read_without_a_match_yet_is_read_and_one_without_the_file_is_not() {
 }
 
 #[test]
-fn a_path_no_box_has_a_file_for_warns_then_ends_the_wait() {
-    use vast_skopos::until::{NO_FILE_LOOKS, NO_FILE_WARN_LOOKS};
+fn a_path_no_box_has_a_file_for_warns_once_then_ends_the_wait_on_the_clock() {
+    use vast_skopos::until::{NO_FILE_SECS, NO_FILE_WARN_LOOKS};
+    // Looks a minute apart: the wait ends at the first look NO_FILE_SECS past the first one.
     let mut wait = Wait::default();
-    for n in 1..NO_FILE_LOOKS {
-        assert_eq!(wait.record(Verdict::NoFile), None, "look {n}");
-        assert_eq!(wait.looks_without_file(), n);
+    let start = 1_000_000;
+    let mut warned = Vec::new();
+    let mut at = start;
+    while at < start + NO_FILE_SECS {
+        assert_eq!(wait.record_at(Verdict::NoFile, at), None, "at {at}");
+        warned.push(wait.warns_of_no_file());
+        at += 60;
     }
-    const {
-        assert!(
-            NO_FILE_WARN_LOOKS < NO_FILE_LOOKS,
-            "the warning comes first"
-        );
-    };
-    assert_eq!(wait.record(Verdict::NoFile), Some(End::NoFile));
-    // A file appearing starts the count afresh, and so the wait goes on.
-    let mut wait = Wait::default();
-    for _ in 1..NO_FILE_LOOKS {
-        let _ = wait.record(Verdict::NoFile);
+    assert_eq!(wait.record_at(Verdict::NoFile, at), Some(End::NoFile));
+    let warns: Vec<usize> = warned
+        .iter()
+        .enumerate()
+        .filter(|(_, w)| **w)
+        .map(|(n, _)| n)
+        .collect();
+    assert_eq!(
+        warns,
+        [usize::try_from(NO_FILE_WARN_LOOKS).unwrap() - 1],
+        "warned once, at look {NO_FILE_WARN_LOOKS}"
+    );
+    // The time is the wait's: one second short does not end it.
+    let mut wait = Wait::default().no_file_secs(120);
+    assert_eq!(wait.record_at(Verdict::NoFile, 10), None);
+    assert_eq!(wait.record_at(Verdict::NoFile, 129), None);
+    assert_eq!(wait.record_at(Verdict::NoFile, 130), Some(End::NoFile));
+    // A clock that goes back ends nothing.
+    let mut wait = Wait::default().no_file_secs(1);
+    assert_eq!(wait.record_at(Verdict::NoFile, 500), None);
+    assert_eq!(wait.record_at(Verdict::NoFile, 400), None);
+}
+
+#[test]
+fn a_file_appearing_starts_the_time_afresh_and_keeps_the_wait_s_own() {
+    let mut wait = Wait::default().no_file_secs(120);
+    assert_eq!(wait.record_at(Verdict::NoFile, 0), None);
+    assert_eq!(wait.record_at(Verdict::NoFile, 100), None);
+    assert_eq!(wait.record_at(Verdict::Read, 110), None, "a file appeared");
+    assert_eq!(
+        wait.record_at(Verdict::NoFile, 200),
+        None,
+        "the time starts here"
+    );
+    assert_eq!(wait.record_at(Verdict::NoFile, 319), None);
+    assert_eq!(
+        wait.record_at(Verdict::NoFile, 320),
+        Some(End::NoFile),
+        "120 s still, not the default"
+    );
+}
+
+#[test]
+fn looks_with_nothing_to_read_neither_restart_the_time_nor_warn_again() {
+    let mut wait = Wait::default().no_file_secs(120);
+    let mut warned = Vec::new();
+    for (verdict, at) in [
+        (Verdict::NoFile, 0),
+        (Verdict::NoFile, 30),
+        (Verdict::Unread, 60),
+        (Verdict::NoFile, 90),
+    ] {
+        assert_eq!(wait.record_at(verdict, at), None);
+        warned.push(wait.warns_of_no_file());
     }
-    assert_eq!(wait.record(Verdict::Read), None);
-    assert_eq!(wait.looks_without_file(), 0);
-    assert_eq!(wait.record(Verdict::NoFile), None);
+    assert_eq!(warned, [false, true, false, false], "warned once");
+    assert_eq!(
+        wait.record_at(Verdict::NoFile, 120),
+        Some(End::NoFile),
+        "counted from the first look without the file"
+    );
     // A look of boxes read without the file is no look of nothing to read: ssh works.
     let mut wait = Wait::default();
-    assert_eq!(wait.record(Verdict::Unread), None);
-    assert_eq!(wait.record(Verdict::NoFile), None);
+    assert_eq!(wait.record_at(Verdict::Unread, 0), None);
+    assert_eq!(wait.record_at(Verdict::NoFile, 10), None);
     assert_eq!(
-        wait.record(Verdict::Unread),
+        wait.record_at(Verdict::Unread, 20),
         None,
         "the unread count started afresh"
+    );
+}
+
+#[test]
+fn a_box_without_the_file_is_no_no_file_while_another_may_still_have_it() {
+    let running = instance(1, "running", "running");
+    let other = instance(2, "running", "running");
+    let loading = instance(3, "loading", "running");
+    let cut = read(
+        "vas-grep-file:/r/run.log
+vas-grep-exit:124
+",
+    );
+    assert_eq!(
+        verdict(
+            &[running.clone(), other],
+            &[
+                read(
+                    "vas-no-file
+"
+                ),
+                cut
+            ]
+        ),
+        Verdict::Unread,
+        "box 2's log was cut short: it may hold the file"
+    );
+    assert_eq!(
+        verdict(
+            &[running, loading],
+            &[
+                read(
+                    "vas-no-file
+"
+                ),
+                None
+            ]
+        ),
+        Verdict::Starting,
+        "box 3 may write the file once it runs"
     );
 }
 

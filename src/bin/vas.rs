@@ -24,7 +24,7 @@ use vast_skopos::render::{
 use vast_skopos::runway::Runway;
 use vast_skopos::trend::Trend;
 use vast_skopos::until::{
-    End, NO_FILE_LOOKS, NO_FILE_WARN_LOOKS, STARTING_LOOKS, UNREAD_LOOKS, Verdict, Wait, verdict,
+    End, NO_FILE_SECS, NO_FILE_WARN_LOOKS, STARTING_LOOKS, UNREAD_LOOKS, Verdict, Wait, verdict,
 };
 
 /// The command line: the lookout's flags, or the `offers` subcommand. (`--help` opens with `about`,
@@ -76,9 +76,9 @@ struct LookArgs {
     /// replaces) on any box, then exit 0 with that line on stderr. Exits 2 at once when a box's grep
     /// refuses the pattern (and no other box was read), 3 when no box could be read for 2 looks in a
     /// row (every probe failed or gave no readable log, or none could be made) or no box has had a
-    /// file matching --log for 10 looks in a row (a warning comes after 2), and 1 when the first
-    /// look fails or stdout is closed before a match. A box meant to run but not running (loading,
-    /// say) keeps the wait going for 10 looks at most since a box was last read.
+    /// file matching --log for --log-wait seconds (a warning comes after 2 looks), and 1 when the
+    /// first look fails or stdout is closed before a match. A box meant to run but not running
+    /// (loading, say) keeps the wait going for 10 looks at most since a box was last read.
     #[arg(
         long,
         value_name = "PATTERN",
@@ -87,6 +87,17 @@ struct LookArgs {
         value_parser = grep_pattern
     )]
     until: Option<String>,
+    /// With --until: how long the wait goes on while the boxes answer but none has a file matching
+    /// --log, counted from the first look that found none (a run may write its log late; a wrong
+    /// path must not keep a script waiting while the boxes cost).
+    #[arg(
+        long,
+        value_name = "SECONDS",
+        default_value_t = NO_FILE_SECS,
+        requires = "until",
+        value_parser = clap::value_parser!(u64).range(1..)
+    )]
+    log_wait: u64,
     /// With --ssh: the private key to use (default: ssh's own choice, agent and ~/.ssh/config).
     #[arg(long, short = 'i', value_name = "FILE", requires = "ssh")]
     identity: Option<PathBuf>,
@@ -114,7 +125,8 @@ struct LookArgs {
     watch: Option<u64>,
     /// Only this box (repeatable): the rows, the probes, the trend and --until follow the boxes named.
     /// The money line stays the whole account's (the credit is spent by every box) and says how many
-    /// boxes are shown; --credit-log too. An id that is not in the account is said on stderr.
+    /// boxes are shown; --credit-log writes the whole account's money too. An id that is not in the
+    /// account is said on stderr.
     #[arg(long, value_name = "ID")]
     instance: Vec<u64>,
 }
@@ -678,8 +690,8 @@ fn missing_note(missing: &[u64], boxes: usize) -> String {
 }
 
 /// How a wait's end ends the run: exit 0 on a match, [`REFUSED`] on a refused pattern, [`GAVE_UP`]
-/// when no box could be read, each said on stderr.
-fn wait_stop(end: End) -> Stop {
+/// when no box could be read or none had the file for `log_wait` seconds, each said on stderr.
+fn wait_stop(end: End, log_wait: u64) -> Stop {
     match end {
         End::Matched { id, line } => Stop {
             code: ExitCode::SUCCESS,
@@ -699,7 +711,7 @@ fn wait_stop(end: End) -> Stop {
         End::NoFile => Stop {
             code: ExitCode::from(GAVE_UP),
             said: format!(
-                "--until: no box has had a file matching --log for {NO_FILE_LOOKS} looks in a row: giving up (is the path right?)"
+                "--until: no box has had a file matching --log for {log_wait} s (--log-wait): giving up (is the path right?)"
             ),
         },
         // `End` is `#[non_exhaustive]` and the binary is another crate: an end it does not know is
@@ -714,16 +726,25 @@ fn wait_stop(end: End) -> Stop {
 }
 
 /// Git Bash's root as a Windows path (`C:/Program Files/Git/`), when `vas` was started from Git
-/// Bash: it sets `MSYSTEM`, and `EXEPATH` names its `bin` (`C:\Program Files\Git\bin`); `None`
-/// otherwise.
+/// Bash: it sets `MSYSTEM`, and `EXEPATH` (see [`root_of_exepath`]); `None` otherwise.
 fn git_bash_root() -> Option<String> {
     std::env::var_os("MSYSTEM").filter(|v| !v.is_empty())?;
-    let exe = std::env::var("EXEPATH").ok()?.replace('\\', "/");
+    root_of_exepath(&std::env::var("EXEPATH").ok()?)
+}
+
+/// Git Bash's root, with `/` separators and one at the end, from its `EXEPATH`: the folder of the
+/// program that started the shell. That is the root itself from the Start menu's `git-bash.exe`
+/// (`C:\Program Files\Git`), its `bin` from an editor's terminal, which starts `bin\bash.exe`
+/// (`C:\Program Files\Git\bin`, seen 2026-10-28 in VS Code), or `usr\bin`. `None` when it is
+/// blank.
+fn root_of_exepath(exepath: &str) -> Option<String> {
+    let exe = exepath.replace('\\', "/");
     let exe = exe.trim_end_matches('/');
     let root = exe
         .strip_suffix("/usr/bin")
-        .or_else(|| exe.strip_suffix("/bin"))?;
-    Some(format!("{root}/"))
+        .or_else(|| exe.strip_suffix("/bin"))
+        .unwrap_or(exe);
+    (!root.trim().is_empty()).then(|| format!("{root}/"))
 }
 
 /// What became of a path on the box (or a pattern) on its way to `vas`.
@@ -735,6 +756,9 @@ enum ForTheBox {
     Repaired(String),
     /// A Windows path, which no Linux box can have.
     Refused,
+    /// A pattern, kept as typed, that starts with a drive letter under Git Bash: it may have been
+    /// a POSIX path that Git Bash rewrote outside its root.
+    Doubted,
 }
 
 /// Whether `text` starts with a Windows drive (`C:/`, `D:\`).
@@ -747,7 +771,8 @@ const fn starts_with_drive(text: &str) -> bool {
 /// before a Windows program sees it (seen 2026-10-26: `--log` then matched no file); when `root` (see
 /// [`git_bash_root`]) starts `typed`, it is taken off again. A path that still starts with a drive
 /// letter (`D:/run.log`, or `/tmp/...`, which Git Bash maps outside its root) cannot be a path on a
-/// Linux box: refused when `paths_only` (the `--log` path, not a pattern).
+/// Linux box: refused when `paths_only` (the `--log` path); a pattern is kept, but doubted under
+/// Git Bash.
 fn for_the_box(typed: &str, root: Option<&str>, paths_only: bool) -> ForTheBox {
     if let Some(root) = root
         && let Some(head) = typed.get(..root.len())
@@ -757,10 +782,10 @@ fn for_the_box(typed: &str, root: Option<&str>, paths_only: bool) -> ForTheBox {
         let rest = typed.get(root.len()..).unwrap_or_default();
         return ForTheBox::Repaired(format!("/{rest}"));
     }
-    if paths_only && starts_with_drive(typed) {
-        ForTheBox::Refused
-    } else {
-        ForTheBox::As
+    match (starts_with_drive(typed), paths_only, root) {
+        (true, true, _) => ForTheBox::Refused,
+        (true, false, Some(_)) => ForTheBox::Doubted,
+        (false, _, _) | (true, false, None) => ForTheBox::As,
     }
 }
 
@@ -785,6 +810,13 @@ fn typed_for_the_box(args: &LookArgs) -> Result<(Option<String>, Option<String>)
                 "vas: {flag} {typed} is not a path on the box (a Linux path starts with /): from Git Bash, write it //root/... or set MSYS_NO_PATHCONV=1"
             );
             Err(ExitCode::from(2))
+        }
+        ForTheBox::Doubted => {
+            eprintln!(
+                "vas: {flag}: {typed} is sent as typed; if it began with / Git Bash rewrote it: write it //... or set MSYS_NO_PATHCONV=1"
+            );
+            // BORROW: explicit to_owned -- the query owns what it sends
+            Ok(typed.to_owned())
         }
     };
     let path = args
@@ -841,7 +873,7 @@ fn lookout(args: &LookArgs) -> ExitCode {
             None => query,
         }
     });
-    let mut wait = Wait::default();
+    let mut wait = Wait::default().no_file_secs(args.log_wait);
     let mut missing_said: Vec<u64> = Vec::new();
     run_looks(
         "vas",
@@ -860,10 +892,13 @@ fn lookout(args: &LookArgs) -> ExitCode {
                 credit_log.as_mut(),
                 &mut missing_said,
             )?;
-            let stop = waited.and_then(|v| wait.record(v)).map(wait_stop);
-            if stop.is_none() && wait.looks_without_file() == NO_FILE_WARN_LOOKS {
+            let stop = waited
+                .and_then(|v| wait.record(v))
+                .map(|end| wait_stop(end, args.log_wait));
+            if stop.is_none() && wait.warns_of_no_file() {
                 eprintln!(
-                    "vas: --until: no box has a file matching --log ({NO_FILE_WARN_LOOKS} looks): is the path right? The wait gives up after {NO_FILE_LOOKS} such looks"
+                    "vas: --until: no box has a file matching --log ({NO_FILE_WARN_LOOKS} looks): is the path right? The wait gives up after {} s without one (--log-wait)",
+                    args.log_wait
                 );
             }
             // JSON Lines carry their own `at`: a stamp line would not parse.
@@ -1036,7 +1071,7 @@ mod tests {
         Cli, ForTheBox, GAVE_UP, LOOKOUT_FLOOR_SECS, MARGIN_SECS, MAX_BUDGET_WAIT_SECS,
         OFFERS_FLOOR_SECS, REFUSED, budget_pause, for_the_box,
     };
-    use vast_skopos::until::{NO_FILE_LOOKS, NO_FILE_WARN_LOOKS, STARTING_LOOKS};
+    use vast_skopos::until::{NO_FILE_SECS, NO_FILE_WARN_LOOKS, STARTING_LOOKS};
 
     const ROOT: Option<&str> = Some("C:/Program Files/Git/");
 
@@ -1100,6 +1135,22 @@ mod tests {
     }
 
     #[test]
+    fn git_bash_s_root_is_read_from_exepath_whichever_program_started_the_shell() {
+        use super::root_of_exepath;
+        for exepath in [
+            "C:\\Program Files\\Git\\bin",
+            "C:\\Program Files\\Git\\usr\\bin\\",
+            "C:\\Program Files\\Git",
+            "C:/Program Files/Git/",
+        ] {
+            assert_eq!(root_of_exepath(exepath).as_deref(), ROOT, "{exepath}");
+        }
+        for blank in ["", "  ", "/", "/bin", "\\usr\\bin"] {
+            assert_eq!(root_of_exepath(blank), None, "{blank:?}");
+        }
+    }
+
+    #[test]
     fn a_windows_path_elsewhere_is_refused_as_a_log_path_and_kept_as_a_pattern() {
         // `/tmp/...` is mapped outside Git Bash's root (the user's temp folder): no repair is safe.
         let temp = "C:/Users/me/AppData/Local/Temp/me38_speedcheck/g12_long.log";
@@ -1108,7 +1159,9 @@ mod tests {
             for_the_box("D:\\runs\\x.log", None, true),
             ForTheBox::Refused
         );
-        assert_eq!(for_the_box(temp, ROOT, false), ForTheBox::As);
+        // A pattern is the user's: kept, but doubted under Git Bash only.
+        assert_eq!(for_the_box(temp, ROOT, false), ForTheBox::Doubted);
+        assert_eq!(for_the_box(temp, None, false), ForTheBox::As);
         // What a box can have is left alone, with or without Git Bash.
         for path in [
             "/root/runs/*/run.log",
@@ -1208,9 +1261,23 @@ mod tests {
         );
         assert!(
             help.contains(&format!(
-                "no box has had a file matching --log for {NO_FILE_LOOKS} looks in a row (a warning comes after {NO_FILE_WARN_LOOKS})"
+                "no box has had a file matching --log for --log-wait seconds (a warning comes after {NO_FILE_WARN_LOOKS} looks)"
             )),
             "{help}"
+        );
+        let command = Cli::command();
+        let log_wait = command
+            .get_arguments()
+            .find(|a| a.get_id() == "log_wait")
+            .unwrap();
+        assert_eq!(
+            log_wait.get_default_values(),
+            [NO_FILE_SECS.to_string().as_str()]
+        );
+        assert_eq!(
+            NO_FILE_SECS,
+            15 * 60,
+            "15 minutes, as the README and the FAQ say"
         );
     }
 

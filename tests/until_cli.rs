@@ -140,7 +140,15 @@ fn a_path_no_box_has_a_file_for_warns_then_gives_up_with_exit_code_3() {
     let missing = format!("{}/runs/s9/run.log", dir.0.display());
     let child = Command::new(env!("CARGO_BIN_EXE_vas"))
         .args([
-            "--ssh", "--log", &missing, "--watch", "0", "--until", "loss",
+            "--ssh",
+            "--log",
+            &missing,
+            "--watch",
+            "0",
+            "--until",
+            "loss",
+            "--log-wait",
+            "2",
         ])
         .env("VAST_URL", &base)
         .env("VAST_API_KEY", "k3y")
@@ -162,10 +170,53 @@ fn a_path_no_box_has_a_file_for_warns_then_gives_up_with_exit_code_3() {
         "warned once: {stderr}"
     );
     assert!(
-        stderr.contains("no box has had a file matching --log for 10 looks in a row: giving up"),
+        stderr.contains("no box has had a file matching --log for 2 s (--log-wait): giving up"),
         "{stderr}"
     );
-    assert_eq!(stdout.matches("== vas, unix time").count(), 10, "{stdout}");
+    // Looks 50 ms apart for more than a second (whole seconds are counted): the warning's two,
+    // and more.
+    assert!(stdout.matches("== vas, unix time").count() > 2, "{stdout}");
+}
+
+#[test]
+fn a_log_path_git_bash_rewrote_reaches_the_box_as_typed() {
+    // Git Bash's root here is `/fake-git`: a path under it is the rewritten one. Both forms of
+    // `EXEPATH` name it: its `bin` (an editor's terminal) and the root itself (the Start menu).
+    let dir = scratch("gitbash");
+    fs::write(log(&dir.0), "epoch 3\n").unwrap();
+    let (base, _) = serve(one_box);
+    let path = format!(
+        "{}:{}",
+        dir.0.join("bin").display(),
+        std::env::var("PATH").unwrap()
+    );
+    let typed = log(&dir.0).display().to_string();
+    let rewritten = format!("/fake-git{typed}");
+    for exepath in ["/fake-git/bin", "/fake-git"] {
+        let out = Command::new(env!("CARGO_BIN_EXE_vas"))
+            .args(["--ssh", "--log", &rewritten])
+            .env("VAST_URL", &base)
+            .env("VAST_API_KEY", "k3y")
+            .env("HOME", &dir.0)
+            .env("PATH", &path)
+            .env("MSYSTEM", "MINGW64")
+            .env("EXEPATH", exepath)
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(0), "{exepath}: {stderr}");
+        assert!(
+            stderr.contains(&format!(
+                "Git Bash rewrote {typed} as {rewritten}; read as {typed}"
+            )),
+            "{exepath}: {stderr}"
+        );
+        assert!(
+            stdout.contains("s0/run.log: epoch 3"),
+            "{exepath}: {stdout}"
+        );
+    }
 }
 
 #[test]

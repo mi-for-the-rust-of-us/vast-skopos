@@ -37,7 +37,7 @@ All notable changes to this project are documented here. The format is based on
   are shown (`| 1 of 3 boxes shown`); `--credit-log` writes the account's money as before. An id the account
   lacks is said on stderr, once, and again only when that changes. `--compact`'s money object gains `boxes` and
   `shown`, with or without `--instance`. `render::table_of`, `compact::json_lines_of` (`table` and `json_lines`
-  are unchanged).
+  keep their signatures).
 - For library users: ten helpers that were public but hidden are now documented and promised: the text
   cleaners `probe::strip` and `probe::clean`, `probe::parse_log`, `probe::ssh_command`, the cells
   `render::age`, `render::short_path`, `render::log_cell` and `render::failure_cell`, and the flags' parsers
@@ -57,11 +57,17 @@ All notable changes to this project are documented here. The format is based on
   a path with no glob character was always rewritten (reproduced live on 2026-10-26). `vas` now reads such a
   path as typed again when it starts with Git Bash's own root (known from `MSYSTEM` and `EXEPATH`), and says
   so on stderr. Another Windows path (`/tmp/...` mapped to the temp folder) is refused with exit 2 and the
-  workarounds (`//tmp/...`, `MSYS_NO_PATHCONV=1`); `--grep` and `--until` patterns get the same repair.
+  workarounds (`//tmp/...`, `MSYS_NO_PATHCONV=1`); `--grep` and `--until` patterns get the same repair, and one
+  that still starts with a drive letter is sent as typed, with a warning. `EXEPATH` names Git's `bin` in an
+  editor's terminal and Git's own folder from the Start menu's Git Bash: both are read.
 - `--until` waited forever when no box had a file matching the `--log` path: such a look counted as a box
-  read. It now warns on stderr after 2 such looks (`is the path right?`) and gives up with exit 3 after 10
-  in a row (a file appearing on any box resets the count). `until::Verdict::NoFile`, `until::End::NoFile`,
-  `until::NO_FILE_WARN_LOOKS`, `until::NO_FILE_LOOKS`, `until::Wait::looks_without_file`.
+  read. It now warns on stderr once, after 2 such looks (`is the path right?`), and gives up with exit 3 when
+  the boxes have answered without the file for `--log-wait SECONDS`, 900 (15 minutes) by default, counted
+  from the first such look on the clock (a file appearing on any box starts it afresh). A box whose log could
+  not be read, or one still loading, may have the file: such a look does not count against it.
+  `until::Verdict::NoFile`, `until::End::NoFile`, `until::NO_FILE_WARN_LOOKS`, `until::NO_FILE_SECS`,
+  `Wait::no_file_secs`, `Wait::record_at` (a look at a given time; `Wait::record` takes the clock's),
+  `Wait::warns_of_no_file`.
 
 ### Documentation
 

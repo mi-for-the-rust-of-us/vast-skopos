@@ -406,3 +406,16 @@ fn a_card_at_work_or_one_whose_processes_are_unknown_is_not_an_idle_counter() {
     );
     assert_eq!(parse_output(&two).gpus[0].processes, Some(2));
 }
+
+#[test]
+fn an_idle_counter_starts_at_99_percent_and_under_one_gib() {
+    use vast_skopos::probe::GpuReading;
+    let reading = |util, used| GpuReading::new(0, util, used, 32_607).processes(0);
+    assert!(reading(99, 2).idle_counter(), "99 % is busy");
+    assert!(!reading(98, 2).idle_counter(), "98 % is not");
+    assert!(reading(100, OTHER_MIB_MIN - 1).idle_counter());
+    assert!(
+        !reading(100, OTHER_MIB_MIN).idle_counter(),
+        "1 GiB held is memory in use"
+    );
+}

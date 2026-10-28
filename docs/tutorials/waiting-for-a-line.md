@@ -103,14 +103,17 @@ The rules, so a script can rely on them:
 | Exit code | When |
 |---|---|
 | `0` | a box's log has a matching line; `vas: --until: box ID matched: LINE` on stderr |
-| `3` | no box could be read for **2 looks in a row**: every probe failed or gave no readable log (`?`), or none could be made; or no box has had a file matching the `--log` path for **10 looks in a row** (a warning on stderr comes after 2: `is the path right?`) |
+| `3` | no box could be read for **2 looks in a row**: every probe failed or gave no readable log (`?`), or none could be made; or the boxes answered but none has had a file matching the `--log` path for **`--log-wait` seconds**, 900 (15 minutes) by default (a warning on stderr comes after 2 looks: `is the path right?`) |
 | `2` | at once, when a box's `grep` refuses the pattern and no other box was read (no look could match: `vas: --until: grep on box ID refused the pattern ...`); or a flag was refused (`--until` needs `--log` and `--watch`, and replaces `--grep`) |
 | `1` | the first look failed (a wrong key, say), or stdout was closed before a match (`vas ... \| head` is not a match); after a look has succeeded, a failed instances request is only said, and does not count |
 
 A box meant to run but not running yet (`loading`) keeps the wait going, for **10 looks** at most, counted since
 a box was last read: you can start the wait right after renting, and a box whose host went `offline` does not
-hold it forever (after the ten, its looks count as looks with nothing to read). A box read without a match yet keeps it going too, and so does a box with no file matching the path yet, for 10
-looks: a run may write its log late, but a path that matches nothing on any box must not hold a wait forever.
+hold it forever (after the ten, its looks count as looks with nothing to read). A box read without a match yet keeps it going too, and so does a box with no file matching the path yet, for
+`--log-wait` seconds (15 minutes by default; `--log-wait 1800` for a run that sets up for half an hour first):
+a run may write its log late, but a path that matches nothing on any box must not keep a script waiting while
+the boxes cost. A box whose log could not be read (`?`), or one still `loading`, may have the file: such a look
+does not count against it.
 
 **From Git Bash, check the path.** Git Bash rewrites `/root/...` into `C:/Program Files/Git/root/...` before
 `vas` sees it. Since 0.4.0, `vas` reads it as typed again and says so. In 0.3.0 such a wait reads `(no file

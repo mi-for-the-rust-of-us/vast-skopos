@@ -847,8 +847,9 @@ fn a_log_path_git_bash_rewrote_is_read_as_typed_and_a_windows_one_is_refused() {
         "EXEPATH",
         std::ffi::OsStr::new("C:\\Program Files\\Git\\bin"),
     ));
+    // A box on the loopback's discard port: the probe is refused at once, never sent out.
     let repaired = vas_with(
-        account,
+        box_on_loopback,
         &[
             "--ssh",
             "--log",
@@ -865,7 +866,12 @@ fn a_log_path_git_bash_rewrote_is_read_as_typed_and_a_windows_one_is_refused() {
         "{}",
         repaired.stderr
     );
-    let refused = vas_with(account, &["--ssh", "--log", "D:/runs/run.log"], &env, &[]);
+    let refused = vas_with(
+        box_on_loopback,
+        &["--ssh", "--log", "D:/runs/run.log"],
+        &env,
+        &[],
+    );
     std::fs::remove_dir_all(&home).unwrap();
     assert_eq!(refused.code, Some(2), "{}", refused.stderr);
     assert!(
@@ -876,6 +882,26 @@ fn a_log_path_git_bash_rewrote_is_read_as_typed_and_a_windows_one_is_refused() {
     assert!(
         refused.seen.lock().unwrap().is_empty(),
         "refused before any request"
+    );
+    // A pattern that starts with a drive letter is the user's to send, but said.
+    let home = empty_dir("msys-grep");
+    let mut env = key_env(&home, ENV_KEY);
+    env.push(("MSYSTEM", std::ffi::OsStr::new("MINGW64")));
+    env.push(("EXEPATH", std::ffi::OsStr::new("C:\\Program Files\\Git")));
+    let doubted = vas_with(
+        box_on_loopback,
+        &["--ssh", "--log", "/r/x.log", "--grep", "C:/Users/me/Temp/x"],
+        &env,
+        &[],
+    );
+    std::fs::remove_dir_all(&home).unwrap();
+    assert_eq!(doubted.code, Some(0), "{}", doubted.stderr);
+    assert!(
+        doubted
+            .stderr
+            .contains("vas: --grep: C:/Users/me/Temp/x is sent as typed; if it began with / Git Bash rewrote it"),
+        "{}",
+        doubted.stderr
     );
 }
 

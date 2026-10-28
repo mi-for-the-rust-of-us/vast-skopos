@@ -33,8 +33,9 @@ fn two_boxes(target: &str) -> (u16, String) {
     }
 }
 
-/// A scratch directory: `bin` holds a fake `ssh`, which runs the remote command in
-/// `hosts/<the box's host>`, and a fake `nvidia-smi`; each host has its own `runs/s0/run.log`.
+/// A scratch directory: `bin` holds a fake `ssh`, which logs the box's host to `attempts` and runs
+/// the remote command in `hosts/<the box's host>`, and a fake `nvidia-smi`; each host has its own
+/// `runs/s0/run.log`.
 fn scratch(name: &str) -> RemoveOnDrop {
     let dir = std::env::temp_dir().join(format!("vas-instance-{}-{name}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
@@ -54,7 +55,8 @@ fn scratch(name: &str) -> RemoveOnDrop {
             r#"#!/bin/sh
 target=
 for arg; do case "$arg" in root@*) target="${{arg#root@}}" ;; esac; last="$arg"; done
-cd '{}/hosts/'"$target" || exit 255
+echo "$target" >> '{0}/attempts'
+cd '{0}/hosts/'"$target" || exit 255
 exec sh -c "$last"
 "#,
             dir.display()
@@ -128,6 +130,11 @@ fn a_wait_on_a_box_named_ignores_a_match_on_a_box_not_named() {
     assert!(
         !stdout.lines().any(|l| l.starts_with("77 ")),
         "box 77 is never shown: {stdout}"
+    );
+    let attempts = fs::read_to_string(dir.0.join("attempts")).unwrap();
+    assert!(
+        attempts.lines().all(|host| host == "b.invalid") && !attempts.is_empty(),
+        "box 77 is never probed: {attempts}"
     );
     assert!(
         stdout.contains("burn $0.750/h over 2 running") && stdout.contains("| 1 of 2 boxes shown"),

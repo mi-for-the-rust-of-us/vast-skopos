@@ -364,7 +364,8 @@ are only characters to match.
 line matching `PATTERN` (read as `--grep` reads it), saying which box and which line on stderr. It exits `2` at
 once when a box's `grep` refuses the pattern and no other box was read (no later look could match), `3` when
 no box could be read for 2 looks in a row (every probe failed or gave no readable log, or none could be made)
-or no box has had a file matching the `--log` path for 10 looks in a row (it warns after 2: is the path right?),
+or the boxes answered but none has had a file matching the `--log` path for `--log-wait` seconds, 900 (15
+minutes) by default (it warns after 2 looks: is the path right?),
 and `1` when the first look fails or its stdout is closed before a match; a box meant to run but not running
 (`loading`, say) keeps the wait going for 10 looks at most since a box was last read, and a look whose
 instances request failed does not count. A pattern

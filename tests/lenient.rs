@@ -225,7 +225,8 @@ fn a_line_break_in_the_apis_text_becomes_one_space_not_a_glue() {
     // 2026-10-28: a status message holding two lines read `Verifying Checksumc455daa85bb6:`.
     let row = serde_json::json!({"id": 58_073_021, "actual_status": "loading",
         "status_msg": "c455daa85bb6: Verifying Checksum\nc455daa85bb6:\r\n\r\n",
-        "label": "me41\tbox 2", "geolocation": "Buenos Aires,\u{2028}AR"});
+        "label": "me41\tbox 2", "geolocation": "Buenos Aires,\u{2028}AR",
+        "cpu_name": "AMD\u{85}EPYC"});
     let i = Instance::from_json(&row).unwrap();
     assert_eq!(
         i.status_msg.as_deref(),
@@ -233,6 +234,11 @@ fn a_line_break_in_the_apis_text_becomes_one_space_not_a_glue() {
     );
     assert_eq!(i.label.as_deref(), Some("me41 box 2"));
     assert_eq!(i.geolocation.as_deref(), Some("Buenos Aires, AR"));
+    assert_eq!(
+        i.cpu_name.as_deref(),
+        Some("AMD EPYC"),
+        "the next-line character"
+    );
     // A break beside a space adds no second space; a run of breaks is one space; the other
     // control characters are still dropped, not spaced.
     let odd = serde_json::json!({"id": 1, "label": "a \n b\r\n\tc\u{1b}d"});
