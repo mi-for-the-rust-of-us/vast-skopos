@@ -15,6 +15,10 @@ All notable changes to this project are documented here. The format is based on
   `skills/vas/SKILL.md`, embedded in the binary, so an installed `vas` prints the skill of its own flags;
   the flag is alone (refused with any other) and needs no key. Tests parse every `vas` command in the skill
   and check every `--compact` key it names. The end of `vas --help` and the README say where it is.
+- `tests/measure.rs`, the harness of the learning-curve measurement: an `#[ignore]` test that serves a mock
+  of vast.ai (four boxes, a page of offers) until killed, with a fake `ssh` and `nvidia-smi` answering as
+  the boxes (capped, at a board's maximum, an idle counter, one loading). Linux only; nothing reaches
+  vast.ai or a real box. `cargo test --test measure -- --ignored --nocapture`.
 
 ### Changed
 
