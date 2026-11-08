@@ -306,4 +306,4 @@ invoice.
 - [FAQ](../FAQ.md): the questions that came up on real rentals.
 - [Reference](../reference.md): every flag, column and mark, and the JSON format; the [README](../../README.md): the key and file rules.
 - [`vas` and `vastai`](../comparison-with-vastai.md): which tool for which job.
-- [Roadmap](../roadmap-v0.4.0.md): what 0.4.0 contains and what may come after.
+- [Roadmap](../roadmap-v0.5.0.md): what 0.5.0 contains; the [0.6.0 draft](../roadmap-v0.6.0.md): what may come after.

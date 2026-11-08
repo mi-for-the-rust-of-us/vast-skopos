@@ -11,7 +11,7 @@
 **σκοπός** — *Your rented vast.ai boxes, watched.* **Not affiliated with vast.ai:** an independent,
 read-only tool that reads the vast.ai API with your own key, and your boxes over your own `ssh`.
 
-> 🆕 **What's new in `0.4.0`:** `vas --ssh` reaches the box the proxy cannot, `POWER` and `GPU%` tell a capped or idle card at a glance (`450W<575`, `100%?`), and `--instance` follows one box of several. Every release, and what each rental taught it, is in [`CHANGELOG.md`](CHANGELOG.md) and the [dogfooding reports](#documentation).
+> 🆕 **What's new in `0.5.0`:** `vas -h` fits on one screen and `vas --help` ends with examples, how to read the table, the exit codes and the environment; `vas --skill` prints a skill that teaches an AI agent to use `vas`; and this README is a third of its length, its reference now [a page of its own](docs/reference.md). Every release, and what each rental taught it, is in [`CHANGELOG.md`](CHANGELOG.md) and the [dogfooding reports](#documentation).
 
 ## Table of Contents
 
@@ -53,7 +53,7 @@ the newest compatible ones). From a clone: `cargo install --path . --locked`. As
 
 ```toml
 [dependencies]
-vast-skopos = { version = "0.4", default-features = false }
+vast-skopos = { version = "0.5", default-features = false }
 ```
 
 ## Quick start
@@ -285,9 +285,10 @@ rental is a budget, and how long the credit lasts at the current burn is the num
 | [From filters to a running box](docs/tutorials/from-filters-to-a-running-box.md) | A tutorial: from a filters file to a running box, and watching it until you are done |
 | [Waiting for a line](docs/tutorials/waiting-for-a-line.md) | A tutorial: `--grep` to see the line a run printed once, `--until` to wait for it in place of a loop of your own, and the exit codes a script reads |
 | [FAQ](docs/FAQ.md) | The questions that came up on real rentals: the key and the files, why the offer list changes, which machine is which, verified or not, the money line, what `--ssh` reads, a box that is loading or unreachable, waiting for a line, a slow rental (power cap, someone else on the GPU), rate limits |
-| [Roadmap](docs/roadmap-v0.4.0.md) | What 0.4.0 contains and does not, the known limits (what is still to be seen live: the direct-route fallback, `100%?`, the `<575` mark), and the candidates for later (ease of use, `LIMIT W` as a warning, a history of the boxes) |
+| [Roadmap](docs/roadmap-v0.5.0.md) | What 0.5.0 contains (two levels of help, `vas --skill`, a lighter README, the learning curve measured) and the plan it was built from |
+| [Draft for 0.6.0](docs/roadmap-v0.6.0.md) | The candidates so far: what a box costs now, stopped boxes included (measured at a rental on 2026-11-08), and the items still open from earlier versions |
+| [Roadmap of 0.4.0](docs/roadmap-v0.4.0.md) | What 0.4.0 contains and does not, the known limits (what is still to be seen live: the direct-route fallback, `100%?`, the `<575` mark), and the candidates for later (ease of use, `LIMIT W` as a warning, a history of the boxes) |
 | [Roadmap of 0.3.0](docs/roadmap-v0.3.0.md) | What 0.3.0 contains and does not, the known limits (what is still to be seen live), and the candidates for later (the direct route, a reference board power, an idle counter told apart, ...) |
-| [Plan for 0.5.0](docs/roadmap-v0.5.0.md) | Making `vas` easy to pick up, for a person and for an AI assistant: two levels of help with examples, a skill for agents shipped in the repository, a lighter README top, and a measured learning curve |
 | [Roadmap of 0.2.0](docs/roadmap-v0.2.0.md) | What 0.2.0 contains and does not, the known limits, and the candidates for later (a text interface, a measured upload, ...) |
 | [`vas` and `vastai`](docs/comparison-with-vastai.md) | Vast.ai's own CLI/SDK and `vas`, compared row by row: scope, read-only by design, the GPU read on the box, the runway, the offer search, key hygiene, redirects, the `ssh` port rule |
 | [Dogfooding, 2026-10-16](https://github.com/mi-for-the-rust-of-us/vast-skopos/blob/main/docs/dogfooding/2026-10-16.md) | The first real rental (Me35, three RTX 5090s): what broke in the first minute, what helped, the next features, and `vas offers` probed and built for the next rental |

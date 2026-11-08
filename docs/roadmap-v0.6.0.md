@@ -52,6 +52,13 @@ would say how much of the burn is disks (`burn $0.30/h over 1 running + 2 stoppe
   depend on the answer.
 - `--compact`'s `dph` key: keep it as `dph_total`, and add the current rate as a key of its own?
 
+### 2. The candidates 0.5.0 did not take
+
+From [the 0.4.0 roadmap](roadmap-v0.4.0.md#candidates-for-later), unchanged: `LIMIT W` as an early warning;
+a history of the boxes seen; a count of the offers a filter hid; and, still open from 0.2.0, a text
+interface for the watch and a quiet watch, a measured upload, and a process's share of the GPU. (Its
+"storage cost of stopped boxes" is candidate 1 above, now measured.)
+
 ### Still open from earlier versions
 
 These are to be seen at a rental when they turn up, as listed in the [0.5.0 plan](roadmap-v0.5.0.md#not-in-050):
