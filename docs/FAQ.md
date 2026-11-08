@@ -199,15 +199,20 @@ the run, because going on would silently drop the exclusions the file holds.
 
 ### What does `COST~` mean?
 
-An estimate: today's `$/h` times the hours since the box was created. Prices can change, and vast.ai bills
-the storage of a **stopped** box, which `vas` does not show (yet). The invoice is the reference.
+An estimate: today's `$/h` times the hours since the box was created. `$/h` is the GPU and the box's disk,
+not its bandwidth, which vast.ai bills per byte. A **stopped** box pays its disk alone, so `COST~` counts too
+much for a box that was stopped a while, and too little for one with much traffic; prices can change too.
+The account's credit is the reference. (Measured at a rental:
+[2026-11-08](dogfooding/2026-11-08.md#still-open).)
 
 ### What does the burn count, and what does "billing unknown" mean?
 
 The burn adds the boxes the API reads as `running` **and** the boxes you asked to run (their intended
 status) that read otherwise (`offline`, `loading`, ...): `burn $1.940/h over 3 running + 1 offline (meant
 to run, billing unknown)`. Whether such a box bills is not known from the API, and a burn that left it out
-would overstate how long your credit lasts, so `vas` counts it and names it. A stopped box is not counted.
+would overstate how long your credit lasts, so `vas` counts it and names it. A stopped box is not counted,
+though it still pays its disk (the `instance` part of its record says how much; see the
+[0.6.0 draft](roadmap-v0.6.0.md)).
 
 ### A box stays `loading` for minutes: is it stuck?
 

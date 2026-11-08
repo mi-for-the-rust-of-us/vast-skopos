@@ -43,6 +43,10 @@ All notable changes to this project are documented here. The format is based on
 - The learning curve was measured with two fresh agents, one given only the help and one only the skill,
   against the harness: each did the five tasks right with no flag guessed. Their stumbles were fixed in the
   help and the skill. See `docs/dogfooding/2026-11-08.md`.
+- What a box's `$/H` holds, measured at a rental (2026-11-08): the GPU and the disk, not the bandwidth; a
+  stopped box pays its disk alone, at the same rate, though the API's `dph_total` keeps the full price. The
+  reference, the skill and the FAQ say so, and which way `COST~` errs. What it means for the burn (which
+  leaves stopped boxes out) is the first candidate of `docs/roadmap-v0.6.0.md`, a first draft.
 
 ## [0.4.0] - 2026-10-28
 
