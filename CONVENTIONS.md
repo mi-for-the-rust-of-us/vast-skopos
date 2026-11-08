@@ -12,6 +12,7 @@ own sections are [writing a file](#when-writing-a-file), [the API key](#when-han
 | You are about to... | Check these rules |
 |---|---|
 | Write a `///` or `//!` comment | [Backtick hygiene](#backtick-hygiene), [field-level docs](#field-level-docs), [intra-doc link safety](#intra-doc-link-safety) |
+| Add or change a flag of `vas` | [The two levels of help](#the-two-levels-of-help) |
 | Write a `pub fn` or `pub const fn` | [`const fn`](#const-fn), [`#[must_use]`](#must_use-policy), [pass by value](#pass-by-value-vs-reference) |
 | Write a `pub fn` returning `Result<T>` | [`# Errors` section](#errors-doc-section) |
 | Write a `pub enum` or `pub struct` | [`#[non_exhaustive]`](#non_exhaustive-policy) or [`// EXHAUSTIVE:`](#exhaustive-annotation) |
@@ -50,6 +51,17 @@ variables (`VAST_API_KEY`).
 The one exception is `clap`'s argument docs in `src/bin/vas.rs`: they ARE the
 `--help` text, where backticks would print literally. That struct carries
 `#[allow(clippy::doc_markdown)]` with an `// EXPLICIT:` comment.
+
+### The Two Levels of Help
+
+`clap` prints the first paragraph of a flag's doc comment for `-h` and the whole comment for
+`--help`. So a flag's comment opens with a one-line summary (at most 72 characters, its period
+dropped by `clap`), then a blank line, then the detail: units, defaults, edge cases, exit codes.
+A flag whose summary says it all keeps one paragraph. The examples, the exit codes and the
+environment variables live after the flags (`after_long_help`: `LOOKOUT_AFTER_HELP`,
+`OFFERS_AFTER_HELP`), in `--help` only. The binary's tests hold each summary to one line, parse
+every example with the current flags, and pin the exit codes to the constants the code returns: a
+new flag, a new exit code or a new example changes them in the same commit.
 
 ### Intra-Doc Link Safety
 

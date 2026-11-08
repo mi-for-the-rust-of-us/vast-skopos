@@ -43,7 +43,7 @@ read-only tool that reads the vast.ai API with your own key, and your boxes over
 > - **The GPU reads 100 % but the run is slow?** → the `POWER`, `CLOCK` and `OTHER` columns of `vas --ssh` — [the FAQ](docs/FAQ.md#when-a-rental-is-slow) says what they mean.
 > - **First rental?** → [From filters to a running box](docs/tutorials/from-filters-to-a-running-box.md), a walk through one rental, step by step.
 >
-> Every flag is in `vas --help`; how `vas` differs from Vast.ai's own CLI is in [`docs/comparison-with-vastai.md`](docs/comparison-with-vastai.md).
+> Every flag is in `vas -h`, one line each, and `vas --help` adds the detail, examples, the exit codes and the environment variables; how `vas` differs from Vast.ai's own CLI is in [`docs/comparison-with-vastai.md`](docs/comparison-with-vastai.md).
 
 ## Install
 

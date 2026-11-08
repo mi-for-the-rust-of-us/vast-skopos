@@ -36,7 +36,9 @@ cargo install vast-skopos --locked
 vas --help
 ```
 
-`vas --help` lists the flags of the lookout; `vas offers --help` lists those of the offer search. To update,
+`vas -h` lists the flags of the lookout, one line each; `vas --help` adds the detail of each, examples, the
+exit codes and the environment variables. `vas offers -h` and `vas offers --help` do the same for the offer
+search. To update,
 run `cargo install vast-skopos --locked --force`; to remove it, `cargo uninstall vast-skopos` (your key file and your
 filters file are not touched). `vas` prints what you asked for on **stdout** and its notices (a wait, a
 warning, an error) on **stderr**.

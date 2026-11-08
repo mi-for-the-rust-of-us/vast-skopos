@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Changed
+
+- Two levels of help. `vas -h` and `vas offers -h` print one line per flag and fit on one screen (222 and
+  263 words, from 684 and 501); `--help` keeps every flag's full text after its summary. `--help` now ends
+  with examples, the exit codes (0, 1, 2 and 3, for a one-shot, a watch and a wait; `vas offers` has no 3)
+  and the environment variables (`VAST_API_KEY` and the key files searched, `VAST_URL` and that the key is
+  then sent there, `XDG_CONFIG_HOME`). Tests parse every example with the current flags, hold each summary
+  to one line, and pin the exit codes to the constants the code returns.
+
 ## [0.4.0] - 2026-10-28
 
 ### Added
