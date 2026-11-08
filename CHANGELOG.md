@@ -22,18 +22,22 @@ All notable changes to this project are documented here. The format is based on
 
 ### Changed
 
-- Two levels of help. `vas -h` and `vas offers -h` print one line per flag and fit on one screen (234 and
+- Two levels of help. `vas -h` and `vas offers -h` print one line per flag and fit on one screen (235 and
   260 words, from 684 and 501); `--help` keeps every flag's full text after its summary. `--help` now ends
-  with examples, how to read the table (`vas offers --help`: the footer), the exit codes (0, 1, 2 and 3, for a one-shot, a watch and a wait; `vas offers` has no 3)
-  and the environment variables (`VAST_API_KEY` and the key files searched, `VAST_URL` and that the key is
-  then sent there, `XDG_CONFIG_HOME`). Tests parse every example with the current flags, hold each summary
-  to one line, pin the exit codes to the constants the code returns, and check that each mark the help and
-  the skill teach is one the table prints.
-- A lighter README (3,100 words, from 8,100). The four release banners are one "What's new" line pointing
+  with examples, how to read the table (`vas offers --help`: the footer), the exit codes (0, 1, 2 and 3,
+  for a one-shot, a watch and a wait; `vas offers` has no 3) and the environment variables (`VAST_API_KEY`
+  and the key files searched, `VAST_URL` and that the key is then sent there, `XDG_CONFIG_HOME`). Tests
+  parse every example with the current flags, hold each summary to one line, pin the exit codes to the
+  constants the code returns (clap's refusal included), and render a table to check that the main marks the
+  help and the skill teach (the `POWER` forms, `100%?`, `CLOCK`, `OTHER`, `UNREACHABLE` and `SSH FAILED`,
+  the status arrow and line, `(no line matches)`) are ones it prints. A test runs `vas --skill` with no key
+  anywhere: the file, with LF line ends, and no request.
+- A lighter README (3,200 words, from 8,100). The four release banners are one "What's new" line pointing
   to this file and the dogfooding reports. A quick start of three commands comes right after Install
   (`vas`, `vas --ssh`, `vas offers`, each with a sample). The long reference (every flag of `vas` and
   `vas offers`, the columns and marks, `--compact`'s JSON Lines, the config file, watching the offers)
-  moved, unchanged, to `docs/reference.md`, linked from the top; the tutorials' links follow it.
+  moved to `docs/reference.md`, linked from the top, its text unchanged but for links, heading levels and
+  the events' description; the tutorials' links follow it.
   `tests/readme.rs` checks the reference's samples as it did the README's, and the quick start's new
   `vas` sample too.
 - The learning curve was measured with two fresh agents, one given only the help and one only the skill,

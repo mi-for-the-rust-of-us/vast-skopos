@@ -22,7 +22,13 @@ fn reference() -> String {
     include_str!("../docs/reference.md").replace("\r\n", "\n")
 }
 
-/// A probe with every section the remote command prints, for a GPU capped at 400 W.
+/// The skill for agents (`vas --skill` prints it), with LF line ends.
+fn skill() -> String {
+    include_str!("../skills/vas/SKILL.md").replace("\r\n", "\n")
+}
+
+/// A probe for a GPU capped at 400 W: the utilisation, the power (its clock event reasons as a seventh
+/// field, which the parser also reads), the processes and a log; no section of the board's maximum.
 const FULL: &str = "0, 100, 24809, 32607\n---vas-power---\n0, 399.9, 400, 575, 1695, 3090, 0x4\n\
                     ---vas-apps---\n0, 00000000:C1:00.0\n---vas-apps-by-gpu---\n00000000:C1:00.0, 8720\nvas-apps-ok\n\
                     ---vas-log---\nvas-file:/r/s0/train.log\nepoch 41\n";
@@ -96,7 +102,7 @@ fn the_probe_columns_are_named_in_the_order_the_table_prints_them() {
     );
     let header = columns(real.lines().next().unwrap());
     let from = header.iter().position(|c| c == "GPU% (ssh)").unwrap();
-    // The README names the columns up to the last one, `LAST LOG / SSH ERROR`, which it describes
+    // The reference names the columns up to the last one, `LAST LOG / SSH ERROR`, which it describes
     // apart (it is the log's, not a reading of the GPU).
     let probe_columns = &header[from..];
     let said = format!(
@@ -149,4 +155,66 @@ fn the_compact_example_has_the_keys_the_json_has() {
     for kind in ["box", "event", "money"] {
         assert!(page.contains(&format!("`{kind}`")), "{kind}");
     }
+}
+
+/// Every key of every object in `value`, at any depth, added to `keys`.
+fn all_keys(value: &serde_json::Value, keys: &mut BTreeSet<String>) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, inner) in map {
+                keys.insert(key.clone());
+                all_keys(inner, keys);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for inner in items {
+                all_keys(inner, keys);
+            }
+        }
+        serde_json::Value::Null
+        | serde_json::Value::Bool(_)
+        | serde_json::Value::Number(_)
+        | serde_json::Value::String(_) => {}
+    }
+}
+
+#[test]
+fn every_compact_key_the_skill_names_is_one_vas_writes() {
+    use vast_skopos::trend::Trend;
+    // Two looks of a watch: the limit falls from 575 to 400 W (an `event`), and the second look has
+    // a box whose probe failed (the error object).
+    let uncapped = FULL.replace("399.9, 400, 575", "560.0, 575, 575");
+    let failed = vast_skopos::SkoposError::Ssh {
+        target: String::from("h:1"),
+        message: String::from("Connection refused"),
+    };
+    let mut trend = Trend::default();
+    trend.record(&[running()], &[Some(Ok(parse_output(&uncapped)))]);
+    let second = [
+        running(),
+        Instance::from_json(&serde_json::json!({"id": 2})).unwrap(),
+    ];
+    let probes = [Some(Ok(parse_output(FULL))), Some(Err(failed))];
+    trend.record(&second, &probes);
+    let out = json_lines(&second, &probes, Some(&trend), None, 0.0);
+    assert!(out.contains("\"kind\":\"event\""), "{out}");
+    let mut written = BTreeSet::new();
+    for line in out.lines() {
+        all_keys(&serde_json::from_str(line).unwrap(), &mut written);
+    }
+    let skill = skill();
+    let region = skill
+        .split_once("<!-- keys:")
+        .and_then(|(_, rest)| rest.split_once("<!-- /keys -->"))
+        .map(|(region, _)| region)
+        .unwrap();
+    // The opening comment's own line is prose, not keys.
+    let (_, list) = region.split_once('\n').unwrap();
+    let named: Vec<&str> = list.split('`').skip(1).step_by(2).collect();
+    assert!(named.len() >= 50, "{named:?}");
+    for key in &named {
+        assert!(written.contains(*key), "--compact writes no key `{key}`");
+    }
+    // The empty test: a key the code does not write is caught.
+    assert!(!written.contains("gpu_util"));
 }

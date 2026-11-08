@@ -9,10 +9,14 @@
 //! ```
 //!
 //! It prints the base URL and writes `$TMPDIR/vas-measure/env.sh` (`VAST_URL`, a dummy
-//! `VAST_API_KEY`, an empty `XDG_CONFIG_HOME`, and the fake `ssh` and this build's `vas` first on
-//! the `PATH`); `$TMPDIR/vas-measure/shell 'vas --ssh'` runs one command under it. Nothing reaches
-//! vast.ai or a real box. Restart it before each run: box 2's first loss is written 40 s after the
-//! first wait that searched for it, once.
+//! `VAST_API_KEY`, an empty `HOME` and `XDG_CONFIG_HOME`, so no config file of the measurer's is
+//! read, and the fake `ssh` and this build's `vas` first on the `PATH`);
+//! `$TMPDIR/vas-measure/shell 'vas --ssh'` runs one command under it. Nothing reaches vast.ai or a
+//! real box: the boxes' hosts end in `.invalid` and their direct address is a documentation one
+//! (TEST-NET-3), so even a real `ssh` given them goes nowhere. Restart it before each run: box 2's
+//! first loss is written 40 s after the first search (`--grep` or `--until`) for it, once. Its
+//! temporary folder's path must hold no blank, `#`, `&` or `\` (the scripts and `sed` take it as
+//! is).
 //!
 //! The boxes, each one task's answer:
 //!
@@ -44,7 +48,7 @@ use common::{serve, unix_now};
 /// box's own `root/` (and its folder taken out of what it prints, so paths read as on a box).
 /// Box 2's late line is appended 40 s after the first search (`grep -a -E`) asked for it.
 const FAKE_SSH: &str = r#"#!/bin/sh
-dir=__DIR__
+dir="__DIR__"
 port=
 prev=
 for a; do
@@ -87,7 +91,7 @@ cat "$VAS_MEASURE_BOX/smi/$f"
 
 /// Runs one command line with the harness's environment: `shell 'vas --ssh'`.
 const SHELL: &str = r#"#!/bin/sh
-. __DIR__/env.sh
+. "__DIR__/env.sh"
 exec bash -c "$*"
 "#;
 
@@ -165,8 +169,8 @@ fn instances() -> String {
         serde_json::json!({
             "id": id, "label": label, "actual_status": status, "intended_status": "running",
             "status_msg": message, "gpu_name": "RTX 5090", "num_gpus": 1, "dph_total": dph,
-            "start_date": age_min.mul_add(-60.0, now), "ssh_host": format!("ssh{}.vast.ai", port % 7),
-            "ssh_port": port, "image_runtype": "ssh", "public_ipaddr": "180.189.55.38",
+            "start_date": age_min.mul_add(-60.0, now), "ssh_host": format!("ssh{}.vast.invalid", port % 7),
+            "ssh_port": port, "image_runtype": "ssh", "public_ipaddr": "203.0.113.38",
             "ports": {"22/tcp": [{"HostIp": "0.0.0.0", "HostPort": (port + 31000).to_string()}]},
             "machine_id": machine, "host_id": host, "cpu_name": "AMD EPYC 7K62 48-Core Processor",
             "driver_version": "580.142", "dlperf": 199.2, "pcie_bw": 26.9, "geolocation": place,
@@ -247,6 +251,7 @@ fn serve_the_measurement() {
     let bin = dir.join("bin");
     fs::create_dir_all(&bin).unwrap();
     fs::create_dir_all(dir.join("config")).unwrap();
+    fs::create_dir_all(dir.join("home")).unwrap();
     let at = dir.display().to_string();
     script(&bin.join("ssh"), &FAKE_SSH.replace("__DIR__", &at));
     script(&bin.join("nvidia-smi"), FAKE_SMI);
@@ -273,7 +278,8 @@ fn serve_the_measurement() {
         dir.join("env.sh"),
         format!(
             "export VAST_URL={base}\nexport VAST_API_KEY=measure-dummy-key\n\
-             export XDG_CONFIG_HOME={at}/config\nexport PATH={}:$PATH\n",
+             export HOME='{at}/home'\nexport XDG_CONFIG_HOME='{at}/config'\n\
+             export PATH='{}':\"$PATH\"\n",
             bin.display()
         ),
     )

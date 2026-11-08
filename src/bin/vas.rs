@@ -58,10 +58,10 @@ Reading the table (stdout; notices, a wait's match among them, go to stderr):
               below its model's reference, so the board itself is the cap.
   CLOCK       The SM clock now over the highest it reaches, in MHz: 1717/3090 is held down.
   Last cell   The log's run and line (s0/train.log: ...; under --grep or --until, the last line
-              matching, and (no line matches) while none does), or why the probe failed: UNREACHABLE 4m,
-              ssh never reached the box (the age says whether to wait); SSH FAILED 4m, it was turned
-              away (a refused key) or got no reading. (direct): read past the proxy. ?: the answer
-              was cut short.
+              matching, and (no line matches) while none does), or why the probe failed:
+              UNREACHABLE 4m, ssh never reached the box (the age says whether to wait); SSH FAILED
+              4m, it was turned away (a refused key) or got no reading. (direct): read past the
+              proxy. ?: the answer was cut short.
   The money   credit | burn over the boxes that bill or may (meant to run, billing unknown) |
               the hours the credit buys at that rate.
 
@@ -89,7 +89,9 @@ Environment:
 AI agents:
   vas --skill prints a skill that teaches an agent vas: which command answers which question, how
   to read each mark, the exit codes, and the rules (Agent Skills format; skills/vas/SKILL.md in the
-  source). For Claude Code: mkdir -p .claude/skills/vas && vas --skill > .claude/skills/vas/SKILL.md";
+  source). For Claude Code: mkdir -p .claude/skills/vas && vas --skill > .claude/skills/vas/SKILL.md
+  (from Windows PowerShell 5.1, whose > writes UTF-16: vas --skill | Out-File -Encoding ascii
+  .claude\\skills\\vas\\SKILL.md, the folder made first).";
 
 /// The skill for AI agents (`vas --skill`): `skills/vas/SKILL.md`, embedded at build time so an
 /// installed `vas` hands over the skill of its own flags. The tests parse every `vas` command in it.
@@ -111,15 +113,18 @@ Examples:
 
 Reading the footer:
   How many offers (N of M shown when --top cuts), the order | the constraints in force | $/h
-  includes N GB of storage (--disk) | when it searched. Then, when they apply: N dropped here (vast.ai sent rows that a constraint,
-  re-checked on each row, refuses: it may ignore a filter), and that it answers at most 64 rows.
-  vast.ai's answers vary from one search to the next: repeat it, or --watch, to see more.
+  includes N GB of storage (--disk) | when it searched. Then, when they apply: N dropped here
+  (vast.ai sent rows that a constraint, re-checked on each row, refuses: it may ignore a filter),
+  and that it answers at most 64 rows. vast.ai's answers vary from one search to the next: repeat
+  it, or --watch, to see more.
 
 Exit codes:
   0  The offers were printed (a one-shot), or stdout was closed. A watch runs until Ctrl+C.
   1  A search failed: a one-shot's, or a watch's first (a later one is tried again at the next
-     look). Or the config file is missing (--config), unreadable, or holds a line it refuses.
-  2  A flag or value was refused, the config file's included, before any request.
+     look). Or the config file is missing (--config) or unreadable, or holds a line that is not a
+     flag or a flag a file may not hold (--watch, --changes, --config...).
+  2  A flag or value was refused, on the command line or in the config file (an unknown flag, a
+     value out of range), before any request.
 
 Environment:
   VAST_URL         Another host than https://console.vast.ai (a mock): searched instead. No key is
@@ -151,8 +156,7 @@ struct Cli {
 enum Command {
     /// The offers for rent that pass your constraints; no API key needed.
     ///
-    /// Cheapest first, unless you sort otherwise. Needs no API key: the search is public, and vas
-    /// sends none.
+    /// Cheapest first, unless you sort otherwise. The search is public, and vas sends no key.
     #[command(after_long_help = OFFERS_AFTER_HELP)]
     Offers(OffersArgs),
 }
@@ -192,13 +196,13 @@ struct LookArgs {
     grep: Option<String>,
     /// With --log and --watch: exit 0 once a line matches this pattern.
     ///
-    /// The pattern is read as --grep reads it (which it replaces), on any box; the line that
-    /// matched is said on stderr. Exits 2 at once when a box's grep
-    /// refuses the pattern (and no other box was read), 3 when no box could be read for 2 looks in a
-    /// row (every probe failed or gave no readable log, or none could be made) or no box has had a
-    /// file matching --log for --log-wait seconds (a warning comes after 2 looks), and 1 when the
-    /// first look fails or stdout is closed before a match. A box meant to run but not running
-    /// (loading, say) keeps the wait going for 10 looks at most since a box was last read.
+    /// The pattern is read as --grep reads it (which it replaces), on any box; the line that matched
+    /// is said on stderr. Exits 2 at once when a box's grep refuses the pattern (and no other box
+    /// was read), 3 when no box could be read for 2 looks in a row (every probe failed or gave no
+    /// readable log, or none could be made) or no box has had a file matching --log for --log-wait
+    /// seconds (a warning comes after 2 looks), and 1 when the first look fails or stdout is closed
+    /// before a match. A box meant to run but not running (loading, say) keeps the wait going for
+    /// 10 looks at most since a box was last read.
     ///
     /// No time limit on the whole wait (--log-wait bounds only a missing file): timeout 600 vas ...
     /// gives one, and exits 124 when it is reached. It matches on any box: when several write the
@@ -246,7 +250,8 @@ struct LookArgs {
     ///
     /// For scripts and monitors: one object per box, then one for the money, each with a kind and
     /// an at (Unix seconds); every key always (null when not known), the machine and host ids, the
-    /// CPU, driver, DLPerf, PCIe and vast.ai's status message among them.
+    /// CPU, driver, DLPerf, PCIe and vast.ai's status message among them. Not with --wide: it
+    /// carries what --wide shows.
     #[arg(long, conflicts_with = "wide")]
     compact: bool,
     /// Append the credit and the burn to this CSV file, one row per look.
@@ -258,7 +263,7 @@ struct LookArgs {
     /// Refresh every N seconds (at least 10) until Ctrl+C.
     #[arg(long, value_name = "SECONDS")]
     watch: Option<u64>,
-    /// Only this box (repeatable); the money line stays the whole account's.
+    /// Only this box (repeatable): its row, its probe and --until follow it.
     ///
     /// The rows, the probes, the trend and --until follow the boxes named. The money line stays the
     /// whole account's (the credit is spent by every box) and says how many boxes are shown;
@@ -664,7 +669,8 @@ struct Stop {
 /// The exit code of a wait that gave up: no box could be read for [`UNREAD_LOOKS`] looks in a row.
 const GAVE_UP: u8 = 3;
 
-/// The exit code of a wait whose pattern a box's `grep` refused: a refused value, as for a flag.
+/// The exit code of a refused value: a flag clap refuses (its own code, which a test pins to this),
+/// a `--log` that cannot be a path on the box, and a wait whose pattern a box's `grep` refused.
 const REFUSED: u8 = 2;
 
 /// Runs `look` once, or every `--watch` seconds until Ctrl+C or a look's [`Stop`]; the exit code.
@@ -962,7 +968,7 @@ fn for_the_box(typed: &str, root: Option<&str>, paths_only: bool) -> ForTheBox {
 
 /// The `--log` path and the `--grep` / `--until` pattern as the box should read them, each said on
 /// stderr when Git Bash had rewritten it; on a `--log` that cannot be a path on the box, the exit
-/// code 2 (said too), before any request.
+/// code [`REFUSED`] (said too), before any request.
 fn typed_for_the_box(args: &LookArgs) -> Result<(Option<String>, Option<String>), ExitCode> {
     let root = git_bash_root();
     let take = |flag: &str, typed: &str, paths_only: bool| match for_the_box(
@@ -985,7 +991,7 @@ fn typed_for_the_box(args: &LookArgs) -> Result<(Option<String>, Option<String>)
             eprintln!(
                 "vas: {flag} {typed} is not a path on the box (a Linux path starts with /){help}"
             );
-            Err(ExitCode::from(2))
+            Err(ExitCode::from(REFUSED))
         }
         ForTheBox::Doubted => {
             eprintln!(
@@ -1124,7 +1130,9 @@ fn with_file(path: &Path) -> Result<OffersArgs, ExitCode> {
                     path.display()
                 );
             }
-            Err(ExitCode::from(u8::try_from(e.exit_code()).unwrap_or(2)))
+            Err(ExitCode::from(
+                u8::try_from(e.exit_code()).unwrap_or(REFUSED),
+            ))
         }
     }
 }
@@ -1401,11 +1409,6 @@ mod tests {
             .to_string()
     }
 
-    /// The `--help` of `--watch` of the lookout (`None`) or of `vas offers`.
-    fn watch_help(subcommand: Option<&str>) -> String {
-        long_help(subcommand, "watch")
-    }
-
     fn word(n: usize) -> &'static str {
         [
             "zero", "one", "two", "three", "four", "five", "six", "seven",
@@ -1417,12 +1420,12 @@ mod tests {
 
     #[test]
     fn the_help_of_each_watch_says_the_floor_and_the_looks_the_code_uses() {
+        let lookout = long_help(None, "watch");
         assert!(
-            watch_help(None).contains(&format!("at least {LOOKOUT_FLOOR_SECS})")),
-            "{}",
-            watch_help(None)
+            lookout.contains(&format!("at least {LOOKOUT_FLOOR_SECS})")),
+            "{lookout}"
         );
-        let offers = watch_help(Some("offers"));
+        let offers = long_help(Some("offers"), "watch");
         assert!(
             offers.contains(&format!("at least {OFFERS_FLOOR_SECS})")),
             "{offers}"
@@ -1505,6 +1508,8 @@ mod tests {
     /// double quotes keep a blank inside one (enough for the examples, which use no escapes).
     fn shell_words(line: &str) -> Vec<String> {
         let (mut words, mut word, mut quote, mut open) = (Vec::new(), String::new(), None, false);
+        // EXPLICIT: a loop, not an iterator chain: the open quote and the word being built are state
+        // carried from one character to the next.
         for c in line.chars() {
             match (quote, c) {
                 (Some(q), c) if c == q => quote = None,
@@ -1530,8 +1535,8 @@ mod tests {
     }
 
     /// The `vas` command of a shell line: from its `vas` word up to the first `|`, `&&`, `;`, `>`
-    /// or `2>` (what follows is another program's, or a file), after any `timeout N` before it.
-    /// `None` when the line runs no `vas`.
+    /// or `2>` (what follows is another program's, or a file); what comes before the `vas` word (a
+    /// `timeout N`, say) is dropped. `None` when the line runs no `vas`.
     fn vas_command(line: &str) -> Option<Vec<String>> {
         let words = shell_words(line);
         let from = words.iter().position(|w| w == "vas")?;
@@ -1539,6 +1544,7 @@ mod tests {
             words
                 .into_iter()
                 .skip(from)
+                // BORROW: explicit as_str -- a word is matched against the shell's operators
                 .take_while(|w| !matches!(w.as_str(), "|" | "&&" | ";" | ">" | ">>" | "2>"))
                 .collect(),
         )
@@ -1584,9 +1590,10 @@ mod tests {
     #[test]
     fn every_example_of_the_helps_parses_with_the_flags_vas_has() {
         use super::{LOOKOUT_AFTER_HELP, OFFERS_AFTER_HELP};
-        for (block, at_least) in [(LOOKOUT_AFTER_HELP, 5), (OFFERS_AFTER_HELP, 3)] {
+        // As many as each block shows: an example the parser stopped seeing would leave the count.
+        for (block, count) in [(LOOKOUT_AFTER_HELP, 5), (OFFERS_AFTER_HELP, 4)] {
             let commands = examples(block);
-            assert!(commands.len() >= at_least, "{commands:?}");
+            assert_eq!(commands.len(), count, "{commands:?}");
             for command in commands {
                 if let Err(e) = Cli::try_parse_from(&command) {
                     panic!("{command:?} does not parse: {e}");
@@ -1604,6 +1611,7 @@ mod tests {
         for subcommand in [None, Some("offers")] {
             let command = command_of(subcommand);
             for arg in command.get_arguments() {
+                // BORROW: explicit as_str -- the id is matched against clap's own flags
                 let id = arg.get_id().as_str();
                 if matches!(id, "help" | "version") {
                     continue;
@@ -1640,6 +1648,9 @@ mod tests {
             )) && lookout.contains("or a box's grep refused the --until pattern"),
             "{lookout}"
         );
+        // A refused flag is clap's code, which `vas`'s own refusals use too (`REFUSED`).
+        let refused = Cli::try_parse_from(["vas", "--no-such-flag"]).unwrap_err();
+        assert_eq!(refused.exit_code(), i32::from(REFUSED));
         assert!(
             lookout.contains(&format!(
                 "\n  {GAVE_UP}  A wait gave up: no box could be read for {UNREAD_LOOKS} looks in a row"
@@ -1655,7 +1666,8 @@ mod tests {
             assert!(block.contains(&format!("than {DEFAULT_BASE} ")), "{block}");
             assert!(block.contains("XDG_CONFIG_HOME") && block.contains("VAST_URL"));
         }
-        // The key files the help names are the ones searched, in the order searched.
+        // The key files the help names, in the order of src/key.rs's module docs; the files the code
+        // searches end with the same two names (the order itself is `key::candidate_files`'s).
         assert!(lookout.contains("VAST_API_KEY"));
         let named = [
             "$XDG_CONFIG_HOME/vastai/vast_api_key",
@@ -1663,7 +1675,7 @@ mod tests {
             "~/.vast_api_key",
         ];
         let at: Vec<usize> = named.iter().map(|n| lookout.find(n).unwrap()).collect();
-        assert!(at.is_sorted(), "{named:?} in the order searched");
+        assert!(at.is_sorted(), "{named:?} in the help's order");
         let searched = vast_skopos::key::candidate_files();
         let last = searched.last().unwrap();
         assert!(last.ends_with(".vast_api_key"), "{last:?}");
@@ -1678,6 +1690,8 @@ mod tests {
     fn skill_commands(skill: &str) -> Vec<Vec<String>> {
         let mut fenced = false;
         let mut commands = Vec::new();
+        // EXPLICIT: a loop, not an iterator chain: whether a line is inside a fence is state carried
+        // from one line to the next.
         for line in skill.lines() {
             if line.starts_with("```") {
                 fenced = !fenced;
@@ -1714,76 +1728,13 @@ mod tests {
         assert!(Cli::try_parse_from(wrong.first().unwrap()).is_err());
     }
 
-    /// Every key of every object in `value`, at any depth.
-    fn all_keys(value: &serde_json::Value, keys: &mut std::collections::BTreeSet<String>) {
-        match value {
-            serde_json::Value::Object(map) => {
-                for (key, inner) in map {
-                    keys.insert(key.clone());
-                    all_keys(inner, keys);
-                }
-            }
-            serde_json::Value::Array(items) => {
-                for inner in items {
-                    all_keys(inner, keys);
-                }
-            }
-            serde_json::Value::Null
-            | serde_json::Value::Bool(_)
-            | serde_json::Value::Number(_)
-            | serde_json::Value::String(_) => {}
-        }
-    }
-
-    #[test]
-    fn every_compact_key_the_skill_names_is_one_vas_writes() {
-        use vast_skopos::compact::json_lines;
-        use vast_skopos::instance::Instance;
-        use vast_skopos::probe::parse_output;
-        // A probe with every section the remote command prints, as in tests/readme.rs.
-        const FULL: &str = "0, 100, 24809, 32607\n---vas-power---\n0, 399.9, 400, 575, 1695, 3090, 0x4\n\
-                            ---vas-apps---\n0, 00000000:C1:00.0\n---vas-apps-by-gpu---\n00000000:C1:00.0, 8720\nvas-apps-ok\n\
-                            ---vas-log---\nvas-file:/r/s0/train.log\nepoch 41\n";
-        let running = || {
-            Instance::from_json(&serde_json::json!({"id": 1, "actual_status": "running"})).unwrap()
-        };
-        let failed = vast_skopos::SkoposError::Ssh {
-            target: String::from("h:1"),
-            message: String::from("Connection refused"),
-        };
-        let out = json_lines(
-            &[running(), running()],
-            &[Some(Ok(parse_output(FULL))), Some(Err(failed))],
-            None,
-            None,
-            0.0,
-        );
-        let mut written = std::collections::BTreeSet::new();
-        for line in out.lines() {
-            all_keys(&serde_json::from_str(line).unwrap(), &mut written);
-        }
-        let skill = super::skill_text();
-        let region = skill
-            .split_once("<!-- keys:")
-            .and_then(|(_, rest)| rest.split_once("<!-- /keys -->"))
-            .map(|(region, _)| region)
-            .unwrap();
-        // The opening comment's own line is prose, not keys.
-        let (_, list) = region.split_once('\n').unwrap();
-        let named: Vec<&str> = list.split('`').skip(1).step_by(2).collect();
-        assert!(named.len() >= 40, "{named:?}");
-        for key in &named {
-            assert!(written.contains(*key), "--compact writes no key `{key}`");
-        }
-        // The empty test: a key the code does not write is caught.
-        assert!(!written.contains("gpu_util"));
-    }
-
     #[test]
     fn vas_skill_prints_the_skill_alone_and_its_front_matter_is_an_agent_skill_s() {
+        // ASCII, so PowerShell 5.1's `Out-File -Encoding ascii` (the README's) saves it exactly; and
+        // printed with LF line ends whatever the checkout's (tests/look_cli.rs runs `vas --skill`).
+        assert!(super::SKILL.is_ascii());
         let skill = super::skill_text();
-        // ASCII, so PowerShell 5.1's `Out-File -Encoding ascii` (the README's) saves it exactly.
-        assert!(!skill.contains('\r') && skill.is_ascii());
+        assert!(!skill.contains('\r'));
         let cli = Cli::try_parse_from(["vas", "--skill"]).unwrap();
         assert!(cli.look.skill && cli.command.is_none());
         for other in [
@@ -1820,21 +1771,30 @@ mod tests {
         use vast_skopos::instance::Instance;
         use vast_skopos::probe::parse_output;
         use vast_skopos::render::{TableOptions, table};
-        // What the probe reads on a box capped at 400 W, on a 450 W board, and on an idle card.
-        let read = |util_mem: &str, power: &str, events: &str, apps: &str, max: &str| {
+        // What the probe reads on a box capped at 400 W with someone else on its GPU, on a 450 W
+        // board waiting for a line (`--grep`), and on an idle card.
+        let read = |util_mem: &str, power: &str, events: &str, apps: &str, max: &str, log: &str| {
             Some(Ok(parse_output(&format!(
                 "0, {util_mem}, 32607\n---vas-power---\n0, {power}, 1717, 3090\n\
                  ---vas-throttle---\n0, {events}\n---vas-apps---\n0, 00000000:C1:00.0\n\
-                 ---vas-apps-by-gpu---\n{apps}vas-apps-ok\n---vas-power-max---\n0, {max}\n"
+                 ---vas-apps-by-gpu---\n{apps}vas-apps-ok\n---vas-power-max---\n0, {max}\n{log}"
             ))))
+        };
+        let no_line = "---vas-log---\nvas-grep-file:/r/s0/train.log\nvas-grep-exit:1\n";
+        let failed = |message: &str| {
+            Some(Err(vast_skopos::SkoposError::Ssh {
+                target: String::from("h:1"),
+                message: String::from(message),
+            }))
         };
         let probes = [
             read(
                 "99, 24809",
                 "399.9, 400, 575",
                 "0x4",
-                "00000000:C1:00.0, 24390\n",
+                "00000000:C1:00.0, 8720\n",
                 "600",
+                "",
             ),
             read(
                 "98, 20480",
@@ -1842,17 +1802,17 @@ mod tests {
                 "0x0",
                 "00000000:C1:00.0, 20060\n",
                 "450",
+                no_line,
             ),
-            read("100, 2", "31.4, 575, 575", "0x1", "", "600"),
-            Some(Err(vast_skopos::SkoposError::Ssh {
-                target: String::from("h:1"),
-                message: String::from("ssh: connect to host h port 1: Connection refused"),
-            })),
+            read("100, 2", "31.4, 575, 575", "0x1", "", "600", ""),
+            failed("ssh: connect to host h port 1: Connection refused"),
+            failed("root@h: Permission denied (publickey)."),
             None,
         ];
         let rtx = |id: u64, status: &str| {
             Instance::from_json(&serde_json::json!({"id": id, "actual_status": status,
-                "intended_status": "running", "gpu_name": "RTX 5090", "num_gpus": 1}))
+                "intended_status": "running", "gpu_name": "RTX 5090", "num_gpus": 1,
+                "status_msg": "46b4edaa8d47: Pull complete"}))
             .unwrap()
         };
         let boxes = [
@@ -1860,26 +1820,35 @@ mod tests {
             rtx(2, "running"),
             rtx(3, "running"),
             rtx(4, "running"),
-            rtx(5, "loading"),
+            rtx(5, "running"),
+            rtx(6, "loading"),
         ];
         let printed = table(&boxes, &probes, None, TableOptions::new().ssh(true), 0.0);
         let skill = super::skill_text();
-        for mark in [
-            "400/575W+power_cap",
-            "450W<575",
-            "100%?",
-            "UNREACHABLE",
-            "loading -> running",
-            "1717/3090",
+        let pull = "loading: 46b4edaa8d47: Pull complete";
+        // Each mark the table prints here, whether --help teaches it, and whether the skill does.
+        for (mark, in_help, in_skill) in [
+            ("400/575W+power_cap", true, true),
+            ("450W<575", true, true),
+            ("100%?", true, true),
+            ("1717/3090", true, true),
+            ("15.7G", false, true),
+            ("UNREACHABLE", true, true),
+            ("SSH FAILED", true, true),
+            ("(no line matches)", true, true),
+            ("loading -> running", true, false),
+            (pull, false, true),
         ] {
             assert!(printed.contains(mark), "the table lacks {mark}: {printed}");
-            assert!(
-                LOOKOUT_AFTER_HELP.contains(mark),
-                "--help does not teach {mark}"
-            );
-        }
-        for mark in ["400/575W+power_cap", "450W<575", "100%?", "UNREACHABLE"] {
-            assert!(skill.contains(mark), "the skill does not teach {mark}");
+            if in_help {
+                assert!(
+                    LOOKOUT_AFTER_HELP.contains(mark),
+                    "--help does not teach {mark}"
+                );
+            }
+            if in_skill {
+                assert!(skill.contains(mark), "the skill does not teach {mark}");
+            }
         }
     }
 }

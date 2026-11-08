@@ -11,8 +11,11 @@ own `ssh`. It never rents, starts, stops, labels or
 destroys a box: that is the human's call. Say what you see and recommend; let the human act.
 
 What it prints goes to stdout (the table, or JSON Lines); its notices (a wait, a warning, an error) go to
-stderr. `vas -h` lists every flag in one line each; `vas --help` adds the detail, examples, the exit codes
-and the environment variables.
+stderr. `vas -h` lists every flag in one line each; `vas --help` adds the detail, examples, how to read the
+table, the exit codes and the environment variables.
+
+A `--watch` without `--until` never exits: it runs until Ctrl+C. Bound it (`timeout 300 vas --ssh --watch
+60`, then exit 124 is expected) or run it in the background; never leave a shell call waiting on it.
 
 ## Which command answers which question
 
@@ -37,7 +40,11 @@ program, `vas --compact` (below).
 **Is a GPU idle, capped or shared?** Run `vas --ssh`: `nvidia-smi` is read on each running box, once,
 in parallel. Read `GPU% (ssh)`, `OTHER`, `POWER` and `CLOCK` (the marks, below). Never trust the
 dashboard's utilisation: it has read 0 % on boxes at 97-99 %. One sample is not a diagnosis; a watch
-(`vas --ssh --watch 60`) adds `TREND` and `CLOCK TREND`, the last six samples.
+adds `TREND` and `CLOCK TREND`, the last six samples, so six looks a minute apart take six minutes:
+
+```sh
+timeout 400 vas --ssh --watch 60
+```
 
 **Wait for a line, with a time limit.** `--until` waits for a line matching an extended regular
 expression on any box, then exits 0 and says the line on stderr. It has no time limit of its own:
@@ -80,17 +87,18 @@ longest rental), `VERIFICATION` (`verified`, `unverified` or `deverified`), and 
 footer names the constraints in force; `N dropped here` counts the rows vast.ai sent that a constraint,
 re-checked on each row, refused (it may ignore a filter), which is expected. vast.ai answers at most 64
 rows and its answers vary from one search to the next: the footer says so. `vas offers --watch 60` reads
-the market over several looks (the first three only learn).
+the market over several looks (the first three only learn); bound it, as every watch.
 
 **Keep the credit as a curve.** `vas --credit-log credit.csv --watch 300` appends one row per look
 (`unix_time,credit,burn_per_hour,running,unsure`); the file is only ever appended to, and never holds
-the key.
+the key. It runs as long as the rental: start it in the background, or let the human start it.
 
 ## `--compact`: JSON Lines for programs
 
 Whenever you parse the output, use `vas --compact` (it cannot be used with `--wide`, and it carries what
 `--wide` shows). Each line is one object: one per box (`kind` is `box`), under `--ssh --watch` one per
-change of a GPU's power (`event`), then one for the money (`money`), which closes a look. Every key is
+change of a GPU's power limit, throttle reasons or memory held outside the container (`event`), then one
+for the money (`money`), which closes a look. Every key is
 always there: what is not known is `null`, never a missing key. Keys come in alphabetical order. Filter on
 the kind: `vas --compact | jq -r 'select(.kind=="money").hours_left'`.
 
@@ -104,6 +112,8 @@ the kind: `vas --compact | jq -r 'select(.kind=="money").hours_left'`.
 - Each of `gpus`: `index`, `util_pct`, `mem_used_mib`, `mem_total_mib`, `other_mem_mib`, `power_w`,
   `power_limit_w`, `power_default_w`, `power_max_w`, `sm_mhz`, `sm_max_mhz`, `throttle`, `processes`.
 - `log` (null without a log path): `state`, `file`, `line`.
+- An event: `kind`, `at`, `id`, `gpu`, `limit_was`, `limit_now`, `other_mib_was`, `other_mib_now`,
+  `began`, `ended` (the throttle words that began and ended).
 - The money: `kind`, `at`, `credit`, `burn`, `hours_left`, `running`, `unsure`, `boxes`, `shown`.
 <!-- /keys -->
 
@@ -134,6 +144,8 @@ the kind: `vas --compact | jq -r 'select(.kind=="money").hours_left'`.
   nothing holding its clocks; an idle card's low `CLOCK` (`210/3090`) is then rest, not a cap. Other
   words than `power_cap`: `thermal`, `slowdown`, `power_brake`.
 - `POWER` `450W<575`: the board's maximum is below its model's reference, so the board itself is the cap.
+  Only the RTX 5090, 5080, 4090, 4080 and 3090 have a reference: another model never gets this mark,
+  so its absence there says nothing.
 - `CLOCK` `1717/3090`: the SM clock now over the highest the card reaches, in MHz.
 - `OTHER` `15.7G`: GPU memory held outside the container (someone else, or the host). `-` means
   nothing notable, or not known.
@@ -152,7 +164,8 @@ the kind: `vas --compact | jq -r 'select(.kind=="money").hours_left'`.
   has no line to show; `(no file matches)`: nothing matches the path on that box; `(not a file)`: the
   newest match is a folder; `?`: the box's answer was cut short.
 - `! 56533728 gpu 0: power limit 575 -> 400 W, power_cap began`: under `--ssh --watch`, a change since
-  the last look.
+  the last look. Its twin, `! 56533728 gpu 0: memory held outside the container 0.0 -> 15.7 GiB`, says
+  someone else arrived on the GPU (or left).
 - The money line's `+ 1 offline (meant to run, billing unknown)`: a box asked to run that reads
   otherwise. It is counted in the burn, since it may bill.
 
@@ -169,8 +182,9 @@ the kind: `vas --compact | jq -r 'select(.kind=="money").hours_left'`.
 ## The traps
 
 - Git Bash rewrites an argument that looks like a POSIX path: `/root/run.log` reaches `vas` as
-  `C:/Program Files/Git/root/run.log`. `vas` reads it as typed again and says so on stderr; a path
-  under another drive is refused (exit 2). `//root/run.log` or `MSYS_NO_PATHCONV=1` avoids the rewrite.
+  `C:/Program Files/Git/root/run.log`. `vas` reads it as typed again and says so on stderr; a path Git
+  Bash maps outside its own folder (`/tmp/...`, to the user's temp folder) is refused (exit 2).
+  `//root/run.log` or `MSYS_NO_PATHCONV=1` avoids the rewrite.
 - A `--log` glob that matches several runs on one box reads only the newest file. Name the run in
   the path when the newest is not the one wanted.
 - Quote the glob locally (`'/root/runs/*/train.log'`): the box's shell expands it, not yours.

@@ -2,14 +2,15 @@
 
 **Not affiliated with vast.ai.** Every flag of `vas` and `vas offers`, every column and mark they print,
 `--compact`'s JSON Lines, the offers' config file and their watch, in full. The [README](../README.md) has
-the quick start; `vas -h` prints the flags in one line each, and `vas --help` adds the detail, examples, the
-exit codes and the environment variables; the [FAQ](FAQ.md) answers the questions real rentals asked.
+the quick start; `vas -h` prints the flags in one line each, and `vas --help` adds the detail, examples, how
+to read the table, the exit codes and the environment variables; the [FAQ](FAQ.md) answers the questions real
+rentals asked.
 
 - [Binary (`vas`)](#binary-vas): the flags, `--ssh` and its columns (`GPU% (ssh)`, `VRAM`, `OTHER`, `POWER`,
   `CLOCK`, the trends, the log), the status line, the money line, rate limits, the credit history
 - [`vas --compact`: JSON Lines](#vas---compact-json-lines)
 - [`vas offers`](#vas-offers): the flags, the config file, the footer, which machine is which, verified or not
-- [Watching the offers](#watching-the-offers)
+  - [Watching the offers](#watching-the-offers)
 
 ## Binary (`vas`)
 
@@ -28,7 +29,7 @@ exit codes and the environment variables; the [FAQ](FAQ.md) answers the question
 | `vas --watch 60` | refresh every 60 s (at least 10) until Ctrl+C |
 | `vas --instance ID` | only this box, repeatable: the rows, the probes, the trend and `--until` follow the boxes named. The money line stays the whole account's, since the credit is spent by every box, and says how many boxes are shown (`... \| 1 of 3 boxes shown`); `--credit-log` writes the whole account's money too. An id the account lacks is said on stderr, once, and again only when that changes |
 | `vas --credit-log FILE` | append one CSV row per look to `FILE`: the credit as a curve ([below](#the-credit-history)) |
-| `vas --key-file FILE` | read the key from `FILE` |
+| `vas --key-file FILE` | read the key from `FILE` (otherwise `VAST_API_KEY`, then the `vastai` CLI's files: [the README](../README.md#the-api-key)) |
 | `vas --skill` | print the skill for AI agents, and exit ([the README](../README.md#a-skill-for-ai-agents)); alone, with no other flag |
 | `vas offers [FLAGS]` | the offers for rent that pass the flags, cheapest first; no key needed ([below](#vas-offers)) |
 
@@ -171,9 +172,9 @@ written unless you name the file, the API key is never in it, and a file that ca
 once on stderr (`failed to write the credit log ...`) while the look goes on and the log stops trying for
 the rest of the run (on Windows, a file open in Excel is such a file: close it, then restart the watch).
 
-### `vas --compact`: JSON Lines
+## `vas --compact`: JSON Lines
 
-One object per box, then (under `--ssh --watch`) one per change of a GPU's power, then one for the money,
+One object per box, then (under `--ssh --watch`) one per change of a GPU's power limit, throttle reasons or memory held outside the container, then one for the money,
 each on one line, each with a `kind` (`box`, `event` or `money`) and `at` (Unix seconds, the same on every
 line of a look), so a line read alone says what it is and when; the money object closes a look. The
 top-level keys of each `kind` never change: what is not known is `null`, not a missing key (`probe` is
@@ -203,12 +204,12 @@ gives it whatever the status (`null` when it gives none); `cpu_name`, `driver_ve
 board power, `null` for a model not in the table), and so are `direct_host` and `direct_port`, the
 box's direct `ssh` address past the proxy (`null` when the API gives none). `unsure` counts, by state, the boxes meant to run that read
 otherwise (the burn, above). The money is always the whole account's; `boxes` counts the account's boxes and
-`shown` those printed, fewer under `--instance`. With `--ssh --watch N`, a change of a GPU's power limit or throttle reasons is an
+`shown` those printed, fewer under `--instance`. With `--ssh --watch N`, a change of a GPU's power limit, throttle reasons or memory held outside the container is an
 `event` object, between the boxes and the money (see the power cap, above). With `--watch N`, a look is printed every N seconds with no separator line (the table form of `--watch`
 stamps each look with `== vas, unix time N`; JSON lines would not parse with it): the `at`
 tells looks apart. `jq` does the rest, for example `vas --compact | jq -r 'select(.kind=="money").hours_left'`.
 
-### `vas offers`
+## `vas offers`
 
 | Flag | |
 |---|---|
@@ -217,7 +218,7 @@ tells looks apart. `jq` does the rest, for example `vas --compact | jq -r 'selec
 | `--disk GB` | the disk wanted: priced into `$/h` and required free (unset, 5 GB is priced in: the `vastai` CLI's default) |
 | `--cuda VERSION` | the lowest CUDA version the host's driver must support (`12.8`) |
 | `--reliability FRACTION` | the lowest reliability, from 0 to 1 (`0.99`; `99` is refused) |
-| `--inet-up MBIT_S`, `--inet-down MBIT_S` | the lowest ADVERTISED bandwidth (the host's own test, not your route: see the dogfooding note) |
+| `--inet-up MBIT_S`, `--inet-down MBIT_S` | the lowest ADVERTISED bandwidth (the host's own test, not your route: see the [2026-10-16 report](https://github.com/mi-for-the-rust-of-us/vast-skopos/blob/main/docs/dogfooding/2026-10-16.md)) |
 | `--max-price DOLLARS`, `--min-days DAYS` | the highest `$/h` (storage included), the shortest acceptable maximum rental |
 | `--verified`, `--no-verified` | only machines vast.ai has verified; `--no-verified` cancels a config file's `--verified` |
 | `--exclude-deverified`, `--no-exclude-deverified` | leave out the machines vast.ai has DEVERIFIED (verified once, then found failing its checks) and keep the unverified ones (new, or under evaluation), which `--verified` hides too ([below](#verified-unverified-deverified)); the second flag cancels a config file's first |
@@ -282,7 +283,7 @@ field it shows (probed 2026-10-25: `neq`, `in` and `notin` all came back with de
 sends `vericode <= 1` (0 is unverified, 1 verified, 2 and up deverified), and re-checks `verification` on
 each row as usual.
 
-#### Watching the offers
+### Watching the offers
 
 **vast.ai's answers vary.** Measured on 2026-10-18: fifteen identical searches, 2.5 s apart, saw 129
 machines (64 per answer), and only 30 of them in every answer; the others came and went, and one machine

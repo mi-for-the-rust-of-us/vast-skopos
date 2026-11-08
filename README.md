@@ -40,7 +40,7 @@ read-only tool that reads the vast.ai API with your own key, and your boxes over
 > - **First rental?** → [From filters to a running box](docs/tutorials/from-filters-to-a-running-box.md), a walk through one rental, step by step.
 > - **An AI assistant drives `vas` for you?** → [`vas --skill`](#a-skill-for-ai-agents) prints a skill that teaches it `vas`: which command answers which question, how to read each mark, the exit codes, and that renting or destroying a box stays your call.
 >
-> Every flag is in `vas -h`, one line each, and `vas --help` adds the detail, examples, the exit codes and the environment variables; how `vas` differs from Vast.ai's own CLI is in [`docs/comparison-with-vastai.md`](docs/comparison-with-vastai.md).
+> Every flag is in `vas -h`, one line each, and `vas --help` adds the detail, examples, how to read the table, the exit codes and the environment variables; how `vas` differs from Vast.ai's own CLI is in [`docs/comparison-with-vastai.md`](docs/comparison-with-vastai.md).
 
 ## Install
 

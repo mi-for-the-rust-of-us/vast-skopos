@@ -1685,3 +1685,37 @@ fn the_credit_log_works_with_the_ssh_probe_and_a_probe_that_failed() {
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0][1..], ["12.9300", "0.5000", "1", "0"], "{rows:?}");
 }
+
+#[test]
+fn vas_skill_prints_the_skill_with_lf_ends_and_needs_no_key_nor_any_request() {
+    let (base, seen) = serve(account);
+    let home = std::env::temp_dir().join(format!("vas-skill-{}", std::process::id()));
+    std::fs::create_dir_all(&home).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_vas"))
+        .arg("--skill")
+        .env("VAST_URL", &base)
+        .env_remove("VAST_API_KEY")
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .env_remove("XDG_CONFIG_HOME")
+        .output()
+        .unwrap();
+    std::fs::remove_dir_all(&home).unwrap();
+    // No key anywhere: a `vas` that looked for one would fail; one that asked the mock is seen.
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        out.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        seen.lock().unwrap().is_empty(),
+        "vas --skill sent a request"
+    );
+    let file = include_str!("../skills/vas/SKILL.md").replace("\r\n", "\n");
+    assert_eq!(String::from_utf8(out.stdout).unwrap(), file);
+}
