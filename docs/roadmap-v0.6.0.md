@@ -39,8 +39,13 @@ would say how much of the burn is disks (`burn $0.30/h over 1 running + 2 stoppe
 
 **Open questions:**
 
-- Does the credit fall at `instance.totalHour`, stopped and running? The rental's `--credit-log` curve
-  answers it: one hour running, then one hour stopped (results to come).
+- **Settled: the credit falls at `instance.totalHour`.** The rental's `--credit-log` curve, one row a
+  minute over 1.35 h stopped, fell at $0.0555/h (least squares; $0.0553/h from end to end), the disk's
+  $0.055556 within 0.1%, and went flat once the box was destroyed. The credit read before the rent
+  ($19.16, to the cent) and the curve's first row ($18.8595) agree with 1.04 h running at `dph_total`.
+  vast.ai's pricing page warns that storage is "typically higher for stopped instances"; not here. The
+  credit falls in uneven steps (0.0006 to 0.0014 a minute), so a reading over a few minutes is noisy:
+  `vas` should compare rates over the curve, not between two rows.
 - `COST~`: today's rate times the age stays wrong for a box that changed state. Is there a figure for the
   cost so far (an endpoint of charges per instance), or should `COST~` say it assumes the box always ran?
 - What does `instance` hold for a box `loading`, `offline` or being created? The burn's `unsure` boxes

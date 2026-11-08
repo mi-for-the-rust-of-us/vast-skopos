@@ -52,7 +52,8 @@ is refused), since vast.ai's `ssh` proxies are reached by port. Each probe has a
 (`ControlMaster=no`, `ControlPath=none`), whatever `~/.ssh/config` says about shared connections.
 
 `$/H` is the API's `dph_total`: the GPU and the box's disk, not its bandwidth (vast.ai's API reference
-shows `dph_total` = `dph_base` + `storage_total_cost`). `COST~` is an estimate: today's `$/h` times the
+shows `dph_total` = `dph_base` + `storage_total_cost`, and a rental measured it:
+[2026-11-08](dogfooding/2026-11-08.md#still-open)). `COST~` is an estimate: today's `$/h` times the
 hours since creation. It counts too much for a box that was stopped a while (vast.ai then bills only its
 storage), too little for one with much traffic (bandwidth is billed per byte), and prices can change; the
 invoice is the reference.
