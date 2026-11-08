@@ -63,6 +63,12 @@ environment variables live after the flags (`after_long_help`: `LOOKOUT_AFTER_HE
 every example with the current flags, and pin the exit codes to the constants the code returns: a
 new flag, a new exit code or a new example changes them in the same commit.
 
+The skill for agents, `skills/vas/SKILL.md` (`vas --skill` prints it, embedded), is held the same
+way: every `vas` command in it (in a fenced block, or an inline span that starts with `vas`) parses
+with the current flags, and every name in backticks between its `<!-- keys` comments is a key
+`--compact` writes. So a placeholder (`--instance ID`) is never written there as a command: use a
+real value (`--instance 56533728`). It stays plain ASCII.
+
 ### Intra-Doc Link Safety
 
 Rustdoc intra-doc links must resolve under all feature-flag combinations

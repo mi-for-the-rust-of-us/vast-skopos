@@ -49,7 +49,8 @@ Exit codes:
   0  The look was printed (a one-shot), the line was matched (--until), or stdout was closed
      (vas --watch 60 | head). A watch without --until runs until Ctrl+C.
   1  A look failed: a one-shot's, or a watch's first (a later one is tried again at the next look).
-     Or no API key was found, or a wait's stdout was closed before a match.
+     Or no API key was found (or its file could not be read), or a wait's stdout was closed before
+     a match.
   2  A flag or value was refused, before any request (a --log that is not a path on a Linux box,
      too); or a box's grep refused the --until pattern.
   3  A wait gave up: no box could be read for 2 looks in a row, or none had a file matching --log
@@ -63,7 +64,16 @@ Environment:
                    then sent there, and vas says so on stderr.
   XDG_CONFIG_HOME  Where the key file (vastai/vast_api_key) and vas offers' config file
                    (vast-skopos/offers) are looked for first, when it is an absolute path; then
-                   ~/.config.";
+                   ~/.config.
+
+AI agents:
+  vas --skill prints a skill that teaches an agent vas: which command answers which question, how
+  to read each mark, the exit codes, and the rules (Agent Skills format; skills/vas/SKILL.md in the
+  source). For Claude Code: mkdir -p .claude/skills/vas && vas --skill > .claude/skills/vas/SKILL.md";
+
+/// The skill for AI agents (`vas --skill`): `skills/vas/SKILL.md`, embedded at build time so an
+/// installed `vas` hands over the skill of its own flags. The tests parse every `vas` command in it.
+const SKILL: &str = include_str!("../../skills/vas/SKILL.md");
 
 /// What `vas offers --help` prints after the flags, as [`LOOKOUT_AFTER_HELP`] does for the lookout.
 const OFFERS_AFTER_HELP: &str = "\
@@ -120,8 +130,10 @@ enum Command {
 
 /// The lookout's flags. Each doc comment opens with a one-line summary, which is `-h`; the whole
 /// comment is `--help`.
-// EXPLICIT: these doc comments ARE the `--help` text, where backticks would print literally.
-#[allow(clippy::doc_markdown)]
+// EXPLICIT: these doc comments ARE the `--help` text, where backticks would print literally; and
+// the switches of a command line are booleans, one per flag (`--ssh`, `--wide`, `--compact`,
+// `--skill`), not a state to model.
+#[allow(clippy::doc_markdown, clippy::struct_excessive_bools)]
 #[derive(Debug, clap::Args)]
 struct LookArgs {
     /// Also read each running box's GPUs over ssh, with nvidia-smi.
@@ -221,6 +233,14 @@ struct LookArgs {
     /// on stderr.
     #[arg(long, value_name = "ID")]
     instance: Vec<u64>,
+    /// Print the skill that teaches an AI agent to use vas, then exit.
+    ///
+    /// The skill is a Markdown file in the Agent Skills format, the source's skills/vas/SKILL.md as
+    /// this vas was built with: which command answers which question, how to read each mark, the
+    /// exit codes and the rules. Needs no API key, and sends nothing. Alone: with any other flag, it
+    /// is refused.
+    #[arg(long, exclusive = true)]
+    skill: bool,
 }
 
 /// The order of the offers.
@@ -1172,10 +1192,21 @@ fn offers(args: OffersArgs) -> ExitCode {
     )
 }
 
+/// The skill as `vas --skill` prints it: with LF line ends whatever the checkout's, so every `vas`
+/// prints the same file.
+fn skill_text() -> String {
+    SKILL.replace("\r\n", "\n")
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command {
         Some(Command::Offers(args)) => offers(args),
+        // A closed pipe ends the output quietly, as for a look: the reader has gone.
+        None if cli.look.skill => {
+            emit(&skill_text());
+            ExitCode::SUCCESS
+        }
         None => lookout(&cli.look),
     }
 }
@@ -1606,6 +1637,147 @@ mod tests {
         assert!(
             searched.iter().any(|p| p.ends_with("vastai/vast_api_key")),
             "{searched:?}"
+        );
+    }
+
+    /// The `vas` commands of the skill: each line of a fenced block that runs `vas`, and each
+    /// inline code span that starts with `vas`.
+    fn skill_commands(skill: &str) -> Vec<Vec<String>> {
+        let mut fenced = false;
+        let mut commands = Vec::new();
+        for line in skill.lines() {
+            if line.starts_with("```") {
+                fenced = !fenced;
+            } else if fenced {
+                commands.extend(vas_command(line));
+            } else {
+                // The odd pieces between backticks are the inline code spans.
+                for span in line.split('`').skip(1).step_by(2) {
+                    if span == "vas" || span.starts_with("vas ") {
+                        commands.extend(vas_command(span));
+                    }
+                }
+            }
+        }
+        commands
+    }
+
+    #[test]
+    fn every_vas_command_of_the_skill_parses_with_the_flags_vas_has() {
+        let skill = super::skill_text();
+        let commands = skill_commands(&skill);
+        assert!(commands.len() >= 20, "{} commands", commands.len());
+        for command in commands {
+            match Cli::try_parse_from(&command) {
+                Ok(_) => {}
+                // `vas -h` and `vas --help` are named, and print rather than parse.
+                Err(e) if e.kind() == clap::error::ErrorKind::DisplayHelp => {}
+                Err(e) => panic!("{command:?} does not parse: {e}"),
+            }
+        }
+        // The empty test: a span with a flag `vas` lacks is found and fails.
+        let wrong = skill_commands("Run `vas --sssh` here.");
+        assert_eq!(wrong, [["vas", "--sssh"]]);
+        assert!(Cli::try_parse_from(wrong.first().unwrap()).is_err());
+    }
+
+    /// Every key of every object in `value`, at any depth.
+    fn all_keys(value: &serde_json::Value, keys: &mut std::collections::BTreeSet<String>) {
+        match value {
+            serde_json::Value::Object(map) => {
+                for (key, inner) in map {
+                    keys.insert(key.clone());
+                    all_keys(inner, keys);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for inner in items {
+                    all_keys(inner, keys);
+                }
+            }
+            serde_json::Value::Null
+            | serde_json::Value::Bool(_)
+            | serde_json::Value::Number(_)
+            | serde_json::Value::String(_) => {}
+        }
+    }
+
+    #[test]
+    fn every_compact_key_the_skill_names_is_one_vas_writes() {
+        use vast_skopos::compact::json_lines;
+        use vast_skopos::instance::Instance;
+        use vast_skopos::probe::parse_output;
+        // A probe with every section the remote command prints, as in tests/readme.rs.
+        const FULL: &str = "0, 100, 24809, 32607\n---vas-power---\n0, 399.9, 400, 575, 1695, 3090, 0x4\n\
+                            ---vas-apps---\n0, 00000000:C1:00.0\n---vas-apps-by-gpu---\n00000000:C1:00.0, 8720\nvas-apps-ok\n\
+                            ---vas-log---\nvas-file:/r/s0/train.log\nepoch 41\n";
+        let running = || {
+            Instance::from_json(&serde_json::json!({"id": 1, "actual_status": "running"})).unwrap()
+        };
+        let failed = vast_skopos::SkoposError::Ssh {
+            target: String::from("h:1"),
+            message: String::from("Connection refused"),
+        };
+        let out = json_lines(
+            &[running(), running()],
+            &[Some(Ok(parse_output(FULL))), Some(Err(failed))],
+            None,
+            None,
+            0.0,
+        );
+        let mut written = std::collections::BTreeSet::new();
+        for line in out.lines() {
+            all_keys(&serde_json::from_str(line).unwrap(), &mut written);
+        }
+        let skill = super::skill_text();
+        let region = skill
+            .split_once("<!-- keys:")
+            .and_then(|(_, rest)| rest.split_once("<!-- /keys -->"))
+            .map(|(region, _)| region)
+            .unwrap();
+        // The opening comment's own line is prose, not keys.
+        let (_, list) = region.split_once('\n').unwrap();
+        let named: Vec<&str> = list.split('`').skip(1).step_by(2).collect();
+        assert!(named.len() >= 40, "{named:?}");
+        for key in &named {
+            assert!(written.contains(*key), "--compact writes no key `{key}`");
+        }
+        // The empty test: a key the code does not write is caught.
+        assert!(!written.contains("gpu_util"));
+    }
+
+    #[test]
+    fn vas_skill_prints_the_skill_alone_and_its_front_matter_is_an_agent_skill_s() {
+        let skill = super::skill_text();
+        // ASCII, so PowerShell 5.1's `Out-File -Encoding ascii` (the README's) saves it exactly.
+        assert!(!skill.contains('\r') && skill.is_ascii());
+        let cli = Cli::try_parse_from(["vas", "--skill"]).unwrap();
+        assert!(cli.look.skill && cli.command.is_none());
+        for other in [
+            &["vas", "--skill", "--ssh"][..],
+            &["vas", "--compact", "--skill"],
+            &["vas", "offers", "--skill"],
+        ] {
+            assert!(Cli::try_parse_from(other).is_err(), "{other:?}");
+        }
+        // The Agent Skills format: front matter with a `name` (lowercase, hyphens, at most 64) and a
+        // `description` (at most 1024 characters), then the instructions.
+        let front = skill
+            .strip_prefix("---\n")
+            .and_then(|rest| rest.split_once("\n---\n"))
+            .map(|(front, _)| front)
+            .unwrap();
+        let field = |name: &str| {
+            front
+                .lines()
+                .find_map(|l| l.strip_prefix(name)?.strip_prefix(": "))
+                .unwrap()
+        };
+        assert_eq!(field("name"), "vas");
+        let description = field("description");
+        assert!(
+            (100..=1024).contains(&description.chars().count()),
+            "{description}"
         );
     }
 }

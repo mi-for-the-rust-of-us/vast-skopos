@@ -6,10 +6,20 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- `vas --skill` prints a skill for AI agents, in the Agent Skills format: which command answers which
+  question, `--compact` whenever the output is parsed (and its keys), the exit codes and what to do after
+  each, how to read each mark, the rules (never print the key; `vas` only reads, and any action on a box is
+  the human's) and the traps (Git Bash's path rewriting, a `--log` glob that matches several runs). It is
+  `skills/vas/SKILL.md`, embedded in the binary, so an installed `vas` prints the skill of its own flags;
+  the flag is alone (refused with any other) and needs no key. Tests parse every `vas` command in the skill
+  and check every `--compact` key it names. The end of `vas --help` and the README say where it is.
+
 ### Changed
 
-- Two levels of help. `vas -h` and `vas offers -h` print one line per flag and fit on one screen (222 and
-  263 words, from 684 and 501); `--help` keeps every flag's full text after its summary. `--help` now ends
+- Two levels of help. `vas -h` and `vas offers -h` print one line per flag and fit on one screen (234 and
+  260 words, from 684 and 501); `--help` keeps every flag's full text after its summary. `--help` now ends
   with examples, the exit codes (0, 1, 2 and 3, for a one-shot, a watch and a wait; `vas offers` has no 3)
   and the environment variables (`VAST_API_KEY` and the key files searched, `VAST_URL` and that the key is
   then sent there, `XDG_CONFIG_HOME`). Tests parse every example with the current flags, hold each summary

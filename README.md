@@ -42,6 +42,7 @@ read-only tool that reads the vast.ai API with your own key, and your boxes over
 > - **`no vast.ai API key found`?** → [The API key](#the-api-key) — where `vas` looks, and why there is no `--key` flag.
 > - **The GPU reads 100 % but the run is slow?** → the `POWER`, `CLOCK` and `OTHER` columns of `vas --ssh` — [the FAQ](docs/FAQ.md#when-a-rental-is-slow) says what they mean.
 > - **First rental?** → [From filters to a running box](docs/tutorials/from-filters-to-a-running-box.md), a walk through one rental, step by step.
+> - **An AI assistant drives `vas` for you?** → [`vas --skill`](#a-skill-for-ai-agents) prints a skill that teaches it `vas`: which command answers which question, how to read each mark, the exit codes, and that renting or destroying a box stays your call.
 >
 > Every flag is in `vas -h`, one line each, and `vas --help` adds the detail, examples, the exit codes and the environment variables; how `vas` differs from Vast.ai's own CLI is in [`docs/comparison-with-vastai.md`](docs/comparison-with-vastai.md).
 
@@ -189,6 +190,7 @@ ID        GPU          VRAM  $/H    CUDA  DISK   UP/DOWN Mb/s  REL %  MAX DAYS  
 | `vas --instance ID` | only this box, repeatable: the rows, the probes, the trend and `--until` follow the boxes named. The money line stays the whole account's, since the credit is spent by every box, and says how many boxes are shown (`... \| 1 of 3 boxes shown`); `--credit-log` writes the whole account's money too. An id the account lacks is said on stderr, once, and again only when that changes |
 | `vas --credit-log FILE` | append one CSV row per look to `FILE`: the credit as a curve ([below](#the-credit-history)) |
 | `vas --key-file FILE` | read the key from `FILE` |
+| `vas --skill` | print the skill for AI agents, and exit ([below](#a-skill-for-ai-agents)); alone, with no other flag |
 | `vas offers [FLAGS]` | the offers for rent that pass the flags, cheapest first; no key needed ([below](#vas-offers)) |
 
 `--ssh` uses your system `ssh` with `BatchMode=yes`, `ConnectTimeout=10` and keep-alives, gives
@@ -493,6 +495,26 @@ A few details keep the notes honest:
 - A table every few seconds scrolls past unread in a terminal: for a person, `--changes` (one line per look and
   per change) reads best; `vas --compact --watch N` is for scripts.
 - A config file cannot hold `--watch` or `--changes`: a file of filters must not turn a run into a loop.
+
+### A skill for AI agents
+
+An AI assistant that reads `vas --help` gets every flag exactly, but not the overall picture. `vas --skill`
+prints a skill, in the [Agent Skills](https://agentskills.io) format, that gives it: which command answers
+which question, `--compact` whenever the output is parsed (and its keys), the exit codes and what to do after
+each, how to read each mark (`400/575W+power_cap`, `450W<575`, `100%?`, `UNREACHABLE` against `SSH FAILED`),
+and the rules (never print the key; `vas` only reads, and renting or destroying a box is yours to do). It is
+[`skills/vas/SKILL.md`](skills/vas/SKILL.md), built into the binary, so an installed `vas` prints the skill of
+its own flags; the tests parse every `vas` command in it and check every `--compact` key it names.
+
+For [Claude Code](https://code.claude.com/docs/en/skills), in a project (or under `~/.claude/skills/` for every project):
+
+```sh
+mkdir -p .claude/skills/vas && vas --skill > .claude/skills/vas/SKILL.md
+```
+
+From Windows PowerShell 5.1, whose `>` writes UTF-16, write
+`vas --skill | Out-File -Encoding ascii .claude\skills\vas\SKILL.md` (the skill is plain ASCII). Other agents
+can be pointed at the file itself.
 
 ### The API key
 
