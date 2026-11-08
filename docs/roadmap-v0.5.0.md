@@ -1,10 +1,35 @@
 # Roadmap: 0.5.0, a `vas` that is easy to pick up
 
 **Not affiliated with vast.ai.** This page is the plan for 0.5.0, written on 2026-10-28 before 0.4.0 was
-released. It is a plan, not a promise: what ships is what the [CHANGELOG](../CHANGELOG.md) says. The
-earlier roadmaps ([0.2.0](roadmap-v0.2.0.md), [0.3.0](roadmap-v0.3.0.md)) are kept as they were written.
+released, and kept as it was written below the record of what shipped. The authority for what shipped is
+the [CHANGELOG](../CHANGELOG.md). The earlier roadmaps ([0.2.0](roadmap-v0.2.0.md),
+[0.3.0](roadmap-v0.3.0.md), [0.4.0](roadmap-v0.4.0.md)) are kept as they were written, and
+[the 0.6.0 draft](roadmap-v0.6.0.md) collects what may come next.
 
-## Why
+## What 0.5.0 contains (released on 2026-11-08)
+
+The plan below, all four parts, built on the `next-0.5.0` branch.
+
+- **Two levels of help.** `vas -h` is 235 words (from 684) and `vas offers -h` 260 (from 501). `--help`
+  keeps every flag's full text and ends with examples, how to read the table or the footer, the exit codes
+  and the environment variables. Tests parse every example and hold each summary to one line.
+- **A skill for agents, printed by `vas --skill`.** The plan left open how the skill reaches an agent
+  (copying a folder, or a flag); the flag was chosen, so an installed `vas` prints the skill of its own
+  flags. It is `skills/vas/SKILL.md`, embedded in the binary; tests parse its commands and check every
+  `--compact` key it names.
+- **A lighter README.** 3,200 words (from 8,100): one "What's new" line, a quick start of three commands,
+  and the reference moved to [a page of its own](reference.md).
+- **The learning curve measured.** Two fresh agents, one with only the help and one with only the skill,
+  did the five tasks right with no flag guessed: the bar was met. Their stumbles were fixed in the help and
+  the skill ([the report](https://github.com/mi-for-the-rust-of-us/vast-skopos/blob/main/docs/dogfooding/2026-11-08.md)).
+  The harness is `tests/measure.rs`.
+- **What a box costs, measured at a rental the same day:** a box's `$/H` is the GPU and the disk, not the
+  bandwidth, and a stopped box pays its disk alone. The docs say so; what it means for the burn is the
+  first candidate of [the 0.6.0 draft](roadmap-v0.6.0.md).
+
+## The plan, as written on 2026-10-28
+
+### Why
 
 By 0.4.0, `vas` answers most questions a rental asks. It watches the boxes, says why one is not running,
 reads the GPUs over `ssh`, waits for a line in a log, and finds offers. Each of those is documented
@@ -12,7 +37,7 @@ precisely. That precision is now the obstacle: there is a lot to read before the
 same is true for an AI assistant driving `vas` for someone. 0.5.0 adds no new lookout. It makes what is
 there easy to learn, for a person and for an agent.
 
-## Where 0.4.0 stands (measured 2026-10-28, on the `next-0.4.0` branch)
+### Where 0.4.0 stands (measured 2026-10-28, on the `next-0.4.0` branch)
 
 - **`vas --help` is 684 words, and `vas -h` prints the same.** Every flag's help is a full paragraph; the one
   for `--until` alone holds five exit-code rules. `vas offers --help` is 501 words.
@@ -29,9 +54,9 @@ there easy to learn, for a person and for an agent.
   - that `vas` only reads, and renting or destroying a box is the human's call;
   - how to read `POWER` (and its `<575`), `OTHER`, `UNREACHABLE` vs `SSH FAILED`, and `100%?`.
 
-## The plan
+### The plan
 
-### 1. Two levels of help
+#### 1. Two levels of help
 
 clap takes the first paragraph of each flag's doc comment for `-h`, and the whole comment for `--help`.
 Today every flag's comment is a single paragraph, which is why the two print the same.
@@ -52,7 +77,7 @@ Today every flag's comment is a single paragraph, which is why the two print the
   - the exit codes block is pinned to the code's constants (`GAVE_UP`, `REFUSED`) by a test, as the
     `--until` help already is (`the_help_of_until_says_the_looks_and_the_exit_code_the_code_uses`).
 
-### 2. A skill for agents, shipped in the repository
+#### 2. A skill for agents, shipped in the repository
 
 - **The file:** `skills/vas/SKILL.md`, in the Agent Skills format (a `name` and a `description` in the front
   matter, then the instructions). It holds:
@@ -83,7 +108,7 @@ Today every flag's comment is a single paragraph, which is why the two print the
   file directly. The crate's package includes `skills/` (`Cargo.toml` excludes only `.github/`, `deny.toml`
   and two `docs/` folders), so it ships with the source.
 
-### 3. A lighter README top
+#### 3. A lighter README top
 
 - **One "What's new" line** pointing to the CHANGELOG, in place of the stacked banners. The banners' stories
   move to the CHANGELOG or the dogfooding reports, where they already are in full.
@@ -95,7 +120,7 @@ Today every flag's comment is a single paragraph, which is why the two print the
   top.
 - How much to cut is Éric's call; nothing is removed that a test or a link relies on.
 
-### 4. Measure the learning curve
+#### 4. Measure the learning curve
 
 Not a guess but a test. A fresh agent gets only `vas --help` (and, in a second run, only the skill), a mock
 vast.ai server and a fake `ssh`, and real tasks. `VAST_URL` points both `vas` and `vas offers` at the mock,
@@ -116,14 +141,14 @@ or a real box.
 - **The bar for 0.5.0:** each task done right from the help alone, or from the skill alone, with no guessing
   of flags.
 
-## Order of work
+### Order of work
 
 1. The two levels of help (1), since the skill and the README quote it.
 2. The skill and its test (2).
 3. The first measurement (4); the fixes it calls for go back into 1 and 2.
 4. The README's top (3), last, once the help and the skill say what it can point to.
 
-## Not in 0.5.0
+### Not in 0.5.0
 
 - New lookouts or new flags. One exception may come from the skill's open question: a flag that prints the
   skill, if copying a folder proves too awkward. It would be decided then.

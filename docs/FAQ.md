@@ -1,8 +1,8 @@
 # Frequently asked questions
 
 **Not affiliated with vast.ai.** `vas` is an independent, read-only tool. Everything here was observed
-on real rentals or read from the code; where something is a guess, it says so. It describes **0.4.0**:
-0.3.0 has no `DIRECT` or direct route, no `450W<575` or `100%?` marks, no `--instance` or `--log-wait`, and
+on real rentals or read from the code; where something is a guess, it says so. It describes **0.5.0**:
+0.4.0 has no short `-h`, no examples or exit codes in `--help`, and no `--skill`; 0.3.0 has no `DIRECT` or direct route, no `450W<575` or `100%?` marks, no `--instance` or `--log-wait`, and
 does not repair a `--log` path that Git Bash rewrote; 0.2.0 has no status line under the table, no `UNREACHABLE`, no `--grep` or `--until`, no
 `--exclude-deverified`, `--host`, `--machine` or `--wide` on `vas offers`; 0.1.0
 has no `--credit-log`, `--wide`, `--compact`, `--exclude-machine`, probe columns beyond utilisation and
@@ -199,15 +199,20 @@ the run, because going on would silently drop the exclusions the file holds.
 
 ### What does `COST~` mean?
 
-An estimate: today's `$/h` times the hours since the box was created. Prices can change, and vast.ai bills
-the storage of a **stopped** box, which `vas` does not show (yet). The invoice is the reference.
+An estimate: today's `$/h` times the hours since the box was created. `$/h` is the GPU and the box's disk,
+not its bandwidth, which vast.ai bills per byte. A **stopped** box pays its disk alone, so `COST~` counts too
+much for a box that was stopped a while, and too little for one with much traffic; prices can change too.
+The account's credit is the reference. (Measured at a rental:
+[2026-11-08](dogfooding/2026-11-08.md#still-open).)
 
 ### What does the burn count, and what does "billing unknown" mean?
 
 The burn adds the boxes the API reads as `running` **and** the boxes you asked to run (their intended
 status) that read otherwise (`offline`, `loading`, ...): `burn $1.940/h over 3 running + 1 offline (meant
 to run, billing unknown)`. Whether such a box bills is not known from the API, and a burn that left it out
-would overstate how long your credit lasts, so `vas` counts it and names it. A stopped box is not counted.
+would overstate how long your credit lasts, so `vas` counts it and names it. A stopped box is not counted,
+though it still pays its disk (the `instance` part of its record says how much; see the
+[0.6.0 draft](roadmap-v0.6.0.md)).
 
 ### A box stays `loading` for minutes: is it stuck?
 
@@ -486,7 +491,7 @@ A `--watch` under the floor is raised to it, and `vas` says so on stderr. The fl
 service (vast.ai's own limits are obeyed whatever it says), and a table every few seconds scrolls past
 unread in a terminal. For a person watching offers, `--changes` (one line per look and per change) reads
 best; for a script, `vas --compact --watch N` prints JSON Lines. A screen that redraws in place, and
-faster offers, are waiting for a text interface (see the [roadmap](roadmap-v0.4.0.md)).
+faster offers, are waiting for a text interface (see the [0.6.0 draft](roadmap-v0.6.0.md)).
 
 ### Why is nothing marked in the first looks of `vas offers --watch`?
 

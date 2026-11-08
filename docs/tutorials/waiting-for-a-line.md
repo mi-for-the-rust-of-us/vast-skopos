@@ -159,4 +159,4 @@ Lines instead, and each box's log reading is an object (`state` `line` with the 
 
 - [FAQ](../FAQ.md#how-do-i-wait-for-a-line-in-a-log-without-a-loop-of-my-own): the same rules, in short.
 - [From filters to a running box](from-filters-to-a-running-box.md): a whole rental with `vas`.
-- [README](../../README.md): every flag.
+- [Reference](../reference.md): every flag, column and mark.

@@ -313,7 +313,7 @@ fn a_run_that_restarts_is_not_someone_else_arriving() {
 
 #[test]
 fn a_gap_that_hovers_around_the_threshold_is_news_each_time_it_crosses_it() {
-    // There is no hysteresis, on purpose and said so (README): 1 GiB is the line, and a box whose
+    // There is no hysteresis, on purpose and said so (docs/reference.md): 1 GiB is the line, and a box whose
     // other user hovers around it says so at every crossing, which is the truth of what it sees.
     let mut trend = Trend::default();
     let at = |gap: u64| output(8_772 + gap, "0, b\n", "b, 8772\n", true);

@@ -6,6 +6,50 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-08
+
+### Added
+
+- `vas --skill` prints a skill for AI agents, in the Agent Skills format: which command answers which
+  question, `--compact` whenever the output is parsed (and its keys), the exit codes and what to do after
+  each, how to read each mark, the rules (never print the key; `vas` only reads, and any action on a box is
+  the human's) and the traps (Git Bash's path rewriting, a `--log` glob that matches several runs). It is
+  `skills/vas/SKILL.md`, embedded in the binary, so an installed `vas` prints the skill of its own flags;
+  the flag is alone (refused with any other) and needs no key. Tests parse every `vas` command in the skill
+  and check every `--compact` key it names. The end of `vas --help` and the README say where it is.
+- `tests/measure.rs`, the harness of the learning-curve measurement: an `#[ignore]` test that serves a mock
+  of vast.ai (four boxes, a page of offers) until killed, with a fake `ssh` and `nvidia-smi` answering as
+  the boxes (capped, at a board's maximum, an idle counter, one loading). Linux only; nothing reaches
+  vast.ai or a real box. `cargo test --test measure -- --ignored --nocapture`.
+
+### Changed
+
+- Two levels of help. `vas -h` and `vas offers -h` print one line per flag and fit on one screen (235 and
+  260 words, from 684 and 501); `--help` keeps every flag's full text after its summary. `--help` now ends
+  with examples, how to read the table (`vas offers --help`: the footer), the exit codes (0, 1, 2 and 3,
+  for a one-shot, a watch and a wait; `vas offers` has no 3) and the environment variables (`VAST_API_KEY`
+  and the key files searched, `VAST_URL` and that the key is then sent there, `XDG_CONFIG_HOME`). Tests
+  parse every example with the current flags, hold each summary to one line, pin the exit codes to the
+  constants the code returns (clap's refusal included), and render a table to check that the main marks the
+  help and the skill teach (the `POWER` forms, `100%?`, `CLOCK`, `OTHER`, `UNREACHABLE` and `SSH FAILED`,
+  the status arrow and line, `(no line matches)`) are ones it prints. A test runs `vas --skill` with no key
+  anywhere: the file, with LF line ends, and no request.
+- A lighter README (3,200 words, from 8,100). The four release banners are one "What's new" line pointing
+  to this file and the dogfooding reports. A quick start of three commands comes right after Install
+  (`vas`, `vas --ssh`, `vas offers`, each with a sample). The long reference (every flag of `vas` and
+  `vas offers`, the columns and marks, `--compact`'s JSON Lines, the config file, watching the offers)
+  moved to `docs/reference.md`, linked from the top, its text unchanged but for links, heading levels and
+  the events' description; the tutorials' links follow it.
+  `tests/readme.rs` checks the reference's samples as it did the README's, and the quick start's new
+  `vas` sample too.
+- The learning curve was measured with two fresh agents, one given only the help and one only the skill,
+  against the harness: each did the five tasks right with no flag guessed. Their stumbles were fixed in the
+  help and the skill. See `docs/dogfooding/2026-11-08.md`.
+- What a box's `$/H` holds, measured at a rental (2026-11-08): the GPU and the disk, not the bandwidth; a
+  stopped box pays its disk alone, at the same rate, though the API's `dph_total` keeps the full price. The
+  reference, the skill and the FAQ say so, and which way `COST~` errs. What it means for the burn (which
+  leaves stopped boxes out) is the first candidate of `docs/roadmap-v0.6.0.md`, a first draft.
+
 ## [0.4.0] - 2026-10-28
 
 ### Added
