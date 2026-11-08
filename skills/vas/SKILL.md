@@ -32,10 +32,11 @@ A `--watch` without `--until` never exits: it runs until Ctrl+C. Bound it (`time
 
 ## Recipes
 
-**How are my boxes doing?** Run `vas` once. Each row is a box: status, `$/H`, age, `COST~` (an estimate:
-today's price times the hours since creation; the invoice is the reference), the `ssh` address. The last
-line is the money: `credit $9.33 | burn $1.195/h over 2 running | ~7.8 h left at this rate`. For a
-program, `vas --compact` (below).
+**How are my boxes doing?** Run `vas` once. Each row is a box: status, `$/H` (storage included,
+bandwidth not), age, `COST~` (an estimate: today's price times the hours since creation; the invoice is
+the reference), the `ssh` address. The last line is the money:
+`credit $9.33 | burn $1.195/h over 2 running | ~7.8 h left at this rate`. For a program, `vas --compact`
+(below).
 
 **Is a GPU idle, capped or shared?** Run `vas --ssh`: `nvidia-smi` is read on each running box, once,
 in parallel. Read `GPU% (ssh)`, `OTHER`, `POWER` and `CLOCK` (the marks, below). Never trust the

@@ -51,8 +51,11 @@ between waiting and destroying rests on: three rentals (2026-10-17, 10-18, 10-23
 is refused), since vast.ai's `ssh` proxies are reached by port. Each probe has an `ssh` session of its own
 (`ControlMaster=no`, `ControlPath=none`), whatever `~/.ssh/config` says about shared connections.
 
-`COST~` is an estimate: today's `$/h` times the hours since creation. vast.ai bills storage while an
-instance is stopped and prices can change; the invoice is the reference.
+`$/H` is the API's `dph_total`: the GPU and the box's disk, not its bandwidth (vast.ai's API reference
+shows `dph_total` = `dph_base` + `storage_total_cost`). `COST~` is an estimate: today's `$/h` times the
+hours since creation. It counts too much for a box that was stopped a while (vast.ai then bills only its
+storage), too little for one with much traffic (bandwidth is billed per byte), and prices can change; the
+invoice is the reference.
 
 **A box that is not running yet** says why in vast.ai's own words, on a line under the table (before the
 money line): `57340012 loading: 46b4edaa8d47: Pull complete`, the message cut at 120 characters. On
