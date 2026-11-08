@@ -1,5 +1,6 @@
-//! The README's examples against what the code prints: a sample that names a column or a key the
-//! program no longer has (or lacks one it has) is a lie the reader will believe.
+//! The examples of the README and of `docs/reference.md` against what the code prints: a sample
+//! that names a column or a key the program no longer has (or lacks one it has) is a lie the reader
+//! will believe.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 // EXPLICIT: test code -- a failed unwrap or expect IS the failed assertion.
@@ -14,6 +15,11 @@ use vast_skopos::render::{TableOptions, table};
 /// The README, with LF line ends whatever the checkout's.
 fn readme() -> String {
     include_str!("../README.md").replace("\r\n", "\n")
+}
+
+/// The reference page (every flag, column and key), with LF line ends.
+fn reference() -> String {
+    include_str!("../docs/reference.md").replace("\r\n", "\n")
 }
 
 /// A probe with every section the remote command prints, for a GPU capped at 400 W.
@@ -44,7 +50,7 @@ fn keys(value: &serde_json::Value) -> BTreeSet<String> {
 }
 
 #[test]
-fn the_try_it_sample_has_the_columns_the_table_has() {
+fn the_quick_start_s_ssh_sample_has_the_columns_the_table_has() {
     let readme = readme();
     let at = readme
         .find("$ vas --ssh\n")
@@ -60,7 +66,22 @@ fn the_try_it_sample_has_the_columns_the_table_has() {
     assert_eq!(
         columns(sample_header),
         columns(real.lines().next().unwrap()),
-        "regenerate the `Try it` sample"
+        "regenerate the quick start's `vas --ssh` sample"
+    );
+}
+
+#[test]
+fn the_quick_start_s_plain_sample_has_the_columns_the_table_has() {
+    let readme = readme();
+    let at = readme
+        .find("$ vas\n")
+        .expect("the plain sample is in the README");
+    let sample_header = readme[at..].lines().nth(1).unwrap();
+    let real = table(&[running()], &[None], None, TableOptions::new(), 0.0);
+    assert_eq!(
+        columns(sample_header),
+        columns(real.lines().next().unwrap()),
+        "regenerate the quick start's `vas` sample"
     );
 }
 
@@ -83,18 +104,18 @@ fn the_probe_columns_are_named_in_the_order_the_table_prints_them() {
         probe_columns[..probe_columns.len() - 1].join("`, `")
     );
     assert!(
-        readme().contains(&said),
-        "the README names the probe columns as `{said}`"
+        reference().contains(&said),
+        "the reference names the probe columns as `{said}`"
     );
 }
 
 #[test]
 fn the_compact_example_has_the_keys_the_json_has() {
-    let readme = readme();
-    let line = readme
+    let page = reference();
+    let line = page
         .lines()
         .find(|l| l.starts_with("{\"age_s\""))
-        .expect("the example is in the README");
+        .expect("the example is in the reference");
     let example: serde_json::Value = serde_json::from_str(line).unwrap();
     let out = json_lines(&[running()], &probed(), None, None, 0.0);
     let real: serde_json::Value = serde_json::from_str(out.lines().next().unwrap()).unwrap();
@@ -115,18 +136,17 @@ fn the_compact_example_has_the_keys_the_json_has() {
         "the log object"
     );
     let money_example: serde_json::Value = serde_json::from_str(
-        readme
-            .lines()
+        page.lines()
             .find(|l| l.starts_with("{\"at\"") && l.contains("\"kind\":\"money\""))
-            .expect("the money example is in the README"),
+            .expect("the money example is in the reference"),
     )
     .unwrap();
     let real_money: serde_json::Value = serde_json::from_str(out.lines().last().unwrap()).unwrap();
     assert_eq!(real_money["kind"], "money");
     assert_eq!(keys(&money_example), keys(&real_money), "the money object");
-    // The README names the three kinds (the code prints `box` and `money` here, and `event` under
+    // The reference names the three kinds (the code prints `box` and `money` here, and `event` under
     // `--ssh --watch`, which tests/power.rs and tests/other.rs check).
     for kind in ["box", "event", "money"] {
-        assert!(readme.contains(&format!("`{kind}`")), "{kind}");
+        assert!(page.contains(&format!("`{kind}`")), "{kind}");
     }
 }

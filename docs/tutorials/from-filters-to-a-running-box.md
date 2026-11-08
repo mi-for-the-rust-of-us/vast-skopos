@@ -83,7 +83,7 @@ What each line asks:
 | `--exclude-country CN` | leave a country out |
 | `--exclude-deverified` | leave out the machines vast.ai has deverified (verified once, then found failing its checks), and keep the unverified ones, which are new or under evaluation; `--verified` would hide those too ([FAQ](../FAQ.md#verified-unverified-deverified-which-should-i-filter)) |
 
-The file is read first; the command line adds to it or overrides it. [README](../../README.md#vas-offers) lists
+The file is read first; the command line adds to it or overrides it. [reference](../reference.md#vas-offers) lists
 every flag.
 
 ## 3. Search
@@ -272,7 +272,7 @@ Their format, as the code prints it (not captured live):
 `--credit-log credit.csv` appends one row per look (`unix_time,credit,burn_per_hour,running,unsure`), so the
 credit becomes a curve you can plot or compare with the burn. It is the only file `vas` itself ever writes,
 and only because you named it. Stop with Ctrl+C. (For a script or a monitor, `--compact` prints the same
-readings as JSON Lines: see the [README](../../README.md#vas---compact-json-lines).)
+readings as JSON Lines: see the [reference](../reference.md#vas---compact-json-lines).)
 
 To wait for one line of the log (the first loss of a stage, say) rather than watch, see
 [Waiting for a line](waiting-for-a-line.md): `--until` ends the watch when the line appears.
@@ -304,6 +304,6 @@ invoice.
 
 - [Waiting for a line](waiting-for-a-line.md): `--grep` and `--until`, instead of a loop of your own.
 - [FAQ](../FAQ.md): the questions that came up on real rentals.
-- [README](../../README.md): every flag, the JSON format, the key and file rules.
+- [Reference](../reference.md): every flag, column and mark, and the JSON format; the [README](../../README.md): the key and file rules.
 - [`vas` and `vastai`](../comparison-with-vastai.md): which tool for which job.
 - [Roadmap](../roadmap-v0.4.0.md): what 0.4.0 contains and what may come after.

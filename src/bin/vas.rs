@@ -1470,7 +1470,7 @@ mod tests {
         assert_eq!(
             NO_FILE_SECS,
             15 * 60,
-            "15 minutes, as the README and the FAQ say"
+            "15 minutes, as the reference and the FAQ say"
         );
     }
 

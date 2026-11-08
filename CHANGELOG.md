@@ -29,6 +29,13 @@ All notable changes to this project are documented here. The format is based on
   then sent there, `XDG_CONFIG_HOME`). Tests parse every example with the current flags, hold each summary
   to one line, pin the exit codes to the constants the code returns, and check that each mark the help and
   the skill teach is one the table prints.
+- A lighter README (3,100 words, from 8,100). The four release banners are one "What's new" line pointing
+  to this file and the dogfooding reports. A quick start of three commands comes right after Install
+  (`vas`, `vas --ssh`, `vas offers`, each with a sample). The long reference (every flag of `vas` and
+  `vas offers`, the columns and marks, `--compact`'s JSON Lines, the config file, watching the offers)
+  moved, unchanged, to `docs/reference.md`, linked from the top; the tutorials' links follow it.
+  `tests/readme.rs` checks the reference's samples as it did the README's, and the quick start's new
+  `vas` sample too.
 - The learning curve was measured with two fresh agents, one given only the help and one only the skill,
   against the harness: each did the five tasks right with no flag guessed. Their stumbles were fixed in the
   help and the skill. See `docs/dogfooding/2026-11-08.md`.
