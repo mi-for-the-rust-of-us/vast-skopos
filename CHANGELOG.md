@@ -24,10 +24,14 @@ All notable changes to this project are documented here. The format is based on
 
 - Two levels of help. `vas -h` and `vas offers -h` print one line per flag and fit on one screen (234 and
   260 words, from 684 and 501); `--help` keeps every flag's full text after its summary. `--help` now ends
-  with examples, the exit codes (0, 1, 2 and 3, for a one-shot, a watch and a wait; `vas offers` has no 3)
+  with examples, how to read the table (`vas offers --help`: the footer), the exit codes (0, 1, 2 and 3, for a one-shot, a watch and a wait; `vas offers` has no 3)
   and the environment variables (`VAST_API_KEY` and the key files searched, `VAST_URL` and that the key is
   then sent there, `XDG_CONFIG_HOME`). Tests parse every example with the current flags, hold each summary
-  to one line, and pin the exit codes to the constants the code returns.
+  to one line, pin the exit codes to the constants the code returns, and check that each mark the help and
+  the skill teach is one the table prints.
+- The learning curve was measured with two fresh agents, one given only the help and one only the skill,
+  against the harness: each did the five tasks right with no flag guessed. Their stumbles were fixed in the
+  help and the skill. See `docs/dogfooding/2026-11-08.md`.
 
 ## [0.4.0] - 2026-10-28
 

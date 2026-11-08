@@ -19,7 +19,8 @@ and the environment variables.
 | The question | The command |
 |---|---|
 | How are my boxes doing, and costing? | `vas` |
-| Is a GPU idle, capped or shared? | `vas --ssh` |
+| Is a box idle, paid for nothing? | `vas --ssh` (plain `vas` cannot tell) |
+| Is a GPU capped or shared? | `vas --ssh` |
 | What did each run write last? | `vas --ssh --log '/root/runs/*/train.log'` |
 | Did a run print a given line once? | `vas --ssh --log '/root/runs/*/train.log' --grep 'Traceback'` |
 | Why is this box not running? | `vas` (the line under the table) |
@@ -46,8 +47,11 @@ wrap it in `timeout`.
 timeout 600 vas --ssh --log '/root/runs/*/train.log' --watch 30 --until 'initial loss|Traceback'
 ```
 
-Then act on the exit code (below): 0 is the match, 124 is `timeout`'s limit. `--log-wait 300` gives up
-sooner (exit 3) when no box has a file matching the path (900 s by default).
+Then act on the exit code (below): 0 is the match, 124 is `timeout`'s limit. Read the exit code, not the
+table: the matched line goes to stderr, and can land in the middle of the table on a terminal. While it
+waits, the log cell shows the last line matching the pattern, so `(no line matches)` there means "not
+yet". `--log-wait 300` gives up sooner (exit 3) when no box has a file matching the path (900 s by
+default). `--watch 30` is a fair pace for a wait (at least 10).
 
 **Follow one box of several.** `--instance` (repeatable) keeps only the boxes named: the rows, the
 probes, the trend and `--until` follow them, while the money line stays the whole account's.
@@ -56,18 +60,27 @@ probes, the trend and `--until` follow them, while the money line stays the whol
 timeout 600 vas --ssh --log '/root/runs/*/train.log' --watch 30 --until 'initial loss' --instance 56533728
 ```
 
-**Find an offer like the box we had.** `vas --wide` shows the box's `MACHINE` and `HOST` ids, its CPU,
-driver, DLPerf and PCIe. Then search with the same columns, keyless:
+**Find an offer like the box we had.** `vas --wide` shows the box's `$/H`, its `MACHINE` and `HOST` ids,
+its CPU, driver, DLPerf and PCIe. Then search with the same columns, keyless:
 
 ```sh
-vas offers --gpu RTX_5090 --num-gpus 1 --verified --wide
+vas offers --gpu RTX_5090 --num-gpus 1 --verified --max-price 0.49 --exclude-machine 100682 --wide
 vas offers --machine 100682 --wide
-vas offers --gpu RTX_5090 --exclude-machine 100682
+vas offers --gpu RTX_5090 --exclude-host 406325
 ```
 
-The first compares machines; the second asks whether that machine is for rent again; the third leaves a
-bad one out. vast.ai answers at most 64 rows and its answers vary from one search to the next: the footer
-says so. `vas offers --watch 60` reads the market over several looks (the first three only learn).
+The first finds cheaper verified machines like it (`--max-price` is in $/h, storage included) and leaves
+its own out; the second asks whether that machine is for rent again; the third leaves a whole host out.
+A host that capped one card may cap the others: no flag filters on the power limit, and `LIMIT W` is the
+limit the listing gives, not a reading. Only `vas --ssh` reads the card, once the box is rented.
+
+The offers table: `$/H` (storage included, 5 GB unless `--disk`), `REL %` (reliability), `MAX DAYS` (the
+longest rental), `VERIFICATION` (`verified`, `unverified` or `deverified`), and under `--wide`
+`MACHINE`, `CPU`, `DRIVER`, `DLPERF` (vast.ai's benchmark score), `DLPERF/$`, `PCIE GB/s` and `LIMIT W`. The
+footer names the constraints in force; `N dropped here` counts the rows vast.ai sent that a constraint,
+re-checked on each row, refused (it may ignore a filter), which is expected. vast.ai answers at most 64
+rows and its answers vary from one search to the next: the footer says so. `vas offers --watch 60` reads
+the market over several looks (the first three only learn).
 
 **Keep the credit as a curve.** `vas --credit-log credit.csv --watch 300` appends one row per look
 (`unix_time,credit,burn_per_hour,running,unsure`); the file is only ever appended to, and never holds
@@ -117,8 +130,11 @@ the kind: `vas --compact | jq -r 'select(.kind=="money").hours_left'`.
 - `POWER` `400/575W+power_cap`: a power limit of 400 W set below the card's 575 W default, and the
   clocks held by it. `CLOCK` then reads low (`1717/3090` MHz): the run is slower than the model suggests.
 - `POWER` `575W+power_cap`: the card is at its default limit under full load. That is normal.
-  Compare the two numbers and the clock, not the word.
+  Compare the two numbers and the clock, not the word. A bare `575W` is a card at its default with
+  nothing holding its clocks; an idle card's low `CLOCK` (`210/3090`) is then rest, not a cap. Other
+  words than `power_cap`: `thermal`, `slowdown`, `power_brake`.
 - `POWER` `450W<575`: the board's maximum is below its model's reference, so the board itself is the cap.
+- `CLOCK` `1717/3090`: the SM clock now over the highest the card reaches, in MHz.
 - `OTHER` `15.7G`: GPU memory held outside the container (someone else, or the host). `-` means
   nothing notable, or not known.
 - `UNREACHABLE 4m: ...`: `ssh` never reached the box (refused, timed out). The age is what the choice
@@ -130,8 +146,11 @@ the kind: `vas --compact | jq -r 'select(.kind=="money").hours_left'`.
 - `(direct) s0/train.log: ...`: the readings came by the box's direct address, past the proxy.
 - The line under the table, `57340012 loading: 46b4edaa8d47: Pull complete`, is vast.ai's own message
   on a box that is not running: here, the image arriving. That is progress, not a stuck box.
-- `?` in the log cell: the box's answer was cut short. `(no file matches)`, `(not a file)`, `(empty)`,
-  `(no line matches)` say what they say.
+- The log cell, `s0/train.log: step 200 loss 1.8843`: the newest file matching `--log` (its last two path
+  components: here the run is `s0`) and its last non-blank line, or under `--grep` or `--until` its last
+  line matching the pattern. `(no line matches)`: no line matches the pattern (yet); `(empty)`: the file
+  has no line to show; `(no file matches)`: nothing matches the path on that box; `(not a file)`: the
+  newest match is a folder; `?`: the box's answer was cut short.
 - `! 56533728 gpu 0: power limit 575 -> 400 W, power_cap began`: under `--ssh --watch`, a change since
   the last look.
 - The money line's `+ 1 offline (meant to run, billing unknown)`: a box asked to run that reads

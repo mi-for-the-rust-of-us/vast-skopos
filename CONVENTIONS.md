@@ -57,11 +57,13 @@ The one exception is `clap`'s argument docs in `src/bin/vas.rs`: they ARE the
 `clap` prints the first paragraph of a flag's doc comment for `-h` and the whole comment for
 `--help`. So a flag's comment opens with a one-line summary (at most 72 characters, its period
 dropped by `clap`), then a blank line, then the detail: units, defaults, edge cases, exit codes.
-A flag whose summary says it all keeps one paragraph. The examples, the exit codes and the
-environment variables live after the flags (`after_long_help`: `LOOKOUT_AFTER_HELP`,
-`OFFERS_AFTER_HELP`), in `--help` only. The binary's tests hold each summary to one line, parse
-every example with the current flags, and pin the exit codes to the constants the code returns: a
-new flag, a new exit code or a new example changes them in the same commit.
+A flag whose summary says it all keeps one paragraph. The examples, how to read the output (the
+table's marks; the offers' footer), the exit codes and the environment variables live after the
+flags (`after_long_help`: `LOOKOUT_AFTER_HELP`, `OFFERS_AFTER_HELP`), in `--help` only. The
+binary's tests hold each summary to one line, parse every example with the current flags, pin the
+exit codes to the constants the code returns, and render a table to check that each mark the help
+and the skill teach is one it prints: a new flag, a new exit code, a new mark or a new example
+changes them in the same commit.
 
 The skill for agents, `skills/vas/SKILL.md` (`vas --skill` prints it, embedded), is held the same
 way: every `vas` command in it (in a fenced block, or an inline span that starts with `vas`) parses

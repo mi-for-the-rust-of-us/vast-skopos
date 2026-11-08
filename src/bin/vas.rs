@@ -34,16 +34,36 @@ const LOOKOUT_AFTER_HELP: &str = "\
 Examples:
   Watch my boxes, a look every two minutes:
     vas --watch 120
-  Is any GPU idle or capped? (GPU% (ssh) reads 100%? for an idle card's stuck counter; POWER reads
-  400/575W+power_cap for a limit below the card's default, 450W<575 for a board whose maximum is
-  below its model's reference)
+  Is any GPU idle, capped or shared? (Reading the table, below, says how to tell)
     vas --ssh
-  Wait for the first loss on box 56533728, at most an hour (timeout exits 124 at the limit):
-    timeout 3600 vas --ssh --log '/root/runs/*/train.log' --watch 60 --until 'initial loss' --instance 56533728
+  Wait for the first loss on box 56533728, at most ten minutes. The wait has no time limit of its
+  own: timeout gives one, and exits 124 when it is reached.
+    timeout 600 vas --ssh --log '/root/runs/*/train.log' --watch 30 --until 'initial loss' --instance 56533728
   Find a verified RTX 5090 under $0.50/h (no key needed; vas offers --help says more):
     vas offers --gpu RTX_5090 --verified --max-price 0.5
   The same readings for a program, one JSON object per line:
     vas --compact --ssh
+
+Reading the table (stdout; notices, a wait's match among them, go to stderr):
+  STATUS      loading -> running: what the box is, then what it was asked to be. A box not running
+              has vast.ai's own message on a line under the table: 46b4edaa8d47: Pull complete is
+              the image arriving, progress.
+  COST~       An estimate: today's $/h times the hours since the box was created.
+  GPU% (ssh)  100%? is likely an idle card's stuck counter: 99 % or more, under 1 GiB held and no
+              process (a line under the table says so).
+  OTHER       GPU memory held outside the container (1 GiB or more); - when none, or not known.
+  POWER       400/575W+power_cap: a limit of 400 W set below the card's 575 W default, and the
+              clocks held by it (other reasons: thermal, slowdown, power_brake). 575W+power_cap alone
+              is a card at its limit under full load: normal. 450W<575: the board's maximum is
+              below its model's reference, so the board itself is the cap.
+  CLOCK       The SM clock now over the highest it reaches, in MHz: 1717/3090 is held down.
+  Last cell   The log's run and line (s0/train.log: ...; under --grep or --until, the last line
+              matching, and (no line matches) while none does), or why the probe failed: UNREACHABLE 4m,
+              ssh never reached the box (the age says whether to wait); SSH FAILED 4m, it was turned
+              away (a refused key) or got no reading. (direct): read past the proxy. ?: the answer
+              was cut short.
+  The money   credit | burn over the boxes that bill or may (meant to run, billing unknown) |
+              the hours the credit buys at that rate.
 
 Exit codes:
   0  The look was printed (a one-shot), the line was matched (--until), or stdout was closed
@@ -80,11 +100,20 @@ const OFFERS_AFTER_HELP: &str = "\
 Examples:
   A verified RTX 5090 under $0.50/h, with 50 GB of disk:
     vas offers --gpu RTX_5090 --verified --max-price 0.5 --disk 50
+  A cheaper verified machine like box 56533728, which vas --wide shows at $0.491/h on machine 100682
+  (compare the CPU, DLPERF and PCIE GB/s columns with its own):
+    vas offers --gpu RTX_5090 --num-gpus 1 --verified --max-price 0.49 --exclude-machine 100682 --wide
   Is the machine I had for rent again? (vas --wide shows its id)
     vas offers --machine 100682 --wide
   Watch two-GPU RTX 4090 offers, printing only what moved:
     vas offers --gpu RTX_4090 --num-gpus 2 --watch 60 --changes
   The filters you always use go in the config file, one flag per line: --exclude-country CN
+
+Reading the footer:
+  How many offers (N of M shown when --top cuts), the order | the constraints in force | $/h
+  includes N GB of storage (--disk) | when it searched. Then, when they apply: N dropped here (vast.ai sent rows that a constraint,
+  re-checked on each row, refuses: it may ignore a filter), and that it answers at most 64 rows.
+  vast.ai's answers vary from one search to the next: repeat it, or --watch, to see more.
 
 Exit codes:
   0  The offers were printed (a one-shot), or stdout was closed. A watch runs until Ctrl+C.
@@ -170,6 +199,10 @@ struct LookArgs {
     /// file matching --log for --log-wait seconds (a warning comes after 2 looks), and 1 when the
     /// first look fails or stdout is closed before a match. A box meant to run but not running
     /// (loading, say) keeps the wait going for 10 looks at most since a box was last read.
+    ///
+    /// No time limit on the whole wait (--log-wait bounds only a missing file): timeout 600 vas ...
+    /// gives one, and exits 124 when it is reached. It matches on any box: when several write the
+    /// same log, --instance names the one to wait on.
     #[arg(
         long,
         value_name = "PATTERN",
@@ -182,7 +215,7 @@ struct LookArgs {
     ///
     /// How long the wait goes on while the boxes answer but none has a file matching --log, counted
     /// from the first look that found none (a run may write its log late; a wrong path must not keep
-    /// a script waiting while the boxes cost).
+    /// a script waiting while the boxes cost). Not a limit on the whole wait: timeout gives one.
     #[arg(
         long,
         value_name = "SECONDS",
@@ -1779,5 +1812,74 @@ mod tests {
             (100..=1024).contains(&description.chars().count()),
             "{description}"
         );
+    }
+
+    #[test]
+    fn the_marks_the_help_and_the_skill_teach_are_the_ones_the_table_prints() {
+        use super::LOOKOUT_AFTER_HELP;
+        use vast_skopos::instance::Instance;
+        use vast_skopos::probe::parse_output;
+        use vast_skopos::render::{TableOptions, table};
+        // What the probe reads on a box capped at 400 W, on a 450 W board, and on an idle card.
+        let read = |util_mem: &str, power: &str, events: &str, apps: &str, max: &str| {
+            Some(Ok(parse_output(&format!(
+                "0, {util_mem}, 32607\n---vas-power---\n0, {power}, 1717, 3090\n\
+                 ---vas-throttle---\n0, {events}\n---vas-apps---\n0, 00000000:C1:00.0\n\
+                 ---vas-apps-by-gpu---\n{apps}vas-apps-ok\n---vas-power-max---\n0, {max}\n"
+            ))))
+        };
+        let probes = [
+            read(
+                "99, 24809",
+                "399.9, 400, 575",
+                "0x4",
+                "00000000:C1:00.0, 24390\n",
+                "600",
+            ),
+            read(
+                "98, 20480",
+                "441.2, 450, 450",
+                "0x0",
+                "00000000:C1:00.0, 20060\n",
+                "450",
+            ),
+            read("100, 2", "31.4, 575, 575", "0x1", "", "600"),
+            Some(Err(vast_skopos::SkoposError::Ssh {
+                target: String::from("h:1"),
+                message: String::from("ssh: connect to host h port 1: Connection refused"),
+            })),
+            None,
+        ];
+        let rtx = |id: u64, status: &str| {
+            Instance::from_json(&serde_json::json!({"id": id, "actual_status": status,
+                "intended_status": "running", "gpu_name": "RTX 5090", "num_gpus": 1}))
+            .unwrap()
+        };
+        let boxes = [
+            rtx(1, "running"),
+            rtx(2, "running"),
+            rtx(3, "running"),
+            rtx(4, "running"),
+            rtx(5, "loading"),
+        ];
+        let printed = table(&boxes, &probes, None, TableOptions::new().ssh(true), 0.0);
+        let skill = super::skill_text();
+        for mark in [
+            "400/575W+power_cap",
+            "450W<575",
+            "100%?",
+            "UNREACHABLE",
+            "loading -> running",
+            "1717/3090",
+        ] {
+            assert!(printed.contains(mark), "the table lacks {mark}: {printed}");
+            assert!(
+                LOOKOUT_AFTER_HELP.contains(mark),
+                "--help does not teach {mark}"
+            );
+        }
+        for mark in ["400/575W+power_cap", "450W<575", "100%?", "UNREACHABLE"] {
+            assert!(skill.contains(mark), "the skill does not teach {mark}");
+        }
     }
 }
